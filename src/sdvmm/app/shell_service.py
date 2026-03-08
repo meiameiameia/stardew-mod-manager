@@ -12,6 +12,7 @@ from sdvmm.domain.models import (
     DependencyPreflightFinding,
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
+    GameEnvironmentStatus,
     ModUpdateReport,
     ModsInventory,
     PackageInspectionResult,
@@ -33,6 +34,8 @@ from sdvmm.services.app_state_store import (
 from sdvmm.services.mod_scanner import scan_mods_directory
 from sdvmm.services.package_inspector import inspect_zip_package
 from sdvmm.services.downloads_intake import initialize_known_zip_paths, poll_watched_directory
+from sdvmm.services.environment_detection import detect_game_environment as detect_game_environment_service
+from sdvmm.services.environment_detection import derive_mods_path
 from sdvmm.services.dependency_preflight import (
     evaluate_installed_dependencies,
     evaluate_package_dependencies,
@@ -126,7 +129,12 @@ class AppShellService:
         existing_config: AppConfig | None,
     ) -> AppConfig:
         mods_path = self._parse_and_validate_mods_path(mods_dir_text)
-        config = self._build_config(mods_path=mods_path, existing_config=existing_config)
+        game_path = existing_config.game_path if existing_config is not None else mods_path.parent
+        config = self._build_config(
+            game_path=game_path,
+            mods_path=mods_path,
+            existing_config=existing_config,
+        )
 
         try:
             save_app_config(state_file=self._state_file, config=config)
@@ -138,6 +146,7 @@ class AppShellService:
     def save_operational_config(
         self,
         *,
+        game_path_text: str,
         mods_dir_text: str,
         sandbox_mods_path_text: str,
         sandbox_archive_path_text: str,
@@ -148,7 +157,8 @@ class AppShellService:
         if scan_target not in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS}:
             raise AppShellError(f"Unknown scan target: {scan_target}")
 
-        mods_path = self._parse_and_validate_mods_path(mods_dir_text)
+        game_path = self._resolve_game_path(game_path_text, existing_config)
+        mods_path = self._resolve_mods_path(mods_dir_text, game_path)
 
         sandbox_mods_path = self._parse_optional_directory(sandbox_mods_path_text)
         sandbox_archive_path: Path | None = None
@@ -169,9 +179,13 @@ class AppShellService:
 
         watched_downloads_path = self._parse_optional_directory(watched_downloads_path_text)
 
-        config = self._build_config(mods_path=mods_path, existing_config=existing_config)
+        config = self._build_config(
+            game_path=game_path,
+            mods_path=mods_path,
+            existing_config=existing_config,
+        )
         config = AppConfig(
-            game_path=config.game_path,
+            game_path=game_path,
             mods_path=config.mods_path,
             app_data_path=config.app_data_path,
             sandbox_mods_path=sandbox_mods_path,
@@ -186,6 +200,10 @@ class AppShellService:
             raise AppShellError(f"Could not save configuration: {exc}") from exc
 
         return config
+
+    def detect_game_environment(self, game_path_text: str) -> GameEnvironmentStatus:
+        game_path = self._parse_game_path_text(game_path_text)
+        return detect_game_environment_service(game_path)
 
     def scan(self, mods_dir_text: str) -> ModsInventory:
         mods_path = self._parse_and_validate_mods_path(mods_dir_text)
@@ -468,10 +486,16 @@ class AppShellService:
 
         return InstallTargetSafetyDecision(allowed=True, message=None)
 
-    def _build_config(self, mods_path: Path, existing_config: AppConfig | None) -> AppConfig:
+    def _build_config(
+        self,
+        *,
+        game_path: Path,
+        mods_path: Path,
+        existing_config: AppConfig | None,
+    ) -> AppConfig:
         if existing_config is not None:
             return AppConfig(
-                game_path=existing_config.game_path,
+                game_path=game_path,
                 mods_path=mods_path,
                 app_data_path=existing_config.app_data_path,
                 sandbox_mods_path=existing_config.sandbox_mods_path,
@@ -481,11 +505,55 @@ class AppShellService:
             )
 
         return AppConfig(
-            game_path=mods_path.parent,
+            game_path=game_path,
             mods_path=mods_path,
             app_data_path=self._state_file.parent,
             scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
         )
+
+    @staticmethod
+    def _resolve_game_path(game_path_text: str, existing_config: AppConfig | None) -> Path:
+        raw_value = game_path_text.strip()
+        if raw_value:
+            return AppShellService._parse_and_validate_game_path(raw_value)
+        if existing_config is not None:
+            return AppShellService._parse_and_validate_existing_directory(
+                existing_config.game_path,
+                "Saved game path is not accessible",
+            )
+        raise AppShellError("Game directory is required")
+
+    @staticmethod
+    def _resolve_mods_path(mods_dir_text: str, game_path: Path) -> Path:
+        raw_mods_text = mods_dir_text.strip()
+        if raw_mods_text:
+            return AppShellService._parse_and_validate_mods_path(raw_mods_text)
+
+        derived_mods_path = derive_mods_path(game_path)
+        if derived_mods_path.exists() and derived_mods_path.is_dir():
+            return derived_mods_path
+        raise AppShellError(
+            f"Mods directory is required and could not be derived from game path: {derived_mods_path}"
+        )
+
+    @staticmethod
+    def _parse_and_validate_game_path(game_path_text: str) -> Path:
+        game_path = AppShellService._parse_game_path_text(game_path_text)
+        if not game_path.exists():
+            raise AppShellError(f"Game directory does not exist: {game_path}")
+        if not game_path.is_dir():
+            raise AppShellError(f"Game path is not a directory: {game_path}")
+
+        return game_path
+
+    @staticmethod
+    def _parse_game_path_text(game_path_text: str) -> Path:
+        raw_value = game_path_text.strip()
+        if not raw_value:
+            raise AppShellError("Game directory is required")
+
+        game_path = Path(raw_value).expanduser()
+        return game_path
 
     @staticmethod
     def _parse_and_validate_mods_path(mods_dir_text: str) -> Path:
@@ -500,6 +568,12 @@ class AppShellService:
             raise AppShellError(f"Mods path is not a directory: {mods_path}")
 
         return mods_path
+
+    @staticmethod
+    def _parse_and_validate_existing_directory(path: Path, message_prefix: str) -> Path:
+        if not path.exists() or not path.is_dir():
+            raise AppShellError(f"{message_prefix}: {path}")
+        return path
 
     @staticmethod
     def _parse_and_validate_zip_path(package_path_text: str) -> Path:

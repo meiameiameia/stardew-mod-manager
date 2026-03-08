@@ -2,6 +2,7 @@ from .models import (
     AppConfig,
     AppConfigValidationResult,
     DependencyPreflightFinding,
+    GameEnvironmentStatus,
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
     DuplicateUniqueIdFinding,
@@ -32,6 +33,14 @@ from .dependency_codes import (
     SATISFIED,
     UNRESOLVED_DEPENDENCY_CONTEXT,
 )
+from .environment_codes import (
+    EnvironmentState,
+    GAME_PATH_DETECTED,
+    INVALID_GAME_PATH,
+    MODS_PATH_DETECTED,
+    SMAPI_DETECTED,
+    SMAPI_NOT_DETECTED,
+)
 from .install_codes import BLOCKED, INSTALL_NEW, OVERWRITE_WITH_ARCHIVE, SandboxInstallAction
 from .package_codes import PackageFindingKind
 from .unique_id import canonicalize_unique_id
@@ -43,6 +52,7 @@ __all__ = [
     "AppConfig",
     "AppConfigValidationResult",
     "DependencyPreflightFinding",
+    "GameEnvironmentStatus",
     "DownloadsIntakeResult",
     "DownloadsWatchPollResult",
     "DuplicateUniqueIdFinding",
@@ -78,6 +88,12 @@ __all__ = [
     "MISSING_REQUIRED_DEPENDENCY",
     "OPTIONAL_DEPENDENCY_MISSING",
     "UNRESOLVED_DEPENDENCY_CONTEXT",
+    "EnvironmentState",
+    "GAME_PATH_DETECTED",
+    "MODS_PATH_DETECTED",
+    "SMAPI_DETECTED",
+    "SMAPI_NOT_DETECTED",
+    "INVALID_GAME_PATH",
     "UpdateState",
     "canonicalize_unique_id",
 ]

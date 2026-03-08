@@ -3,6 +3,7 @@
 from .domain.models import (
     AppConfig,
     AppConfigValidationResult,
+    GameEnvironmentStatus,
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
     DuplicateUniqueIdFinding,
@@ -42,6 +43,7 @@ from .services.app_state_store import (
 __all__ = [
     "AppConfig",
     "AppConfigValidationResult",
+    "GameEnvironmentStatus",
     "DownloadsIntakeResult",
     "DownloadsWatchPollResult",
     "DuplicateUniqueIdFinding",

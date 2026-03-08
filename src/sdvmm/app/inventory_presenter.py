@@ -7,10 +7,18 @@ from sdvmm.domain.dependency_codes import (
     SATISFIED,
     UNRESOLVED_DEPENDENCY_CONTEXT,
 )
+from sdvmm.domain.environment_codes import (
+    GAME_PATH_DETECTED,
+    INVALID_GAME_PATH,
+    MODS_PATH_DETECTED,
+    SMAPI_DETECTED,
+    SMAPI_NOT_DETECTED,
+)
 from sdvmm.domain.models import (
     DependencyPreflightFinding,
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
+    GameEnvironmentStatus,
     ModUpdateReport,
     ModsInventory,
     PackageInspectionResult,
@@ -63,6 +71,43 @@ def build_findings_text(inventory: ModsInventory) -> str:
     else:
         lines.append("")
         lines.append("Missing required dependencies: none")
+
+    return "\n".join(lines)
+
+
+def build_environment_status_text(status: GameEnvironmentStatus) -> str:
+    lines: list[str] = []
+    lines.append(f"Game path: {status.game_path}")
+
+    for state in status.state_codes:
+        lines.append(f"- [{state}]")
+
+    if status.mods_path is not None:
+        lines.append(f"Detected Mods path: {status.mods_path}")
+    else:
+        lines.append("Detected Mods path: <not detected>")
+
+    if status.smapi_path is not None:
+        lines.append(f"Detected SMAPI path: {status.smapi_path}")
+    else:
+        lines.append("Detected SMAPI path: <not detected>")
+
+    for note in status.notes:
+        lines.append(f"- note: {note}")
+
+    if INVALID_GAME_PATH in status.state_codes:
+        lines.append("Environment summary: invalid game path")
+    elif GAME_PATH_DETECTED in status.state_codes:
+        parts: list[str] = []
+        if MODS_PATH_DETECTED in status.state_codes:
+            parts.append("Mods detected")
+        else:
+            parts.append("Mods not detected")
+        if SMAPI_DETECTED in status.state_codes:
+            parts.append("SMAPI detected")
+        elif SMAPI_NOT_DETECTED in status.state_codes:
+            parts.append("SMAPI not detected")
+        lines.append(f"Environment summary: {', '.join(parts)}")
 
     return "\n".join(lines)
 

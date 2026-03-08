@@ -14,6 +14,7 @@ from .sandbox_installer import (
     execute_sandbox_install_plan,
 )
 from .downloads_intake import initialize_known_zip_paths, poll_watched_directory
+from .environment_detection import detect_game_environment, derive_mods_path
 from .dependency_preflight import (
     evaluate_installed_dependencies,
     evaluate_package_dependencies,
@@ -38,6 +39,8 @@ __all__ = [
     "execute_sandbox_install_plan",
     "initialize_known_zip_paths",
     "poll_watched_directory",
+    "detect_game_environment",
+    "derive_mods_path",
     "evaluate_installed_dependencies",
     "evaluate_package_dependencies",
     "summarize_missing_required_dependencies",

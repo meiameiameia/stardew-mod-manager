@@ -27,6 +27,7 @@ from PySide6.QtGui import QDesktopServices
 from sdvmm.app.inventory_presenter import (
     build_dependency_preflight_text,
     build_downloads_intake_text,
+    build_environment_status_text,
     build_findings_text,
     build_intake_correlation_text,
     build_package_inspection_text,
@@ -44,6 +45,7 @@ from sdvmm.app.shell_service import (
 from sdvmm.domain.models import (
     AppConfig,
     DownloadsIntakeResult,
+    GameEnvironmentStatus,
     ModUpdateStatus,
     ModUpdateReport,
     ModsInventory,
@@ -66,10 +68,13 @@ class MainWindow(QMainWindow):
         self._detected_intakes: tuple[DownloadsIntakeResult, ...] = tuple()
         self._intake_correlations: tuple[IntakeUpdateCorrelation, ...] = tuple()
         self._guided_update_unique_ids: tuple[str, ...] = tuple()
+        self._last_environment_status: GameEnvironmentStatus | None = None
 
         self.setWindowTitle("Stardew Mod Manager - Local Scan")
         self.resize(950, 600)
 
+        self._game_path_input = QLineEdit()
+        self._game_path_input.setPlaceholderText("/path/to/Stardew Valley")
         self._mods_path_input = QLineEdit()
         self._mods_path_input.setPlaceholderText("/path/to/Stardew/Mods")
         self._zip_path_input = QLineEdit()
@@ -99,6 +104,7 @@ class MainWindow(QMainWindow):
 
         self._status_label = QLabel()
         self._scan_context_label = QLabel("Scan context: not set")
+        self._environment_status_label = QLabel("Environment: not checked")
         self._watch_status_label = QLabel("Watcher: stopped")
         self._watch_timer = QTimer(self)
         self._watch_timer.setInterval(2000)
@@ -109,6 +115,7 @@ class MainWindow(QMainWindow):
         self._sandbox_archive_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._overwrite_checkbox.toggled.connect(self._invalidate_pending_plan)
         self._scan_target_combo.currentIndexChanged.connect(self._refresh_scan_context_preview)
+        self._game_path_input.textChanged.connect(self._on_game_path_changed)
         self._mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
         self._watched_downloads_path_input.textChanged.connect(self._on_watched_path_changed)
@@ -123,52 +130,63 @@ class MainWindow(QMainWindow):
         root_layout = QVBoxLayout(container)
 
         path_layout = QGridLayout()
-        path_layout.addWidget(QLabel("Mods directory"), 0, 0)
-        path_layout.addWidget(self._mods_path_input, 0, 1)
+        path_layout.addWidget(QLabel("Game directory"), 0, 0)
+        path_layout.addWidget(self._game_path_input, 0, 1)
+
+        browse_game_button = QPushButton("Browse game")
+        browse_game_button.clicked.connect(self._on_browse_game)
+        path_layout.addWidget(browse_game_button, 0, 2)
+
+        path_layout.addWidget(QLabel("Mods directory"), 1, 0)
+        path_layout.addWidget(self._mods_path_input, 1, 1)
 
         browse_button = QPushButton("Browse")
         browse_button.clicked.connect(self._on_browse)
-        path_layout.addWidget(browse_button, 0, 2)
+        path_layout.addWidget(browse_button, 1, 2)
 
-        path_layout.addWidget(QLabel("Zip package"), 1, 0)
-        path_layout.addWidget(self._zip_path_input, 1, 1)
+        path_layout.addWidget(QLabel("Zip package"), 2, 0)
+        path_layout.addWidget(self._zip_path_input, 2, 1)
 
         browse_zip_button = QPushButton("Browse zip")
         browse_zip_button.clicked.connect(self._on_browse_zip)
-        path_layout.addWidget(browse_zip_button, 1, 2)
+        path_layout.addWidget(browse_zip_button, 2, 2)
 
-        path_layout.addWidget(QLabel("Sandbox Mods target"), 2, 0)
-        path_layout.addWidget(self._sandbox_mods_path_input, 2, 1)
+        path_layout.addWidget(QLabel("Sandbox Mods target"), 3, 0)
+        path_layout.addWidget(self._sandbox_mods_path_input, 3, 1)
 
         browse_sandbox_button = QPushButton("Browse sandbox")
         browse_sandbox_button.clicked.connect(self._on_browse_sandbox_mods)
-        path_layout.addWidget(browse_sandbox_button, 2, 2)
+        path_layout.addWidget(browse_sandbox_button, 3, 2)
 
-        path_layout.addWidget(QLabel("Sandbox archive path"), 3, 0)
-        path_layout.addWidget(self._sandbox_archive_path_input, 3, 1)
+        path_layout.addWidget(QLabel("Sandbox archive path"), 4, 0)
+        path_layout.addWidget(self._sandbox_archive_path_input, 4, 1)
 
         browse_archive_button = QPushButton("Browse archive")
         browse_archive_button.clicked.connect(self._on_browse_sandbox_archive)
-        path_layout.addWidget(browse_archive_button, 3, 2)
+        path_layout.addWidget(browse_archive_button, 4, 2)
 
-        path_layout.addWidget(self._overwrite_checkbox, 4, 1)
-        path_layout.addWidget(QLabel("Watched downloads path"), 5, 0)
-        path_layout.addWidget(self._watched_downloads_path_input, 5, 1)
+        path_layout.addWidget(self._overwrite_checkbox, 5, 1)
+        path_layout.addWidget(QLabel("Watched downloads path"), 6, 0)
+        path_layout.addWidget(self._watched_downloads_path_input, 6, 1)
 
         browse_downloads_button = QPushButton("Browse downloads")
         browse_downloads_button.clicked.connect(self._on_browse_watched_downloads)
-        path_layout.addWidget(browse_downloads_button, 5, 2)
+        path_layout.addWidget(browse_downloads_button, 6, 2)
 
-        path_layout.addWidget(QLabel("Scan target"), 6, 0)
-        path_layout.addWidget(self._scan_target_combo, 6, 1)
-        path_layout.addWidget(QLabel("Detected packages"), 7, 0)
-        path_layout.addWidget(self._intake_result_combo, 7, 1)
-        path_layout.addWidget(self._plan_selected_intake_button, 7, 2)
+        path_layout.addWidget(QLabel("Scan target"), 7, 0)
+        path_layout.addWidget(self._scan_target_combo, 7, 1)
+        path_layout.addWidget(QLabel("Detected packages"), 8, 0)
+        path_layout.addWidget(self._intake_result_combo, 8, 1)
+        path_layout.addWidget(self._plan_selected_intake_button, 8, 2)
 
         actions_row = QHBoxLayout()
         save_button = QPushButton("Save config")
         save_button.clicked.connect(self._on_save_config)
         actions_row.addWidget(save_button)
+
+        detect_environment_button = QPushButton("Detect environment")
+        detect_environment_button.clicked.connect(self._on_detect_environment)
+        actions_row.addWidget(detect_environment_button)
 
         scan_button = QPushButton("Scan")
         scan_button.clicked.connect(self._on_scan)
@@ -211,6 +229,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(QLabel("Warnings and findings"))
         root_layout.addWidget(self._findings_box)
         root_layout.addWidget(self._scan_context_label)
+        root_layout.addWidget(self._environment_status_label)
         root_layout.addWidget(self._watch_status_label)
         root_layout.addWidget(self._status_label)
 
@@ -221,6 +240,7 @@ class MainWindow(QMainWindow):
         self._config = state.config
 
         if state.config is not None:
+            self._game_path_input.setText(str(state.config.game_path))
             self._mods_path_input.setText(str(state.config.mods_path))
             if state.config.sandbox_mods_path is not None:
                 self._sandbox_mods_path_input.setText(str(state.config.sandbox_mods_path))
@@ -236,6 +256,15 @@ class MainWindow(QMainWindow):
             self._set_status(state.message)
 
         self._refresh_scan_context_preview()
+
+    def _on_browse_game(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select game directory",
+            self._game_path_input.text() or "",
+        )
+        if selected:
+            self._game_path_input.setText(selected)
 
     def _on_browse(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -291,6 +320,7 @@ class MainWindow(QMainWindow):
     def _on_save_config(self) -> None:
         try:
             self._config = self._shell_service.save_operational_config(
+                game_path_text=self._game_path_input.text(),
                 mods_dir_text=self._mods_path_input.text(),
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
                 sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
@@ -304,6 +334,22 @@ class MainWindow(QMainWindow):
             return
 
         self._set_status(f"Saved config to {self._shell_service.state_file}")
+
+    def _on_detect_environment(self) -> None:
+        try:
+            status = self._shell_service.detect_game_environment(self._game_path_input.text())
+        except AppShellError as exc:
+            QMessageBox.critical(self, "Environment detect failed", str(exc))
+            self._set_status(str(exc))
+            return
+
+        self._last_environment_status = status
+        if status.mods_path is not None and not self._mods_path_input.text().strip():
+            self._mods_path_input.setText(str(status.mods_path))
+
+        self._environment_status_label.setText(_environment_summary_label(status))
+        self._findings_box.setPlainText(build_environment_status_text(status))
+        self._set_status("Environment detection complete.")
 
     def _on_scan(self) -> None:
         try:
@@ -588,6 +634,10 @@ class MainWindow(QMainWindow):
             self._watch_status_label.setText("Watcher: stopped (path changed)")
             self._set_status("Watcher stopped because watched path changed.")
 
+    def _on_game_path_changed(self, *_: object) -> None:
+        self._last_environment_status = None
+        self._environment_status_label.setText("Environment: not checked")
+
     def _on_plan_selected_intake(self) -> None:
         selected_index = self._selected_intake_index()
         try:
@@ -735,3 +785,12 @@ class MainWindow(QMainWindow):
         if target == SCAN_TARGET_CONFIGURED_REAL_MODS:
             return "configured Mods directory"
         return "sandbox Mods directory"
+
+
+def _environment_summary_label(status: GameEnvironmentStatus) -> str:
+    if "invalid_game_path" in status.state_codes:
+        return "Environment: invalid game path"
+
+    mods_state = "mods detected" if "mods_path_detected" in status.state_codes else "mods not detected"
+    smapi_state = "SMAPI detected" if "smapi_detected" in status.state_codes else "SMAPI not detected"
+    return f"Environment: {mods_state}, {smapi_state}"

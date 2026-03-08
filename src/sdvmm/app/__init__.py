@@ -1,6 +1,7 @@
 from .inventory_presenter import (
     build_dependency_preflight_text,
     build_downloads_intake_text,
+    build_environment_status_text,
     build_findings_text,
     build_intake_correlation_text,
     build_package_inspection_text,
@@ -32,6 +33,7 @@ __all__ = [
     "SCAN_TARGET_SANDBOX_MODS",
     "StartupConfigState",
     "build_findings_text",
+    "build_environment_status_text",
     "build_dependency_preflight_text",
     "build_downloads_intake_text",
     "build_intake_correlation_text",

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from sdvmm.domain.dependency_codes import DependencyState
+from sdvmm.domain.environment_codes import EnvironmentState
 from sdvmm.domain.install_codes import SandboxInstallAction
 from sdvmm.domain.package_codes import PackageFindingKind
 from sdvmm.domain.scan_codes import ScanEntryKind
@@ -21,6 +22,15 @@ class AppConfig:
     sandbox_archive_path: Path | None = None
     watched_downloads_path: Path | None = None
     scan_target: str = "configured_real_mods"
+
+
+@dataclass(frozen=True, slots=True)
+class GameEnvironmentStatus:
+    game_path: Path
+    mods_path: Path | None
+    smapi_path: Path | None
+    state_codes: tuple[EnvironmentState, ...]
+    notes: tuple[str, ...] = tuple()
 
 
 @dataclass(frozen=True, slots=True)

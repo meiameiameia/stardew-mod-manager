@@ -492,6 +492,7 @@ def test_save_operational_config_persists_paths_and_scan_target(tmp_path: Path) 
     downloads.mkdir()
 
     saved = service.save_operational_config(
+        game_path_text=str(mods.parent),
         mods_dir_text=str(mods),
         sandbox_mods_path_text=str(sandbox),
         sandbox_archive_path_text=str(archive),
@@ -512,6 +513,74 @@ def test_save_operational_config_persists_paths_and_scan_target(tmp_path: Path) 
     assert reloaded.config.sandbox_archive_path == archive
     assert reloaded.config.watched_downloads_path == downloads
     assert reloaded.config.scan_target == "sandbox_mods"
+
+
+def test_save_operational_config_can_derive_mods_path_from_game_path(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    game_path = tmp_path / "Stardew Valley"
+    mods = game_path / "Mods"
+    sandbox = tmp_path / "SandboxMods"
+    archive = tmp_path / "SandboxArchive"
+    downloads = tmp_path / "Downloads"
+    game_path.mkdir()
+    mods.mkdir()
+    sandbox.mkdir()
+    archive.mkdir()
+    downloads.mkdir()
+
+    saved = service.save_operational_config(
+        game_path_text=str(game_path),
+        mods_dir_text="",
+        sandbox_mods_path_text=str(sandbox),
+        sandbox_archive_path_text=str(archive),
+        watched_downloads_path_text=str(downloads),
+        scan_target="configured_real_mods",
+        existing_config=None,
+    )
+
+    assert saved.game_path == game_path
+    assert saved.mods_path == mods
+
+
+def test_detect_game_environment_reports_smapi_states(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    game_path = tmp_path / "Stardew Valley"
+    mods = game_path / "Mods"
+    game_path.mkdir()
+    (game_path / "Stardew Valley").write_text("binary", encoding="utf-8")
+    mods.mkdir()
+
+    no_smapi_status = service.detect_game_environment(str(game_path))
+    assert "smapi_not_detected" in no_smapi_status.state_codes
+
+    smapi = game_path / "StardewModdingAPI"
+    smapi.write_text("x", encoding="utf-8")
+    smapi_status = service.detect_game_environment(str(game_path))
+    assert "smapi_detected" in smapi_status.state_codes
+    assert smapi_status.smapi_path == smapi
+
+
+def test_detect_game_environment_reports_invalid_game_path_state(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+
+    status = service.detect_game_environment(str(tmp_path / "missing-game-path"))
+
+    assert status.state_codes == ("invalid_game_path",)
+
+
+def test_detect_game_environment_marks_existing_non_game_directory_as_invalid(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    fake_game_path = tmp_path / "NotStardew"
+    fake_game_path.mkdir()
+    (fake_game_path / "Mods").mkdir()
+
+    status = service.detect_game_environment(str(fake_game_path))
+
+    assert "invalid_game_path" in status.state_codes
+    assert "mods_path_detected" in status.state_codes
+    assert "game_path_detected" not in status.state_codes
 
 
 def test_initialize_and_poll_downloads_watch_detects_new_zip(tmp_path: Path) -> None:
