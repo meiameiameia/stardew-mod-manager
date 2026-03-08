@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from sdvmm.domain.models import (
+    DownloadsIntakeResult,
+    DownloadsWatchPollResult,
     ModUpdateReport,
     ModsInventory,
     PackageInspectionResult,
@@ -175,3 +177,47 @@ def build_update_report_text(report: ModUpdateReport) -> str:
             lines.append(f"  note: {status.message}")
 
     return "\n".join(lines)
+
+
+def build_downloads_intake_text(result: DownloadsWatchPollResult) -> str:
+    lines: list[str] = []
+    lines.append(f"Watched downloads: {result.watched_path}")
+    lines.append(f"Known zip files: {len(result.known_zip_paths)}")
+    lines.append("")
+
+    if not result.intakes:
+        lines.append("No new zip packages detected.")
+        return "\n".join(lines)
+
+    lines.append("New package intake results:")
+    for intake in result.intakes:
+        lines.extend(_format_single_intake(intake))
+
+    return "\n".join(lines)
+
+
+def _format_single_intake(intake: DownloadsIntakeResult) -> list[str]:
+    lines: list[str] = []
+    lines.append(
+        "- "
+        f"{intake.package_path.name} | classification={intake.classification}"
+    )
+    lines.append(f"  message: {intake.message}")
+
+    if intake.mods:
+        for mod in intake.mods:
+            lines.append(f"  mod: {mod.name} | {mod.unique_id} | {mod.version}")
+    else:
+        lines.append("  mod: <none>")
+
+    if intake.matched_installed_unique_ids:
+        matches = ", ".join(intake.matched_installed_unique_ids)
+        lines.append(f"  installed-match: {matches}")
+
+    for warning in intake.warnings:
+        lines.append(f"  warning[{warning.code}]: {warning.message}")
+
+    for finding in intake.findings:
+        lines.append(f"  finding[{finding.kind}]: {finding.message}")
+
+    return lines
