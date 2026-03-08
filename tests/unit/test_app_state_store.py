@@ -20,6 +20,10 @@ def test_save_and_load_app_config_round_trip(tmp_path: Path) -> None:
         game_path=Path("/games/Stardew Valley"),
         mods_path=Path("/games/Stardew Valley/Mods"),
         app_data_path=Path("/home/user/.local/share/sdvmm"),
+        sandbox_mods_path=Path("/tmp/Sandbox/Mods"),
+        sandbox_archive_path=Path("/tmp/Sandbox/.archive"),
+        watched_downloads_path=Path("/tmp/Downloads"),
+        scan_target="sandbox_mods",
     )
 
     save_app_config(state_file=state_file, config=config)
@@ -29,6 +33,8 @@ def test_save_and_load_app_config_round_trip(tmp_path: Path) -> None:
 
     payload = json.loads(state_file.read_text(encoding="utf-8"))
     assert payload["version"] == APP_STATE_VERSION
+    assert payload["app_config"]["sandbox_mods_path"] == "/tmp/Sandbox/Mods"
+    assert payload["app_config"]["watched_downloads_path"] == "/tmp/Downloads"
 
 
 def test_load_app_config_returns_none_when_file_does_not_exist(tmp_path: Path) -> None:
@@ -63,3 +69,28 @@ def test_load_app_config_rejects_unsupported_version(tmp_path: Path) -> None:
 
     with pytest.raises(AppStateStoreError, match="Unsupported app-state version"):
         load_app_config(state_file)
+
+
+def test_load_app_config_defaults_optional_fields_when_missing(tmp_path: Path) -> None:
+    state_file = tmp_path / "app-state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "version": APP_STATE_VERSION,
+                "app_config": {
+                    "game_path": "/game",
+                    "mods_path": "/mods",
+                    "app_data_path": "/data",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_app_config(state_file)
+
+    assert loaded is not None
+    assert loaded.sandbox_mods_path is None
+    assert loaded.sandbox_archive_path is None
+    assert loaded.watched_downloads_path is None
+    assert loaded.scan_target == "configured_real_mods"

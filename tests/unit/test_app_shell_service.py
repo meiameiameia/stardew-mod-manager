@@ -360,6 +360,77 @@ def test_check_updates_marks_metadata_unavailable_for_nexus_link(
     assert "[missing_api_key]" in (report.statuses[0].message or "")
 
 
+def test_save_operational_config_persists_paths_and_scan_target(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    mods = tmp_path / "Mods"
+    sandbox = tmp_path / "SandboxMods"
+    archive = tmp_path / "SandboxArchive"
+    downloads = tmp_path / "Downloads"
+    mods.mkdir()
+    sandbox.mkdir()
+    archive.mkdir()
+    downloads.mkdir()
+
+    saved = service.save_operational_config(
+        mods_dir_text=str(mods),
+        sandbox_mods_path_text=str(sandbox),
+        sandbox_archive_path_text=str(archive),
+        watched_downloads_path_text=str(downloads),
+        scan_target="sandbox_mods",
+        existing_config=None,
+    )
+
+    assert saved.mods_path == mods
+    assert saved.sandbox_mods_path == sandbox
+    assert saved.sandbox_archive_path == archive
+    assert saved.watched_downloads_path == downloads
+    assert saved.scan_target == "sandbox_mods"
+
+    reloaded = AppShellService(state_file=tmp_path / "app-state.json").load_startup_config()
+    assert reloaded.config is not None
+    assert reloaded.config.sandbox_mods_path == sandbox
+    assert reloaded.config.sandbox_archive_path == archive
+    assert reloaded.config.watched_downloads_path == downloads
+    assert reloaded.config.scan_target == "sandbox_mods"
+
+
+def test_initialize_and_poll_downloads_watch_detects_new_zip(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+
+    known = service.initialize_downloads_watch(str(downloads))
+    assert known == ()
+
+    package = downloads / "candidate.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "Mod/manifest.json",
+            '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
+        )
+
+    result = service.poll_downloads_watch(
+        watched_downloads_path_text=str(downloads),
+        known_zip_paths=known,
+        inventory=_empty_inventory(),
+    )
+    assert len(result.intakes) == 1
+    assert result.intakes[0].classification == "new_install_candidate"
+
+
+def _empty_inventory():
+    from sdvmm.domain.models import ModsInventory
+
+    return ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+
+
 def _create_mod(mods_root: Path, folder_name: str, unique_id: str) -> None:
     mod_path = mods_root / folder_name
     mod_path.mkdir(parents=True, exist_ok=True)

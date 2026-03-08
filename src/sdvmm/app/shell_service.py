@@ -8,6 +8,7 @@ import zipfile
 
 from sdvmm.domain.models import (
     AppConfig,
+    DownloadsWatchPollResult,
     ModUpdateReport,
     ModsInventory,
     PackageInspectionResult,
@@ -21,6 +22,7 @@ from sdvmm.services.app_state_store import (
 )
 from sdvmm.services.mod_scanner import scan_mods_directory
 from sdvmm.services.package_inspector import inspect_zip_package
+from sdvmm.services.downloads_intake import initialize_known_zip_paths, poll_watched_directory
 from sdvmm.services.sandbox_installer import (
     SandboxInstallError,
     build_sandbox_install_plan as build_sandbox_install_plan_service,
@@ -101,6 +103,58 @@ class AppShellService:
 
         return config
 
+    def save_operational_config(
+        self,
+        *,
+        mods_dir_text: str,
+        sandbox_mods_path_text: str,
+        sandbox_archive_path_text: str,
+        watched_downloads_path_text: str,
+        scan_target: ScanTargetKind,
+        existing_config: AppConfig | None,
+    ) -> AppConfig:
+        if scan_target not in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS}:
+            raise AppShellError(f"Unknown scan target: {scan_target}")
+
+        mods_path = self._parse_and_validate_mods_path(mods_dir_text)
+
+        sandbox_mods_path = self._parse_optional_directory(sandbox_mods_path_text)
+        sandbox_archive_path: Path | None = None
+        if sandbox_mods_path is not None:
+            sandbox_archive_path = self._parse_and_validate_sandbox_archive_path(
+                sandbox_archive_path_text=sandbox_archive_path_text,
+                sandbox_mods_path=sandbox_mods_path,
+            )
+        elif sandbox_archive_path_text.strip():
+            archive_path = Path(sandbox_archive_path_text.strip()).expanduser()
+            if archive_path.exists() and not archive_path.is_dir():
+                raise AppShellError(f"Sandbox archive path is not a directory: {archive_path}")
+            if not archive_path.parent.exists() or not archive_path.parent.is_dir():
+                raise AppShellError(
+                    f"Sandbox archive parent directory is not accessible: {archive_path.parent}"
+                )
+            sandbox_archive_path = archive_path
+
+        watched_downloads_path = self._parse_optional_directory(watched_downloads_path_text)
+
+        config = self._build_config(mods_path=mods_path, existing_config=existing_config)
+        config = AppConfig(
+            game_path=config.game_path,
+            mods_path=config.mods_path,
+            app_data_path=config.app_data_path,
+            sandbox_mods_path=sandbox_mods_path,
+            sandbox_archive_path=sandbox_archive_path,
+            watched_downloads_path=watched_downloads_path,
+            scan_target=scan_target,
+        )
+
+        try:
+            save_app_config(state_file=self._state_file, config=config)
+        except OSError as exc:
+            raise AppShellError(f"Could not save configuration: {exc}") from exc
+
+        return config
+
     def scan(self, mods_dir_text: str) -> ModsInventory:
         mods_path = self._parse_and_validate_mods_path(mods_dir_text)
 
@@ -145,6 +199,32 @@ class AppShellService:
             return check_updates_for_inventory(inventory)
         except OSError as exc:
             raise AppShellError(f"Could not check remote metadata: {exc}") from exc
+
+    def initialize_downloads_watch(self, watched_downloads_path_text: str) -> tuple[Path, ...]:
+        watched_path = self._parse_and_validate_watched_downloads_path(watched_downloads_path_text)
+
+        try:
+            return initialize_known_zip_paths(watched_path)
+        except OSError as exc:
+            raise AppShellError(f"Could not initialize watched downloads directory: {exc}") from exc
+
+    def poll_downloads_watch(
+        self,
+        *,
+        watched_downloads_path_text: str,
+        known_zip_paths: tuple[Path, ...],
+        inventory: ModsInventory,
+    ) -> DownloadsWatchPollResult:
+        watched_path = self._parse_and_validate_watched_downloads_path(watched_downloads_path_text)
+
+        try:
+            return poll_watched_directory(
+                watched_path=watched_path,
+                known_zip_paths=known_zip_paths,
+                inventory=inventory,
+            )
+        except OSError as exc:
+            raise AppShellError(f"Could not poll watched downloads directory: {exc}") from exc
 
     def build_sandbox_install_plan(
         self,
@@ -216,12 +296,17 @@ class AppShellService:
                 game_path=existing_config.game_path,
                 mods_path=mods_path,
                 app_data_path=existing_config.app_data_path,
+                sandbox_mods_path=existing_config.sandbox_mods_path,
+                sandbox_archive_path=existing_config.sandbox_archive_path,
+                watched_downloads_path=existing_config.watched_downloads_path,
+                scan_target=existing_config.scan_target,
             )
 
         return AppConfig(
             game_path=mods_path.parent,
             mods_path=mods_path,
             app_data_path=self._state_file.parent,
+            scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
         )
 
     @staticmethod
@@ -292,6 +377,36 @@ class AppShellService:
             )
 
         return archive_path
+
+    @staticmethod
+    def _parse_and_validate_watched_downloads_path(watched_downloads_path_text: str) -> Path:
+        raw_value = watched_downloads_path_text.strip()
+        if not raw_value:
+            raise AppShellError("Watched downloads directory is required")
+
+        watched_path = Path(raw_value).expanduser()
+        if not watched_path.exists():
+            raise AppShellError(f"Watched downloads directory does not exist: {watched_path}")
+        if not watched_path.is_dir():
+            raise AppShellError(
+                f"Watched downloads path is not a directory: {watched_path}"
+            )
+
+        return watched_path
+
+    @staticmethod
+    def _parse_optional_directory(path_text: str) -> Path | None:
+        raw_value = path_text.strip()
+        if not raw_value:
+            return None
+
+        path = Path(raw_value).expanduser()
+        if not path.exists():
+            raise AppShellError(f"Directory does not exist: {path}")
+        if not path.is_dir():
+            raise AppShellError(f"Path is not a directory: {path}")
+
+        return path
 
 
 def _paths_deterministically_match(path_a: Path, path_b: Path) -> bool:

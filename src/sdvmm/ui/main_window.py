@@ -21,9 +21,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtCore import QUrl
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QDesktopServices
 
 from sdvmm.app.inventory_presenter import (
+    build_downloads_intake_text,
     build_findings_text,
     build_package_inspection_text,
     build_sandbox_install_plan_text,
@@ -48,6 +50,7 @@ class MainWindow(QMainWindow):
         self._current_inventory: ModsInventory | None = None
         self._current_update_report: ModUpdateReport | None = None
         self._row_remote_links: dict[int, str] = {}
+        self._known_watched_zip_paths: tuple[Path, ...] = tuple()
 
         self.setWindowTitle("Stardew Mod Manager - Local Scan")
         self.resize(950, 600)
@@ -60,6 +63,8 @@ class MainWindow(QMainWindow):
         self._sandbox_mods_path_input.setPlaceholderText("/path/to/Sandbox/Mods")
         self._sandbox_archive_path_input = QLineEdit()
         self._sandbox_archive_path_input.setPlaceholderText("/path/to/Sandbox/.sdvmm-archive")
+        self._watched_downloads_path_input = QLineEdit()
+        self._watched_downloads_path_input.setPlaceholderText("/path/to/Downloads")
         self._overwrite_checkbox = QCheckBox("Allow overwrite with archive")
         self._scan_target_combo = QComboBox()
         self._scan_target_combo.addItem("Configured Mods path", SCAN_TARGET_CONFIGURED_REAL_MODS)
@@ -77,6 +82,10 @@ class MainWindow(QMainWindow):
 
         self._status_label = QLabel()
         self._scan_context_label = QLabel("Scan context: not set")
+        self._watch_status_label = QLabel("Watcher: stopped")
+        self._watch_timer = QTimer(self)
+        self._watch_timer.setInterval(2000)
+        self._watch_timer.timeout.connect(self._on_watch_tick)
 
         self._zip_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._sandbox_mods_path_input.textChanged.connect(self._invalidate_pending_plan)
@@ -85,6 +94,7 @@ class MainWindow(QMainWindow):
         self._scan_target_combo.currentIndexChanged.connect(self._refresh_scan_context_preview)
         self._mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
+        self._watched_downloads_path_input.textChanged.connect(self._on_watched_path_changed)
 
         self._build_layout()
         self._load_startup_state()
@@ -123,8 +133,15 @@ class MainWindow(QMainWindow):
         path_layout.addWidget(browse_archive_button, 3, 2)
 
         path_layout.addWidget(self._overwrite_checkbox, 4, 1)
-        path_layout.addWidget(QLabel("Scan target"), 5, 0)
-        path_layout.addWidget(self._scan_target_combo, 5, 1)
+        path_layout.addWidget(QLabel("Watched downloads path"), 5, 0)
+        path_layout.addWidget(self._watched_downloads_path_input, 5, 1)
+
+        browse_downloads_button = QPushButton("Browse downloads")
+        browse_downloads_button.clicked.connect(self._on_browse_watched_downloads)
+        path_layout.addWidget(browse_downloads_button, 5, 2)
+
+        path_layout.addWidget(QLabel("Scan target"), 6, 0)
+        path_layout.addWidget(self._scan_target_combo, 6, 1)
 
         actions_row = QHBoxLayout()
         save_button = QPushButton("Save config")
@@ -154,6 +171,14 @@ class MainWindow(QMainWindow):
         open_remote_button = QPushButton("Open remote page")
         open_remote_button.clicked.connect(self._on_open_remote_page)
         actions_row.addWidget(open_remote_button)
+
+        start_watch_button = QPushButton("Start watch")
+        start_watch_button.clicked.connect(self._on_start_watch)
+        actions_row.addWidget(start_watch_button)
+
+        stop_watch_button = QPushButton("Stop watch")
+        stop_watch_button.clicked.connect(self._on_stop_watch)
+        actions_row.addWidget(stop_watch_button)
         actions_row.addStretch(1)
 
         root_layout.addLayout(path_layout)
@@ -163,6 +188,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(QLabel("Warnings and findings"))
         root_layout.addWidget(self._findings_box)
         root_layout.addWidget(self._scan_context_label)
+        root_layout.addWidget(self._watch_status_label)
         root_layout.addWidget(self._status_label)
 
         self.setCentralWidget(container)
@@ -173,6 +199,13 @@ class MainWindow(QMainWindow):
 
         if state.config is not None:
             self._mods_path_input.setText(str(state.config.mods_path))
+            if state.config.sandbox_mods_path is not None:
+                self._sandbox_mods_path_input.setText(str(state.config.sandbox_mods_path))
+            if state.config.sandbox_archive_path is not None:
+                self._sandbox_archive_path_input.setText(str(state.config.sandbox_archive_path))
+            if state.config.watched_downloads_path is not None:
+                self._watched_downloads_path_input.setText(str(state.config.watched_downloads_path))
+            self._set_current_scan_target(state.config.scan_target)
             self._set_status(f"Loaded saved config from {self._shell_service.state_file}")
 
         if state.message:
@@ -223,10 +256,23 @@ class MainWindow(QMainWindow):
             self._pending_install_plan = None
             self._sandbox_archive_path_input.setText(selected)
 
+    def _on_browse_watched_downloads(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select watched downloads directory",
+            self._watched_downloads_path_input.text() or "",
+        )
+        if selected:
+            self._watched_downloads_path_input.setText(selected)
+
     def _on_save_config(self) -> None:
         try:
-            self._config = self._shell_service.save_mods_directory(
+            self._config = self._shell_service.save_operational_config(
                 mods_dir_text=self._mods_path_input.text(),
+                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
+                watched_downloads_path_text=self._watched_downloads_path_input.text(),
+                scan_target=self._current_scan_target(),
                 existing_config=self._config,
             )
         except AppShellError as exc:
@@ -367,6 +413,48 @@ class MainWindow(QMainWindow):
 
         self._set_status(f"Opened remote page: {url}")
 
+    def _on_start_watch(self) -> None:
+        try:
+            self._known_watched_zip_paths = self._shell_service.initialize_downloads_watch(
+                self._watched_downloads_path_input.text()
+            )
+        except AppShellError as exc:
+            QMessageBox.critical(self, "Watch start failed", str(exc))
+            self._set_status(str(exc))
+            return
+
+        self._watch_timer.start()
+        self._watch_status_label.setText(
+            f"Watcher: running ({self._watched_downloads_path_input.text().strip()})"
+        )
+        self._set_status("Downloads watcher started.")
+
+    def _on_stop_watch(self) -> None:
+        self._watch_timer.stop()
+        self._watch_status_label.setText("Watcher: stopped")
+        self._set_status("Downloads watcher stopped.")
+
+    def _on_watch_tick(self) -> None:
+        try:
+            result = self._shell_service.poll_downloads_watch(
+                watched_downloads_path_text=self._watched_downloads_path_input.text(),
+                known_zip_paths=self._known_watched_zip_paths,
+                inventory=self._current_inventory_or_empty(),
+            )
+        except AppShellError as exc:
+            self._watch_timer.stop()
+            self._watch_status_label.setText("Watcher: stopped (error)")
+            self._set_status(str(exc))
+            self._findings_box.setPlainText(str(exc))
+            return
+
+        self._known_watched_zip_paths = result.known_zip_paths
+        if not result.intakes:
+            return
+
+        self._findings_box.setPlainText(build_downloads_intake_text(result))
+        self._set_status(f"Detected {len(result.intakes)} new package(s) in watched downloads.")
+
     def _render_inventory(self, inventory: ModsInventory) -> None:
         self._current_inventory = inventory
         self._current_update_report = None
@@ -411,6 +499,25 @@ class MainWindow(QMainWindow):
 
     def _invalidate_pending_plan(self, *_: object) -> None:
         self._pending_install_plan = None
+
+    def _on_watched_path_changed(self, *_: object) -> None:
+        self._known_watched_zip_paths = tuple()
+        if self._watch_timer.isActive():
+            self._watch_timer.stop()
+            self._watch_status_label.setText("Watcher: stopped (path changed)")
+
+    def _current_inventory_or_empty(self) -> ModsInventory:
+        if self._current_inventory is not None:
+            return self._current_inventory
+
+        return ModsInventory(
+            mods=tuple(),
+            parse_warnings=tuple(),
+            duplicate_unique_ids=tuple(),
+            missing_required_dependencies=tuple(),
+            scan_entry_findings=tuple(),
+            ignored_entries=tuple(),
+        )
 
     def _refresh_scan_context_preview(self, *_: object) -> None:
         target = self._current_scan_target()
