@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 from sdvmm.app.shell_service import IntakeUpdateCorrelation
+from sdvmm.domain.dependency_codes import (
+    MISSING_REQUIRED_DEPENDENCY,
+    OPTIONAL_DEPENDENCY_MISSING,
+    SATISFIED,
+    UNRESOLVED_DEPENDENCY_CONTEXT,
+)
 from sdvmm.domain.models import (
+    DependencyPreflightFinding,
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
     ModUpdateReport,
@@ -60,6 +67,46 @@ def build_findings_text(inventory: ModsInventory) -> str:
     return "\n".join(lines)
 
 
+def build_dependency_preflight_text(
+    *,
+    title: str,
+    findings: tuple[DependencyPreflightFinding, ...],
+) -> str:
+    lines: list[str] = [title]
+    if not findings:
+        lines.append("- none")
+        return "\n".join(lines)
+
+    grouped: dict[str, list[DependencyPreflightFinding]] = {
+        SATISFIED: [],
+        MISSING_REQUIRED_DEPENDENCY: [],
+        OPTIONAL_DEPENDENCY_MISSING: [],
+        UNRESOLVED_DEPENDENCY_CONTEXT: [],
+    }
+    for finding in findings:
+        grouped.setdefault(finding.state, []).append(finding)
+
+    for state in (
+        SATISFIED,
+        MISSING_REQUIRED_DEPENDENCY,
+        OPTIONAL_DEPENDENCY_MISSING,
+        UNRESOLVED_DEPENDENCY_CONTEXT,
+    ):
+        entries = grouped.get(state, [])
+        if not entries:
+            continue
+        lines.append(f"- [{state}] {len(entries)}")
+        for entry in entries:
+            requirement = "required" if entry.required else "optional"
+            lines.append(
+                "  "
+                f"{entry.required_by_name} ({entry.required_by_unique_id}) -> "
+                f"{entry.dependency_unique_id} ({requirement})"
+            )
+
+    return "\n".join(lines)
+
+
 def build_package_inspection_text(result: PackageInspectionResult) -> str:
     lines: list[str] = []
     lines.append(f"Package: {result.package_path.name}")
@@ -90,6 +137,14 @@ def build_package_inspection_text(result: PackageInspectionResult) -> str:
             lines.append(f"- [{warning.code}] {warning.manifest_path}: {warning.message}")
     else:
         lines.append("Package warnings: none")
+
+    lines.append("")
+    lines.append(
+        build_dependency_preflight_text(
+            title="Package dependency preflight:",
+            findings=result.dependency_findings,
+        )
+    )
 
     return "\n".join(lines)
 
@@ -134,6 +189,14 @@ def build_sandbox_install_plan_text(plan: SandboxInstallPlan) -> str:
             lines.append(f"- [{finding.kind}] {finding.message}")
     else:
         lines.append("Package findings: none")
+
+    lines.append("")
+    lines.append(
+        build_dependency_preflight_text(
+            title="Plan dependency preflight:",
+            findings=plan.dependency_findings,
+        )
+    )
 
     return "\n".join(lines)
 
@@ -222,6 +285,12 @@ def _format_single_intake(intake: DownloadsIntakeResult) -> list[str]:
     for finding in intake.findings:
         lines.append(f"  finding[{finding.kind}]: {finding.message}")
 
+    dependency_summary = _dependency_summary(intake.dependency_findings)
+    if dependency_summary:
+        lines.append(f"  dependency-summary: {dependency_summary}")
+        for detail in _intake_dependency_details(intake.dependency_findings):
+            lines.append(f"  dependency: {detail}")
+
     return lines
 
 
@@ -233,6 +302,50 @@ def _intake_next_action(classification: str) -> str:
     if classification == "update_replace_candidate":
         return "actionable (plan install, review overwrite/archive preflight)"
     return "actionable (plan install)"
+
+
+def _dependency_summary(findings: tuple[DependencyPreflightFinding, ...]) -> str:
+    if not findings:
+        return ""
+
+    required_missing = sum(
+        1 for finding in findings if finding.state == MISSING_REQUIRED_DEPENDENCY
+    )
+    optional_missing = sum(
+        1 for finding in findings if finding.state == OPTIONAL_DEPENDENCY_MISSING
+    )
+    unresolved = sum(
+        1 for finding in findings if finding.state == UNRESOLVED_DEPENDENCY_CONTEXT
+    )
+    satisfied = sum(1 for finding in findings if finding.state == SATISFIED)
+
+    return (
+        f"satisfied={satisfied}, "
+        f"missing_required={required_missing}, "
+        f"optional_missing={optional_missing}, "
+        f"unresolved={unresolved}"
+    )
+
+
+def _intake_dependency_details(
+    findings: tuple[DependencyPreflightFinding, ...],
+) -> tuple[str, ...]:
+    details: list[str] = []
+    for finding in findings:
+        if finding.state == MISSING_REQUIRED_DEPENDENCY:
+            details.append(
+                f"{finding.required_by_unique_id} missing required {finding.dependency_unique_id}; install dependency first"
+            )
+        elif finding.state == OPTIONAL_DEPENDENCY_MISSING:
+            details.append(
+                f"{finding.required_by_unique_id} missing optional {finding.dependency_unique_id}"
+            )
+        elif finding.state == UNRESOLVED_DEPENDENCY_CONTEXT:
+            details.append(
+                f"{finding.required_by_unique_id} unresolved dependency context for {finding.dependency_unique_id}"
+            )
+
+    return tuple(details)
 
 
 def build_intake_correlation_text(correlations: tuple[IntakeUpdateCorrelation, ...]) -> str:

@@ -1,6 +1,7 @@
 from .models import (
     AppConfig,
     AppConfigValidationResult,
+    DependencyPreflightFinding,
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
     DuplicateUniqueIdFinding,
@@ -24,6 +25,13 @@ from .models import (
     SandboxInstallResult,
     ScanEntryFinding,
 )
+from .dependency_codes import (
+    DependencyState,
+    MISSING_REQUIRED_DEPENDENCY,
+    OPTIONAL_DEPENDENCY_MISSING,
+    SATISFIED,
+    UNRESOLVED_DEPENDENCY_CONTEXT,
+)
 from .install_codes import BLOCKED, INSTALL_NEW, OVERWRITE_WITH_ARCHIVE, SandboxInstallAction
 from .package_codes import PackageFindingKind
 from .unique_id import canonicalize_unique_id
@@ -34,6 +42,7 @@ from .warning_codes import ParseWarningCode
 __all__ = [
     "AppConfig",
     "AppConfigValidationResult",
+    "DependencyPreflightFinding",
     "DownloadsIntakeResult",
     "DownloadsWatchPollResult",
     "DuplicateUniqueIdFinding",
@@ -64,6 +73,11 @@ __all__ = [
     "SandboxInstallResult",
     "ScanEntryFinding",
     "ScanEntryKind",
+    "DependencyState",
+    "SATISFIED",
+    "MISSING_REQUIRED_DEPENDENCY",
+    "OPTIONAL_DEPENDENCY_MISSING",
+    "UNRESOLVED_DEPENDENCY_CONTEXT",
     "UpdateState",
     "canonicalize_unique_id",
 ]

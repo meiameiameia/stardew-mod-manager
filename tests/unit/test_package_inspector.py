@@ -118,6 +118,55 @@ def test_relaxed_manifest_parsing_is_applied_in_zip_inspection(tmp_path: Path) -
     assert result.warnings == ()
 
 
+def test_package_inspection_exposes_dependency_preflight_without_inventory_context(
+    tmp_path: Path,
+) -> None:
+    package = _build_zip(
+        tmp_path / "dep.zip",
+        {
+            "NeedsDep/manifest.json": (
+                "{"
+                '"Name":"NeedsDep",'
+                '"UniqueID":"Pkg.NeedsDep",'
+                '"Version":"1.0.0",'
+                '"Dependencies":[{"UniqueID":"Pkg.Required","IsRequired":true}]'
+                "}"
+            )
+        },
+    )
+
+    result = inspect_zip_package(package)
+
+    assert len(result.dependency_findings) == 1
+    assert result.dependency_findings[0].state == "unresolved_dependency_context"
+
+
+def test_package_inspection_surfaces_content_pack_for_dependency_without_inventory_context(
+    tmp_path: Path,
+) -> None:
+    package = _build_zip(
+        tmp_path / "cp_pack.zip",
+        {
+            "[CP] Pack/manifest.json": (
+                "{"
+                '"Name":"CP Pack",'
+                '"UniqueID":"Sample.ContentPack",'
+                '"Version":"1.0.0",'
+                '"ContentPackFor":{"UniqueID":"Pathoschild.ContentPatcher"}'
+                "}"
+            )
+        },
+    )
+
+    result = inspect_zip_package(package)
+
+    assert len(result.dependency_findings) == 1
+    finding = result.dependency_findings[0]
+    assert finding.dependency_unique_id == "Pathoschild.ContentPatcher"
+    assert finding.required is True
+    assert finding.state == "unresolved_dependency_context"
+
+
 def _build_zip(zip_path: Path, files: dict[str, str]) -> Path:
     with ZipFile(zip_path, "w") as archive:
         for path, content in files.items():

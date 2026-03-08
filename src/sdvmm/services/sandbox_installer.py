@@ -103,6 +103,7 @@ def build_sandbox_install_plan(
         package_findings=inspection.findings,
         package_warnings=inspection.warnings,
         plan_warnings=tuple(plan_warnings),
+        dependency_findings=inspection.dependency_findings,
     )
 
 

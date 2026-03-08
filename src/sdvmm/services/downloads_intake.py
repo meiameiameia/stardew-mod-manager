@@ -8,6 +8,7 @@ from sdvmm.domain.models import (
     ModsInventory,
 )
 from sdvmm.domain.unique_id import canonicalize_unique_id
+from sdvmm.services.dependency_preflight import evaluate_package_dependencies
 from sdvmm.services.package_inspector import inspect_zip_package
 
 
@@ -60,7 +61,14 @@ def _inspect_new_package(package_path: Path, inventory: ModsInventory) -> Downlo
             matched_installed_unique_ids=tuple(),
             warnings=inspection.warnings,
             findings=inspection.findings,
+            dependency_findings=tuple(),
         )
+
+    dependency_findings = evaluate_package_dependencies(
+        package_mods=inspection.mods,
+        installed_mods=inventory.mods,
+        source="downloads_intake",
+    )
 
     installed_keys = {canonicalize_unique_id(mod.unique_id): mod.unique_id for mod in inventory.mods}
     matched: list[str] = []
@@ -80,6 +88,7 @@ def _inspect_new_package(package_path: Path, inventory: ModsInventory) -> Downlo
             matched_installed_unique_ids=tuple(matched),
             warnings=inspection.warnings,
             findings=inspection.findings,
+            dependency_findings=dependency_findings,
         )
 
     if matched:
@@ -91,6 +100,7 @@ def _inspect_new_package(package_path: Path, inventory: ModsInventory) -> Downlo
             matched_installed_unique_ids=tuple(matched),
             warnings=inspection.warnings,
             findings=inspection.findings,
+            dependency_findings=dependency_findings,
         )
 
     return DownloadsIntakeResult(
@@ -101,6 +111,7 @@ def _inspect_new_package(package_path: Path, inventory: ModsInventory) -> Downlo
         matched_installed_unique_ids=tuple(),
         warnings=inspection.warnings,
         findings=inspection.findings,
+        dependency_findings=dependency_findings,
     )
 
 

@@ -25,6 +25,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QDesktopServices
 
 from sdvmm.app.inventory_presenter import (
+    build_dependency_preflight_text,
     build_downloads_intake_text,
     build_findings_text,
     build_intake_correlation_text,
@@ -322,7 +323,10 @@ class MainWindow(QMainWindow):
 
     def _on_inspect_zip(self) -> None:
         try:
-            inspection = self._shell_service.inspect_zip(self._zip_path_input.text())
+            inspection = self._shell_service.inspect_zip_with_inventory_context(
+                self._zip_path_input.text(),
+                self._current_inventory,
+            )
         except AppShellError as exc:
             QMessageBox.critical(self, "Zip inspection failed", str(exc))
             self._set_status(str(exc))
@@ -531,7 +535,18 @@ class MainWindow(QMainWindow):
             self._mods_table.setItem(row, 5, QTableWidgetItem(mod.folder_path.name))
 
         self._mods_table.resizeColumnsToContents()
-        self._findings_box.setPlainText(build_findings_text(inventory))
+        dependency_findings = self._shell_service.evaluate_installed_dependency_preflight(inventory)
+        self._findings_box.setPlainText(
+            "\n\n".join(
+                (
+                    build_findings_text(inventory),
+                    build_dependency_preflight_text(
+                        title="Installed dependency preflight:",
+                        findings=dependency_findings,
+                    ),
+                )
+            )
+        )
 
     def _apply_update_report(self, report: ModUpdateReport) -> None:
         if self._current_inventory is None:

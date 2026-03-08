@@ -24,6 +24,7 @@ Minimal local-first foundation for scanning a Stardew Valley `Mods` directory.
   - conservative destination safety guard that blocks sandbox installs to configured real Mods path
   - metadata/update awareness checks for installed mods (no auto download/install)
   - configurable local Downloads watcher for new zip intake (no auto install)
+  - dependency preflight awareness for installed mods, inspected packages, intake results, and sandbox plans
   - persisted operational UI paths (mods/sandbox/archive/downloads/scan target)
   - duplicate `UniqueID` and missing required dependency visibility
   - explicit scan-entry findings (direct, nested container, multi-container, missing/invalid manifest)

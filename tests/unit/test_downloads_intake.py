@@ -98,6 +98,73 @@ def test_poll_correlates_package_with_installed_mod_by_unique_id(tmp_path: Path)
     assert intake.matched_installed_unique_ids == ("Sample.Exists",)
 
 
+def test_poll_exposes_missing_required_dependency_for_detected_package(tmp_path: Path) -> None:
+    watched = tmp_path / "Downloads"
+    watched.mkdir()
+
+    known = initialize_known_zip_paths(watched)
+    _build_zip(
+        watched / "missing_dep.zip",
+        {
+            "NeedsDep/manifest.json": (
+                "{"
+                '"Name":"NeedsDep",'
+                '"UniqueID":"Pkg.NeedsDep",'
+                '"Version":"1.0.0",'
+                '"Dependencies":[{"UniqueID":"Pkg.Required","IsRequired":true}]'
+                "}"
+            )
+        },
+    )
+
+    result = poll_watched_directory(
+        watched_path=watched,
+        known_zip_paths=known,
+        inventory=_empty_inventory(),
+    )
+
+    assert len(result.intakes) == 1
+    intake = result.intakes[0]
+    assert any(
+        finding.state == "missing_required_dependency"
+        for finding in intake.dependency_findings
+    )
+
+
+def test_poll_exposes_content_pack_for_required_dependency(tmp_path: Path) -> None:
+    watched = tmp_path / "Downloads"
+    watched.mkdir()
+
+    known = initialize_known_zip_paths(watched)
+    _build_zip(
+        watched / "cp_pack.zip",
+        {
+            "[CP] Pack/manifest.json": (
+                "{"
+                '"Name":"CP Pack",'
+                '"UniqueID":"Sample.ContentPack",'
+                '"Version":"1.0.0",'
+                '"ContentPackFor":{"UniqueID":"Pathoschild.ContentPatcher"}'
+                "}"
+            )
+        },
+    )
+
+    result = poll_watched_directory(
+        watched_path=watched,
+        known_zip_paths=known,
+        inventory=_empty_inventory(),
+    )
+
+    assert len(result.intakes) == 1
+    intake = result.intakes[0]
+    assert any(
+        finding.dependency_unique_id == "Pathoschild.ContentPatcher"
+        and finding.state == "missing_required_dependency"
+        for finding in intake.dependency_findings
+    )
+
+
 def _empty_inventory() -> ModsInventory:
     return ModsInventory(
         mods=tuple(),

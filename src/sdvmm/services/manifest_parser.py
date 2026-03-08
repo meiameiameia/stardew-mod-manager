@@ -10,6 +10,7 @@ from sdvmm.domain.models import (
     ModManifest,
     ParseWarning,
 )
+from sdvmm.domain.unique_id import canonicalize_unique_id
 from sdvmm.domain.warning_codes import (
     INVALID_DEPENDENCIES,
     INVALID_DEPENDENCY_ENTRY,
@@ -124,6 +125,13 @@ def parse_manifest_text(raw_text: str, mod_dir: Path, manifest_path: Path) -> Ma
         )
 
     dependencies, warnings = _parse_dependencies(raw_data.get("Dependencies"), mod_dir, manifest_path)
+    content_pack_for_dependencies, content_pack_for_warnings = _parse_content_pack_for_dependency(
+        raw_data.get("ContentPackFor"),
+        mod_dir,
+        manifest_path,
+    )
+    dependencies = _merge_dependencies(dependencies + content_pack_for_dependencies)
+    warnings.extend(content_pack_for_warnings)
     update_keys = _parse_update_keys(raw_data.get("UpdateKeys"))
 
     manifest = ModManifest(
@@ -318,6 +326,55 @@ def _parse_dependencies(
         )
 
     return tuple(dependencies), warnings
+
+
+def _parse_content_pack_for_dependency(
+    raw_content_pack_for: object,
+    mod_dir: Path,
+    manifest_path: Path,
+) -> tuple[tuple[ManifestDependency, ...], list[ParseWarning]]:
+    if raw_content_pack_for is None:
+        return tuple(), []
+
+    if not isinstance(raw_content_pack_for, dict):
+        warning = ParseWarning(
+            code=INVALID_DEPENDENCY_ENTRY,
+            message="ContentPackFor must be an object when present",
+            mod_path=mod_dir,
+            manifest_path=manifest_path,
+        )
+        return tuple(), [warning]
+
+    dep_unique_id, _ = _get_manifest_field(raw_content_pack_for, "UniqueID", "UniqueId")
+    if not isinstance(dep_unique_id, str) or not dep_unique_id.strip():
+        warning = ParseWarning(
+            code=INVALID_DEPENDENCY_ENTRY,
+            message="ContentPackFor has invalid UniqueID",
+            mod_path=mod_dir,
+            manifest_path=manifest_path,
+        )
+        return tuple(), [warning]
+
+    return (ManifestDependency(unique_id=dep_unique_id.strip(), required=True),), []
+
+
+def _merge_dependencies(
+    dependencies: tuple[ManifestDependency, ...],
+) -> tuple[ManifestDependency, ...]:
+    deduped: dict[str, ManifestDependency] = {}
+    for dependency in dependencies:
+        key = canonicalize_unique_id(dependency.unique_id)
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = dependency
+            continue
+
+        deduped[key] = ManifestDependency(
+            unique_id=existing.unique_id,
+            required=existing.required or dependency.required,
+        )
+
+    return tuple(deduped.values())
 
 
 def _parse_update_keys(raw_update_keys: object) -> tuple[str, ...]:

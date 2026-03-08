@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from sdvmm.domain.dependency_codes import DependencyState
 from sdvmm.domain.install_codes import SandboxInstallAction
 from sdvmm.domain.package_codes import PackageFindingKind
 from sdvmm.domain.scan_codes import ScanEntryKind
@@ -112,6 +113,24 @@ class MissingDependencyFinding:
     missing_unique_id: str
 
 
+DependencyContextSource = Literal[
+    "installed_inventory",
+    "package_inspection",
+    "downloads_intake",
+    "sandbox_plan",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class DependencyPreflightFinding:
+    source: DependencyContextSource
+    state: DependencyState
+    required_by_unique_id: str
+    required_by_name: str
+    dependency_unique_id: str
+    required: bool
+
+
 @dataclass(frozen=True, slots=True)
 class ScanEntryFinding:
     kind: ScanEntryKind
@@ -126,6 +145,7 @@ class PackageModEntry:
     unique_id: str
     version: str
     manifest_path: str
+    dependencies: tuple[ManifestDependency, ...] = tuple()
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +168,7 @@ class PackageInspectionResult:
     mods: tuple[PackageModEntry, ...]
     warnings: tuple[PackageWarning, ...]
     findings: tuple[PackageFinding, ...]
+    dependency_findings: tuple[DependencyPreflightFinding, ...] = tuple()
 
 
 IntakeClassification = Literal[
@@ -167,6 +188,7 @@ class DownloadsIntakeResult:
     matched_installed_unique_ids: tuple[str, ...]
     warnings: tuple[PackageWarning, ...]
     findings: tuple[PackageFinding, ...]
+    dependency_findings: tuple[DependencyPreflightFinding, ...] = tuple()
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +222,7 @@ class SandboxInstallPlan:
     package_findings: tuple[PackageFinding, ...]
     package_warnings: tuple[PackageWarning, ...]
     plan_warnings: tuple[str, ...]
+    dependency_findings: tuple[DependencyPreflightFinding, ...] = tuple()
 
 
 @dataclass(frozen=True, slots=True)

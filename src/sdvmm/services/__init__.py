@@ -14,6 +14,11 @@ from .sandbox_installer import (
     execute_sandbox_install_plan,
 )
 from .downloads_intake import initialize_known_zip_paths, poll_watched_directory
+from .dependency_preflight import (
+    evaluate_installed_dependencies,
+    evaluate_package_dependencies,
+    summarize_missing_required_dependencies,
+)
 from .update_metadata import (
     MetadataFetchError,
     check_updates_for_inventory,
@@ -33,6 +38,9 @@ __all__ = [
     "execute_sandbox_install_plan",
     "initialize_known_zip_paths",
     "poll_watched_directory",
+    "evaluate_installed_dependencies",
+    "evaluate_package_dependencies",
+    "summarize_missing_required_dependencies",
     "save_app_config",
     "scan_mods_directory",
     "check_updates_for_inventory",

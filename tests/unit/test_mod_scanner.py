@@ -73,6 +73,31 @@ def test_missing_dependency_is_visible(mods_case_path) -> None:
     assert finding.required_by_folder.name == "ConsumerMod"
 
 
+def test_content_pack_for_dependency_is_visible_in_inventory(tmp_path) -> None:
+    mods_root = tmp_path / "Mods"
+    mods_root.mkdir()
+    content_pack = mods_root / "ContentPack"
+    content_pack.mkdir()
+    (content_pack / "manifest.json").write_text(
+        (
+            "{"
+            '"Name":"CP Pack",'
+            '"UniqueID":"Sample.ContentPack",'
+            '"Version":"1.0.0",'
+            '"ContentPackFor":{"UniqueID":"Pathoschild.ContentPatcher"}'
+            "}"
+        ),
+        encoding="utf-8",
+    )
+
+    inventory = scan_mods_directory(mods_root)
+
+    assert len(inventory.mods) == 1
+    assert len(inventory.missing_required_dependencies) == 1
+    assert inventory.missing_required_dependencies[0].required_by_unique_id == "Sample.ContentPack"
+    assert inventory.missing_required_dependencies[0].missing_unique_id == "Pathoschild.ContentPatcher"
+
+
 def test_dependency_match_is_case_insensitive(mods_case_path) -> None:
     inventory = scan_mods_directory(mods_case_path("dependency_case_match"))
 

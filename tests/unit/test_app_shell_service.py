@@ -164,6 +164,37 @@ def test_inspect_zip_returns_package_result(tmp_path: Path) -> None:
     assert result.mods[0].unique_id == "Pkg.Zip"
 
 
+def test_inspect_zip_with_inventory_context_resolves_content_pack_for_dependency(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    package = tmp_path / "cp_pack.zip"
+
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "[CP] Pack/manifest.json",
+            (
+                "{"
+                '"Name":"CP Pack",'
+                '"UniqueID":"Sample.ContentPack",'
+                '"Version":"1.0.0",'
+                '"ContentPackFor":{"UniqueID":"Pathoschild.ContentPatcher"}'
+                "}"
+            ),
+        )
+
+    result = service.inspect_zip_with_inventory_context(
+        str(package),
+        _inventory_with_mod("Pathoschild.ContentPatcher"),
+    )
+
+    assert any(
+        finding.dependency_unique_id == "Pathoschild.ContentPatcher"
+        and finding.state == "satisfied"
+        for finding in result.dependency_findings
+    )
+
+
 def test_inspect_zip_rejects_invalid_zip_content(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
     package = tmp_path / "broken.zip"
@@ -269,6 +300,93 @@ def test_build_sandbox_install_plan_allows_safe_custom_target(tmp_path: Path) ->
 
     assert len(plan.entries) == 1
     assert plan.sandbox_mods_path == sandbox
+
+
+def test_build_sandbox_install_plan_includes_dependency_preflight_warnings(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    sandbox.mkdir()
+    archive_root.mkdir()
+    package = tmp_path / "missing_dep.zip"
+
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "NeedsDep/manifest.json",
+            (
+                "{"
+                '"Name":"NeedsDep",'
+                '"UniqueID":"Pkg.NeedsDep",'
+                '"Version":"1.0.0",'
+                '"Dependencies":[{"UniqueID":"Pkg.Required","IsRequired":true}]'
+                "}"
+            ),
+        )
+
+    plan = service.build_sandbox_install_plan(
+        str(package),
+        str(sandbox),
+        str(archive_root),
+        allow_overwrite=False,
+    )
+
+    assert len(plan.entries) == 1
+    assert plan.entries[0].can_install is False
+    assert plan.entries[0].action == "blocked"
+    assert any("Missing required dependencies" in item for item in plan.entries[0].warnings)
+    assert any("missing required dependency" in item.casefold() for item in plan.plan_warnings)
+    assert any(
+        finding.state == "missing_required_dependency"
+        for finding in plan.dependency_findings
+    )
+
+
+def test_build_sandbox_install_plan_satisfies_content_pack_for_when_provider_exists(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    sandbox.mkdir()
+    archive_root.mkdir()
+    provider = sandbox / "ContentPatcher"
+    provider.mkdir()
+    (provider / "manifest.json").write_text(
+        '{"Name":"Content Patcher","UniqueID":"Pathoschild.ContentPatcher","Version":"2.0.0"}',
+        encoding="utf-8",
+    )
+
+    package = tmp_path / "cp_pack.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "[CP] Pack/manifest.json",
+            (
+                "{"
+                '"Name":"CP Pack",'
+                '"UniqueID":"Sample.ContentPack",'
+                '"Version":"1.0.0",'
+                '"ContentPackFor":{"UniqueID":"Pathoschild.ContentPatcher"}'
+                "}"
+            ),
+        )
+
+    plan = service.build_sandbox_install_plan(
+        str(package),
+        str(sandbox),
+        str(archive_root),
+        allow_overwrite=False,
+    )
+
+    assert len(plan.entries) == 1
+    assert plan.entries[0].can_install is True
+    assert not any("Missing required dependencies" in item for item in plan.entries[0].warnings)
+    assert any(
+        finding.dependency_unique_id == "Pathoschild.ContentPatcher"
+        and finding.state == "satisfied"
+        for finding in plan.dependency_findings
+    )
 
 
 def test_build_and_execute_sandbox_install_plan(tmp_path: Path) -> None:

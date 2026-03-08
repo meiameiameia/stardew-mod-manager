@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 from collections.abc import Iterable
@@ -9,6 +9,7 @@ import zipfile
 
 from sdvmm.domain.models import (
     AppConfig,
+    DependencyPreflightFinding,
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
     ModUpdateReport,
@@ -16,6 +17,12 @@ from sdvmm.domain.models import (
     PackageInspectionResult,
     SandboxInstallPlan,
     SandboxInstallResult,
+)
+from sdvmm.domain.dependency_codes import (
+    MISSING_REQUIRED_DEPENDENCY,
+    OPTIONAL_DEPENDENCY_MISSING,
+    SATISFIED,
+    UNRESOLVED_DEPENDENCY_CONTEXT,
 )
 from sdvmm.domain.unique_id import canonicalize_unique_id
 from sdvmm.services.app_state_store import (
@@ -26,6 +33,11 @@ from sdvmm.services.app_state_store import (
 from sdvmm.services.mod_scanner import scan_mods_directory
 from sdvmm.services.package_inspector import inspect_zip_package
 from sdvmm.services.downloads_intake import initialize_known_zip_paths, poll_watched_directory
+from sdvmm.services.dependency_preflight import (
+    evaluate_installed_dependencies,
+    evaluate_package_dependencies,
+    summarize_missing_required_dependencies,
+)
 from sdvmm.services.sandbox_installer import (
     SandboxInstallError,
     build_sandbox_install_plan as build_sandbox_install_plan_service,
@@ -214,6 +226,25 @@ class AppShellService:
         except OSError as exc:
             raise AppShellError(f"Could not inspect package: {exc}") from exc
 
+    def inspect_zip_with_inventory_context(
+        self,
+        package_path_text: str,
+        inventory: ModsInventory | None,
+    ) -> PackageInspectionResult:
+        base_result = self.inspect_zip(package_path_text)
+        dependency_findings = evaluate_package_dependencies(
+            package_mods=base_result.mods,
+            installed_mods=inventory.mods if inventory is not None else None,
+            source="package_inspection",
+        )
+        return replace(base_result, dependency_findings=dependency_findings)
+
+    @staticmethod
+    def evaluate_installed_dependency_preflight(
+        inventory: ModsInventory,
+    ) -> tuple[DependencyPreflightFinding, ...]:
+        return evaluate_installed_dependencies(inventory.mods)
+
     def check_updates(self, inventory: ModsInventory) -> ModUpdateReport:
         try:
             return check_updates_for_inventory(inventory)
@@ -391,12 +422,19 @@ class AppShellService:
         )
 
         try:
-            return build_sandbox_install_plan_service(
+            plan = build_sandbox_install_plan_service(
                 package_path=package_path,
                 sandbox_mods_path=sandbox_mods_path,
                 sandbox_archive_path=sandbox_archive_path,
                 allow_overwrite=allow_overwrite,
             )
+            inventory = scan_mods_directory(sandbox_mods_path)
+            dependency_findings = _evaluate_sandbox_plan_dependencies(
+                plan=plan,
+                base_findings=plan.dependency_findings,
+                installed_inventory=inventory,
+            )
+            return _apply_dependency_preflight_to_plan(plan, dependency_findings)
         except (SandboxInstallError, zipfile.BadZipFile) as exc:
             raise AppShellError(str(exc)) from exc
         except OSError as exc:
@@ -619,4 +657,141 @@ def _build_intake_flow_messages(
     return (
         "Detected package appears to be a new install candidate.",
         "Select package and plan sandbox install.",
+    )
+
+
+def _evaluate_sandbox_plan_dependencies(
+    *,
+    plan: SandboxInstallPlan,
+    base_findings: tuple[DependencyPreflightFinding, ...],
+    installed_inventory: ModsInventory,
+) -> tuple[DependencyPreflightFinding, ...]:
+    if not base_findings:
+        return tuple()
+
+    available_dependency_keys = {
+        canonicalize_unique_id(mod.unique_id) for mod in installed_inventory.mods
+    }
+    available_dependency_keys.update(
+        canonicalize_unique_id(entry.unique_id) for entry in plan.entries
+    )
+
+    findings: list[DependencyPreflightFinding] = []
+    for finding in base_findings:
+        dependency_key = canonicalize_unique_id(finding.dependency_unique_id)
+        if dependency_key in available_dependency_keys:
+            state = SATISFIED
+        elif finding.required:
+            state = MISSING_REQUIRED_DEPENDENCY
+        else:
+            state = OPTIONAL_DEPENDENCY_MISSING
+
+        findings.append(
+            replace(
+                finding,
+                source="sandbox_plan",
+                state=state,
+            )
+        )
+
+    findings.sort(
+        key=lambda item: (
+            item.source,
+            item.state,
+            canonicalize_unique_id(item.required_by_unique_id),
+            canonicalize_unique_id(item.dependency_unique_id),
+        )
+    )
+    return tuple(findings)
+
+
+def _apply_dependency_preflight_to_plan(
+    plan: SandboxInstallPlan,
+    dependency_findings: tuple[DependencyPreflightFinding, ...],
+) -> SandboxInstallPlan:
+    if not dependency_findings:
+        return replace(plan, dependency_findings=tuple())
+
+    required_missing_by_mod: dict[str, list[str]] = {}
+    optional_missing_by_mod: dict[str, list[str]] = {}
+    unresolved_by_mod: dict[str, list[str]] = {}
+
+    for finding in dependency_findings:
+        mod_key = canonicalize_unique_id(finding.required_by_unique_id)
+        if finding.state == MISSING_REQUIRED_DEPENDENCY:
+            required_missing_by_mod.setdefault(mod_key, []).append(finding.dependency_unique_id)
+            continue
+        if finding.state == OPTIONAL_DEPENDENCY_MISSING:
+            optional_missing_by_mod.setdefault(mod_key, []).append(finding.dependency_unique_id)
+            continue
+        if finding.state == UNRESOLVED_DEPENDENCY_CONTEXT:
+            unresolved_by_mod.setdefault(mod_key, []).append(finding.dependency_unique_id)
+
+    updated_entries = []
+    for entry in plan.entries:
+        entry_warnings = list(entry.warnings)
+        mod_key = canonicalize_unique_id(entry.unique_id)
+        blocked = False
+
+        missing_required_ids = sorted(set(required_missing_by_mod.get(mod_key, [])), key=str.casefold)
+        if missing_required_ids:
+            blocked = True
+            deps_text = ", ".join(missing_required_ids)
+            entry_warnings.append(
+                f"Missing required dependencies: {deps_text}. Install dependencies first."
+            )
+
+        optional_missing_ids = sorted(set(optional_missing_by_mod.get(mod_key, [])), key=str.casefold)
+        if optional_missing_ids:
+            deps_text = ", ".join(optional_missing_ids)
+            entry_warnings.append(
+                f"Optional dependencies missing: {deps_text}. Mod may still load with reduced features."
+            )
+
+        unresolved_ids = sorted(set(unresolved_by_mod.get(mod_key, [])), key=str.casefold)
+        if unresolved_ids:
+            deps_text = ", ".join(unresolved_ids)
+            entry_warnings.append(
+                f"Dependency context unresolved: {deps_text}. Verify dependencies manually before install."
+            )
+
+        updated_entries.append(
+            replace(
+                entry,
+                action=("blocked" if blocked else entry.action),
+                can_install=(False if blocked else entry.can_install),
+                warnings=tuple(entry_warnings),
+            )
+        )
+
+    plan_warnings = list(plan.plan_warnings)
+    missing_messages = summarize_missing_required_dependencies(dependency_findings)
+    if missing_messages:
+        plan_warnings.append(
+            f"Dependency preflight found {len(missing_messages)} missing required dependency relation(s)."
+        )
+        for message in missing_messages:
+            plan_warnings.append(f"Dependency: {message}")
+
+    optional_missing_count = sum(
+        1 for finding in dependency_findings if finding.state == OPTIONAL_DEPENDENCY_MISSING
+    )
+    if optional_missing_count:
+        plan_warnings.append(
+            f"Dependency preflight found {optional_missing_count} optional missing dependency relation(s)."
+        )
+
+    unresolved_count = sum(
+        1 for finding in dependency_findings if finding.state == UNRESOLVED_DEPENDENCY_CONTEXT
+    )
+    if unresolved_count:
+        plan_warnings.append(
+            f"Dependency preflight found {unresolved_count} unresolved dependency relation(s)."
+        )
+
+    return replace(
+        plan,
+        entries=tuple(updated_entries),
+        plan_warnings=tuple(plan_warnings),
+        dependency_findings=dependency_findings,
     )

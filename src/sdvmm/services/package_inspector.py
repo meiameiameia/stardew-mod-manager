@@ -18,6 +18,7 @@ from sdvmm.domain.package_codes import (
     TOO_DEEP_UNSUPPORTED_PACKAGE,
 )
 from sdvmm.domain.unique_id import canonicalize_unique_id
+from sdvmm.services.dependency_preflight import evaluate_package_dependencies
 from sdvmm.services.manifest_parser import parse_manifest_text
 
 MAX_PACKAGE_MANIFEST_DEPTH = 3
@@ -46,12 +47,18 @@ def inspect_zip_package(package_path: Path) -> PackageInspectionResult:
         warnings=warnings,
         too_deep_entries=too_deep_entries,
     )
+    dependency_findings = evaluate_package_dependencies(
+        package_mods=tuple(mods),
+        installed_mods=None,
+        source="package_inspection",
+    )
 
     return PackageInspectionResult(
         package_path=package_path,
         mods=tuple(mods),
         warnings=tuple(warnings),
         findings=findings,
+        dependency_findings=dependency_findings,
     )
 
 
@@ -146,6 +153,7 @@ def _parse_manifest_entry(
         unique_id=manifest.unique_id,
         version=manifest.version,
         manifest_path=manifest_entry,
+        dependencies=manifest.dependencies,
     )
     return mod_entry, warnings
 
