@@ -38,7 +38,13 @@ from sdvmm.app.shell_service import (
     AppShellError,
     AppShellService,
 )
-from sdvmm.domain.models import AppConfig, ModUpdateReport, ModsInventory, SandboxInstallPlan
+from sdvmm.domain.models import (
+    AppConfig,
+    DownloadsIntakeResult,
+    ModUpdateReport,
+    ModsInventory,
+    SandboxInstallPlan,
+)
 
 
 class MainWindow(QMainWindow):
@@ -51,6 +57,7 @@ class MainWindow(QMainWindow):
         self._current_update_report: ModUpdateReport | None = None
         self._row_remote_links: dict[int, str] = {}
         self._known_watched_zip_paths: tuple[Path, ...] = tuple()
+        self._detected_intakes: tuple[DownloadsIntakeResult, ...] = tuple()
 
         self.setWindowTitle("Stardew Mod Manager - Local Scan")
         self.resize(950, 600)
@@ -69,6 +76,8 @@ class MainWindow(QMainWindow):
         self._scan_target_combo = QComboBox()
         self._scan_target_combo.addItem("Configured Mods path", SCAN_TARGET_CONFIGURED_REAL_MODS)
         self._scan_target_combo.addItem("Sandbox Mods target", SCAN_TARGET_SANDBOX_MODS)
+        self._intake_result_combo = QComboBox()
+        self._plan_selected_intake_button = QPushButton("Plan selected intake")
 
         self._mods_table = QTableWidget(0, 6)
         self._mods_table.setHorizontalHeaderLabels(
@@ -95,8 +104,10 @@ class MainWindow(QMainWindow):
         self._mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
         self._watched_downloads_path_input.textChanged.connect(self._on_watched_path_changed)
+        self._intake_result_combo.currentIndexChanged.connect(self._on_intake_selection_changed)
 
         self._build_layout()
+        self._refresh_intake_selector()
         self._load_startup_state()
 
     def _build_layout(self) -> None:
@@ -142,6 +153,9 @@ class MainWindow(QMainWindow):
 
         path_layout.addWidget(QLabel("Scan target"), 6, 0)
         path_layout.addWidget(self._scan_target_combo, 6, 1)
+        path_layout.addWidget(QLabel("Detected packages"), 7, 0)
+        path_layout.addWidget(self._intake_result_combo, 7, 1)
+        path_layout.addWidget(self._plan_selected_intake_button, 7, 2)
 
         actions_row = QHBoxLayout()
         save_button = QPushButton("Save config")
@@ -180,6 +194,7 @@ class MainWindow(QMainWindow):
         stop_watch_button.clicked.connect(self._on_stop_watch)
         actions_row.addWidget(stop_watch_button)
         actions_row.addStretch(1)
+        self._plan_selected_intake_button.clicked.connect(self._on_plan_selected_intake)
 
         root_layout.addLayout(path_layout)
         root_layout.addLayout(actions_row)
@@ -424,10 +439,14 @@ class MainWindow(QMainWindow):
             return
 
         self._watch_timer.start()
+        baseline_count = len(self._known_watched_zip_paths)
+        watched_path = self._watched_downloads_path_input.text().strip()
         self._watch_status_label.setText(
-            f"Watcher: running ({self._watched_downloads_path_input.text().strip()})"
+            f"Watcher: running ({watched_path}) baseline={baseline_count} existing zip(s)"
         )
-        self._set_status("Downloads watcher started.")
+        self._set_status(
+            "Downloads watcher started. Only zip files added after start are detected."
+        )
 
     def _on_stop_watch(self) -> None:
         self._watch_timer.stop()
@@ -452,6 +471,8 @@ class MainWindow(QMainWindow):
         if not result.intakes:
             return
 
+        self._detected_intakes = self._detected_intakes + result.intakes
+        self._refresh_intake_selector()
         self._findings_box.setPlainText(build_downloads_intake_text(result))
         self._set_status(f"Detected {len(result.intakes)} new package(s) in watched downloads.")
 
@@ -502,9 +523,58 @@ class MainWindow(QMainWindow):
 
     def _on_watched_path_changed(self, *_: object) -> None:
         self._known_watched_zip_paths = tuple()
+        self._detected_intakes = tuple()
+        self._refresh_intake_selector()
         if self._watch_timer.isActive():
             self._watch_timer.stop()
             self._watch_status_label.setText("Watcher: stopped (path changed)")
+            self._set_status("Watcher stopped because watched path changed.")
+
+    def _on_plan_selected_intake(self) -> None:
+        selected_index = self._selected_intake_index()
+        try:
+            intake = self._shell_service.select_intake_result(
+                intakes=self._detected_intakes,
+                selected_index=selected_index,
+            )
+        except AppShellError as exc:
+            QMessageBox.warning(self, "No package selected", str(exc))
+            self._set_status(str(exc))
+            return
+
+        self._zip_path_input.setText(str(intake.package_path))
+        if not self._shell_service.is_actionable_intake_result(intake):
+            message = (
+                "Selected package cannot be planned for install "
+                f"({intake.classification})."
+            )
+            self._pending_install_plan = None
+            QMessageBox.information(self, "Package not actionable", message)
+            self._set_status(message)
+            return
+
+        try:
+            plan = self._shell_service.build_sandbox_install_plan_from_intake(
+                intake=intake,
+                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
+                allow_overwrite=self._overwrite_checkbox.isChecked(),
+                configured_real_mods_path=self._config.mods_path if self._config else None,
+            )
+        except AppShellError as exc:
+            self._pending_install_plan = None
+            QMessageBox.critical(self, "Install plan failed", str(exc))
+            self._set_status(str(exc))
+            return
+
+        self._pending_install_plan = plan
+        self._findings_box.setPlainText(build_sandbox_install_plan_text(plan))
+        self._set_status(
+            f"Install plan ready from intake package: {plan.package_path.name}"
+        )
+
+    def _on_intake_selection_changed(self, *_: object) -> None:
+        self._plan_selected_intake_button.setEnabled(self._selected_intake_index() >= 0)
 
     def _current_inventory_or_empty(self) -> ModsInventory:
         if self._current_inventory is not None:
@@ -536,6 +606,37 @@ class MainWindow(QMainWindow):
         index = self._scan_target_combo.findData(target)
         if index >= 0:
             self._scan_target_combo.setCurrentIndex(index)
+
+    def _refresh_intake_selector(self) -> None:
+        self._intake_result_combo.clear()
+
+        if not self._detected_intakes:
+            self._intake_result_combo.addItem("<no detected packages>", -1)
+            self._intake_result_combo.setEnabled(False)
+            self._plan_selected_intake_button.setEnabled(False)
+            return
+
+        self._intake_result_combo.setEnabled(True)
+        for idx, intake in enumerate(self._detected_intakes):
+            actionable = (
+                "actionable"
+                if self._shell_service.is_actionable_intake_result(intake)
+                else "non-actionable"
+            )
+            label = (
+                f"{intake.package_path.name} "
+                f"[{intake.classification}, {actionable}]"
+            )
+            self._intake_result_combo.addItem(label, idx)
+
+        self._intake_result_combo.setCurrentIndex(len(self._detected_intakes) - 1)
+        self._plan_selected_intake_button.setEnabled(True)
+
+    def _selected_intake_index(self) -> int:
+        value = self._intake_result_combo.currentData()
+        if isinstance(value, int):
+            return value
+        return -1
 
     @staticmethod
     def _scan_target_label(target: str) -> str:

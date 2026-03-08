@@ -8,6 +8,7 @@ import zipfile
 
 from sdvmm.domain.models import (
     AppConfig,
+    DownloadsIntakeResult,
     DownloadsWatchPollResult,
     ModUpdateReport,
     ModsInventory,
@@ -57,6 +58,13 @@ class ScanResult:
 class InstallTargetSafetyDecision:
     allowed: bool
     message: str | None
+
+
+_ACTIONABLE_INTAKE_CLASSIFICATIONS = {
+    "new_install_candidate",
+    "update_replace_candidate",
+    "multi_mod_package",
+}
 
 
 class AppShellService:
@@ -225,6 +233,42 @@ class AppShellService:
             )
         except OSError as exc:
             raise AppShellError(f"Could not poll watched downloads directory: {exc}") from exc
+
+    @staticmethod
+    def select_intake_result(
+        *,
+        intakes: tuple[DownloadsIntakeResult, ...],
+        selected_index: int,
+    ) -> DownloadsIntakeResult:
+        if selected_index < 0 or selected_index >= len(intakes):
+            raise AppShellError("Select a detected package first.")
+        return intakes[selected_index]
+
+    @staticmethod
+    def is_actionable_intake_result(intake: DownloadsIntakeResult) -> bool:
+        return intake.classification in _ACTIONABLE_INTAKE_CLASSIFICATIONS
+
+    def build_sandbox_install_plan_from_intake(
+        self,
+        *,
+        intake: DownloadsIntakeResult,
+        sandbox_mods_path_text: str,
+        sandbox_archive_path_text: str,
+        allow_overwrite: bool,
+        configured_real_mods_path: Path | None = None,
+    ) -> SandboxInstallPlan:
+        if not self.is_actionable_intake_result(intake):
+            raise AppShellError(
+                f"Selected package is not actionable for install planning: {intake.classification}"
+            )
+
+        return self.build_sandbox_install_plan(
+            package_path_text=str(intake.package_path),
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            allow_overwrite=allow_overwrite,
+            configured_real_mods_path=configured_real_mods_path,
+        )
 
     def build_sandbox_install_plan(
         self,

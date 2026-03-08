@@ -203,6 +203,7 @@ def _format_single_intake(intake: DownloadsIntakeResult) -> list[str]:
         f"{intake.package_path.name} | classification={intake.classification}"
     )
     lines.append(f"  message: {intake.message}")
+    lines.append(f"  next-action: {_intake_next_action(intake.classification)}")
 
     if intake.mods:
         for mod in intake.mods:
@@ -221,3 +222,13 @@ def _format_single_intake(intake: DownloadsIntakeResult) -> list[str]:
         lines.append(f"  finding[{finding.kind}]: {finding.message}")
 
     return lines
+
+
+def _intake_next_action(classification: str) -> str:
+    if classification == "unusable_package":
+        return "non-actionable (inspect/fix package)"
+    if classification == "multi_mod_package":
+        return "actionable (plan install and review all entries)"
+    if classification == "update_replace_candidate":
+        return "actionable (plan install, review overwrite/archive preflight)"
+    return "actionable (plan install)"

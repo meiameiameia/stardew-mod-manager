@@ -418,11 +418,163 @@ def test_initialize_and_poll_downloads_watch_detects_new_zip(tmp_path: Path) -> 
     assert result.intakes[0].classification == "new_install_candidate"
 
 
+def test_select_intake_result_returns_selected_entry(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    package = downloads / "candidate.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "Mod/manifest.json",
+            '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
+        )
+
+    result = service.poll_downloads_watch(
+        watched_downloads_path_text=str(downloads),
+        known_zip_paths=tuple(),
+        inventory=_empty_inventory(),
+    )
+
+    selected = service.select_intake_result(intakes=result.intakes, selected_index=0)
+    assert selected.package_path == package
+
+
+def test_select_intake_result_rejects_invalid_index(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+
+    with pytest.raises(AppShellError, match="Select a detected package first"):
+        service.select_intake_result(intakes=tuple(), selected_index=0)
+
+
+def test_build_sandbox_install_plan_from_intake_new_install_candidate(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    downloads = tmp_path / "Downloads"
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    downloads.mkdir()
+    sandbox.mkdir()
+    archive_root.mkdir()
+
+    package = downloads / "new_mod.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "NewMod/manifest.json",
+            '{"Name":"New Mod","UniqueID":"Pkg.NewMod","Version":"1.0.0"}',
+        )
+
+    poll_result = service.poll_downloads_watch(
+        watched_downloads_path_text=str(downloads),
+        known_zip_paths=tuple(),
+        inventory=_empty_inventory(),
+    )
+    intake = service.select_intake_result(intakes=poll_result.intakes, selected_index=0)
+
+    plan = service.build_sandbox_install_plan_from_intake(
+        intake=intake,
+        sandbox_mods_path_text=str(sandbox),
+        sandbox_archive_path_text=str(archive_root),
+        allow_overwrite=False,
+    )
+
+    assert plan.package_path == package
+    assert len(plan.entries) == 1
+    assert plan.entries[0].action == "install_new"
+    assert plan.entries[0].can_install is True
+
+
+def test_build_sandbox_install_plan_from_intake_update_replace_candidate(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    downloads = tmp_path / "Downloads"
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    downloads.mkdir()
+    sandbox.mkdir()
+    archive_root.mkdir()
+    (sandbox / "Existing").mkdir()
+
+    package = downloads / "update_mod.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "Existing/manifest.json",
+            '{"Name":"Existing","UniqueID":"Sample.Exists","Version":"2.0.0"}',
+        )
+
+    poll_result = service.poll_downloads_watch(
+        watched_downloads_path_text=str(downloads),
+        known_zip_paths=tuple(),
+        inventory=_inventory_with_mod("Sample.Exists"),
+    )
+    intake = service.select_intake_result(intakes=poll_result.intakes, selected_index=0)
+    assert intake.classification == "update_replace_candidate"
+
+    plan = service.build_sandbox_install_plan_from_intake(
+        intake=intake,
+        sandbox_mods_path_text=str(sandbox),
+        sandbox_archive_path_text=str(archive_root),
+        allow_overwrite=True,
+    )
+
+    assert len(plan.entries) == 1
+    assert plan.entries[0].action == "overwrite_with_archive"
+    assert plan.entries[0].can_install is True
+
+
+def test_build_sandbox_install_plan_from_intake_rejects_unusable_package(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    downloads = tmp_path / "Downloads"
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    downloads.mkdir()
+    sandbox.mkdir()
+    archive_root.mkdir()
+
+    package = downloads / "broken.zip"
+    package.write_bytes(b"not zip")
+
+    poll_result = service.poll_downloads_watch(
+        watched_downloads_path_text=str(downloads),
+        known_zip_paths=tuple(),
+        inventory=_empty_inventory(),
+    )
+    intake = service.select_intake_result(intakes=poll_result.intakes, selected_index=0)
+    assert intake.classification == "unusable_package"
+
+    with pytest.raises(AppShellError, match="not actionable for install planning"):
+        service.build_sandbox_install_plan_from_intake(
+            intake=intake,
+            sandbox_mods_path_text=str(sandbox),
+            sandbox_archive_path_text=str(archive_root),
+            allow_overwrite=False,
+        )
+
+
 def _empty_inventory():
     from sdvmm.domain.models import ModsInventory
 
     return ModsInventory(
         mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+
+
+def _inventory_with_mod(unique_id: str):
+    from sdvmm.domain.models import InstalledMod, ModsInventory
+
+    mod = InstalledMod(
+        unique_id=unique_id,
+        name=unique_id,
+        version="1.0.0",
+        folder_path=Path("/tmp") / unique_id,
+        manifest_path=Path("/tmp") / unique_id / "manifest.json",
+        dependencies=tuple(),
+        update_keys=tuple(),
+    )
+    return ModsInventory(
+        mods=(mod,),
         parse_warnings=tuple(),
         duplicate_unique_ids=tuple(),
         missing_required_dependencies=tuple(),
