@@ -1,0 +1,8 @@
+{
+  "Name": "Update Keys Mod",
+  "UniqueID": "Sample.UpdateKeys",
+  "Version": "1.0.0",
+  "UpdateKeys": [
+    "Nexus:12345"
+  ]
+}

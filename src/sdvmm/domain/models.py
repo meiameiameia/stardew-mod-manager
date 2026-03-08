@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from sdvmm.domain.install_codes import SandboxInstallAction
+from sdvmm.domain.package_codes import PackageFindingKind
+from sdvmm.domain.scan_codes import ScanEntryKind
+from sdvmm.domain.update_codes import RemoteLinkProvider, UpdateState
+from sdvmm.domain.warning_codes import ParseWarningCode
+
+
+@dataclass(frozen=True, slots=True)
+class AppConfig:
+    game_path: Path
+    mods_path: Path
+    app_data_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class PathValidationIssue:
+    field: str
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class AppConfigValidationResult:
+    is_valid: bool
+    issues: tuple[PathValidationIssue, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestDependency:
+    unique_id: str
+    required: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ModManifest:
+    unique_id: str
+    name: str
+    version: str
+    dependencies: tuple[ManifestDependency, ...]
+    update_keys: tuple[str, ...] = tuple()
+
+
+@dataclass(frozen=True, slots=True)
+class ParseWarning:
+    code: ParseWarningCode
+    message: str
+    mod_path: Path
+    manifest_path: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestParseResult:
+    manifest: ModManifest | None
+    warnings: tuple[ParseWarning, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class InstalledMod:
+    unique_id: str
+    name: str
+    version: str
+    folder_path: Path
+    manifest_path: Path
+    dependencies: tuple[ManifestDependency, ...]
+    update_keys: tuple[str, ...] = tuple()
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteModLink:
+    provider: RemoteLinkProvider
+    key: str
+    page_url: str
+    metadata_url: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ModUpdateStatus:
+    unique_id: str
+    name: str
+    folder_path: Path
+    installed_version: str
+    remote_version: str | None
+    state: UpdateState
+    remote_link: RemoteModLink | None
+    message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ModUpdateReport:
+    statuses: tuple[ModUpdateStatus, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DuplicateUniqueIdFinding:
+    unique_id: str
+    folder_paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MissingDependencyFinding:
+    required_by_unique_id: str
+    required_by_folder: Path
+    missing_unique_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ScanEntryFinding:
+    kind: ScanEntryKind
+    entry_path: Path
+    mod_paths: tuple[Path, ...]
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class PackageModEntry:
+    name: str
+    unique_id: str
+    version: str
+    manifest_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class PackageWarning:
+    code: ParseWarningCode
+    message: str
+    manifest_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class PackageFinding:
+    kind: PackageFindingKind
+    message: str
+    related_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PackageInspectionResult:
+    package_path: Path
+    mods: tuple[PackageModEntry, ...]
+    warnings: tuple[PackageWarning, ...]
+    findings: tuple[PackageFinding, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxInstallPlanEntry:
+    name: str
+    unique_id: str
+    version: str
+    source_manifest_path: str
+    source_root_path: str
+    target_path: Path
+    action: SandboxInstallAction
+    target_exists: bool
+    archive_path: Path | None
+    can_install: bool
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxInstallPlan:
+    package_path: Path
+    sandbox_mods_path: Path
+    sandbox_archive_path: Path
+    entries: tuple[SandboxInstallPlanEntry, ...]
+    package_findings: tuple[PackageFinding, ...]
+    package_warnings: tuple[PackageWarning, ...]
+    plan_warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxInstallResult:
+    plan: SandboxInstallPlan
+    installed_targets: tuple[Path, ...]
+    archived_targets: tuple[Path, ...]
+    scan_context_path: Path
+    inventory: ModsInventory
+
+
+@dataclass(frozen=True, slots=True)
+class ModsInventory:
+    mods: tuple[InstalledMod, ...]
+    parse_warnings: tuple[ParseWarning, ...]
+    duplicate_unique_ids: tuple[DuplicateUniqueIdFinding, ...]
+    missing_required_dependencies: tuple[MissingDependencyFinding, ...]
+    scan_entry_findings: tuple[ScanEntryFinding, ...]
+    ignored_entries: tuple[Path, ...]

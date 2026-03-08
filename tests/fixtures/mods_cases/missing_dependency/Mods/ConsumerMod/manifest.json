@@ -1,0 +1,19 @@
+{
+  "Name": "Consumer",
+  "UniqueID": "Sample.Consumer",
+  "Version": "1.0.0",
+  "Dependencies": [
+    {
+      "UniqueID": "Sample.Provider",
+      "IsRequired": true
+    },
+    {
+      "UniqueID": "Sample.MissingRequired",
+      "IsRequired": true
+    },
+    {
+      "UniqueID": "Sample.OptionalDependency",
+      "IsRequired": false
+    }
+  ]
+}

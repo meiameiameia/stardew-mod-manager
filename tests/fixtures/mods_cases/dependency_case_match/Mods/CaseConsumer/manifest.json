@@ -1,0 +1,11 @@
+{
+  "Name": "Consumer",
+  "UniqueID": "Sample.ConsumerCase",
+  "Version": "1.0.0",
+  "Dependencies": [
+    {
+      "UniqueID": "sample.providercase",
+      "IsRequired": true
+    }
+  ]
+}
