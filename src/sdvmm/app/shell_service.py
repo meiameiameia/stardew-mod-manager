@@ -429,11 +429,11 @@ class AppShellService:
         )
         return (
             f"Manual update flow for {unique_id}:\n"
-            "1. Open the mod page and download the package manually.\n"
+            "1. Open remote page and download manually.\n"
             f"2. Save the zip into watched downloads path: {watched_path}\n"
             f"3. {watch_step}\n"
-            "4. Select the detected package and click 'Plan selected intake'.\n"
-            "5. Review sandbox preflight plan and execute explicitly."
+            "4. In detected packages, select that zip and click 'Plan selected intake'.\n"
+            "5. Review plan warnings/dependencies, then run sandbox install explicitly."
         )
 
     def build_sandbox_install_plan(
@@ -732,14 +732,14 @@ def _build_intake_flow_messages(
     if not actionable:
         return (
             "Detected package is unusable for install planning.",
-            "Fix or replace this package before planning.",
+            "Fix or replace this package before planning (non-actionable).",
         )
 
     if matched_guided:
         joined = ", ".join(matched_guided)
         return (
             f"Detected package likely matches guided update target(s): {joined}.",
-            "Select this package and click 'Plan selected intake'.",
+            "Select this package and click 'Plan selected intake', then review sandbox plan warnings.",
         )
 
     if matched_update_available:

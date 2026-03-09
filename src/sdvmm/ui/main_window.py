@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         self._guided_update_unique_ids: tuple[str, ...] = tuple()
         self._last_environment_status: GameEnvironmentStatus | None = None
 
-        self.setWindowTitle("Stardew Mod Manager - Local Scan")
+        self.setWindowTitle("Stardew Mod Manager (Sandbox-first)")
         self.resize(950, 600)
 
         self._game_path_input = QLineEdit()
@@ -87,14 +87,14 @@ class MainWindow(QMainWindow):
         self._watched_downloads_path_input.setPlaceholderText("/path/to/Downloads")
         self._overwrite_checkbox = QCheckBox("Allow overwrite with archive")
         self._scan_target_combo = QComboBox()
-        self._scan_target_combo.addItem("Configured Mods path", SCAN_TARGET_CONFIGURED_REAL_MODS)
-        self._scan_target_combo.addItem("Sandbox Mods target", SCAN_TARGET_SANDBOX_MODS)
+        self._scan_target_combo.addItem("Real Mods path (scan only)", SCAN_TARGET_CONFIGURED_REAL_MODS)
+        self._scan_target_combo.addItem("Sandbox Mods target (scan/install)", SCAN_TARGET_SANDBOX_MODS)
         self._intake_result_combo = QComboBox()
         self._plan_selected_intake_button = QPushButton("Plan selected intake")
 
         self._mods_table = QTableWidget(0, 6)
         self._mods_table.setHorizontalHeaderLabels(
-            ["Name", "UniqueID", "Installed", "Remote", "Update state", "Folder"]
+            ["Name", "UniqueID", "Installed ver.", "Remote ver.", "Update status", "Folder"]
         )
         self._mods_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._mods_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -103,9 +103,9 @@ class MainWindow(QMainWindow):
         self._findings_box.setReadOnly(True)
 
         self._status_label = QLabel()
-        self._scan_context_label = QLabel("Scan context: not set")
+        self._scan_context_label = QLabel("Current scan source: not set")
         self._environment_status_label = QLabel("Environment: not checked")
-        self._watch_status_label = QLabel("Watcher: stopped")
+        self._watch_status_label = QLabel("Downloads watch: stopped")
         self._watch_timer = QTimer(self)
         self._watch_timer.setInterval(2000)
         self._watch_timer.timeout.connect(self._on_watch_tick)
@@ -130,14 +130,14 @@ class MainWindow(QMainWindow):
         root_layout = QVBoxLayout(container)
 
         path_layout = QGridLayout()
-        path_layout.addWidget(QLabel("Game directory"), 0, 0)
+        path_layout.addWidget(QLabel("Game directory (real install)"), 0, 0)
         path_layout.addWidget(self._game_path_input, 0, 1)
 
         browse_game_button = QPushButton("Browse game")
         browse_game_button.clicked.connect(self._on_browse_game)
         path_layout.addWidget(browse_game_button, 0, 2)
 
-        path_layout.addWidget(QLabel("Mods directory"), 1, 0)
+        path_layout.addWidget(QLabel("Mods directory (real path)"), 1, 0)
         path_layout.addWidget(self._mods_path_input, 1, 1)
 
         browse_button = QPushButton("Browse")
@@ -151,7 +151,7 @@ class MainWindow(QMainWindow):
         browse_zip_button.clicked.connect(self._on_browse_zip)
         path_layout.addWidget(browse_zip_button, 2, 2)
 
-        path_layout.addWidget(QLabel("Sandbox Mods target"), 3, 0)
+        path_layout.addWidget(QLabel("Sandbox Mods target (safe install path)"), 3, 0)
         path_layout.addWidget(self._sandbox_mods_path_input, 3, 1)
 
         browse_sandbox_button = QPushButton("Browse sandbox")
@@ -175,7 +175,7 @@ class MainWindow(QMainWindow):
 
         path_layout.addWidget(QLabel("Scan target"), 7, 0)
         path_layout.addWidget(self._scan_target_combo, 7, 1)
-        path_layout.addWidget(QLabel("Detected packages"), 8, 0)
+        path_layout.addWidget(QLabel("Detected packages (from watcher)"), 8, 0)
         path_layout.addWidget(self._intake_result_combo, 8, 1)
         path_layout.addWidget(self._plan_selected_intake_button, 8, 2)
 
@@ -226,7 +226,7 @@ class MainWindow(QMainWindow):
         root_layout.addLayout(actions_row)
         root_layout.addWidget(QLabel("Installed mods"))
         root_layout.addWidget(self._mods_table)
-        root_layout.addWidget(QLabel("Warnings and findings"))
+        root_layout.addWidget(QLabel("Summary and guidance"))
         root_layout.addWidget(self._findings_box)
         root_layout.addWidget(self._scan_context_label)
         root_layout.addWidget(self._environment_status_label)
@@ -518,7 +518,7 @@ class MainWindow(QMainWindow):
         baseline_count = len(self._known_watched_zip_paths)
         watched_path = self._watched_downloads_path_input.text().strip()
         self._watch_status_label.setText(
-            f"Watcher: running ({watched_path}) baseline={baseline_count} existing zip(s)"
+            f"Downloads watch: running ({watched_path}) baseline={baseline_count} existing zip(s)"
         )
         self._set_status(
             "Downloads watcher started. Only zip files added after start are detected."
@@ -526,7 +526,7 @@ class MainWindow(QMainWindow):
 
     def _on_stop_watch(self) -> None:
         self._watch_timer.stop()
-        self._watch_status_label.setText("Watcher: stopped")
+        self._watch_status_label.setText("Downloads watch: stopped")
         self._set_status("Downloads watcher stopped.")
 
     def _on_watch_tick(self) -> None:
@@ -538,7 +538,7 @@ class MainWindow(QMainWindow):
             )
         except AppShellError as exc:
             self._watch_timer.stop()
-            self._watch_status_label.setText("Watcher: stopped (error)")
+            self._watch_status_label.setText("Downloads watch: stopped (error)")
             self._set_status(str(exc))
             self._findings_box.setPlainText(str(exc))
             return
@@ -619,7 +619,7 @@ class MainWindow(QMainWindow):
         self._status_label.setText(text)
 
     def _set_scan_context(self, path: Path, label: str) -> None:
-        self._scan_context_label.setText(f"Scan context: {label} ({path})")
+        self._scan_context_label.setText(f"Current scan source: {label} ({path})")
 
     def _invalidate_pending_plan(self, *_: object) -> None:
         self._pending_install_plan = None
@@ -631,7 +631,7 @@ class MainWindow(QMainWindow):
         self._refresh_intake_selector()
         if self._watch_timer.isActive():
             self._watch_timer.stop()
-            self._watch_status_label.setText("Watcher: stopped (path changed)")
+            self._watch_status_label.setText("Downloads watch: stopped (path changed)")
             self._set_status("Watcher stopped because watched path changed.")
 
     def _on_game_path_changed(self, *_: object) -> None:
@@ -712,7 +712,7 @@ class MainWindow(QMainWindow):
         else:
             path_text = self._sandbox_mods_path_input.text().strip() or "<unset>"
         self._scan_context_label.setText(
-            f"Selected scan target: {self._scan_target_label(target)} ({path_text})"
+            f"Selected scan source: {self._scan_target_label(target)} ({path_text})"
         )
 
     def _current_scan_target(self) -> str:
@@ -783,7 +783,7 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _scan_target_label(target: str) -> str:
         if target == SCAN_TARGET_CONFIGURED_REAL_MODS:
-            return "configured Mods directory"
+            return "real Mods directory"
         return "sandbox Mods directory"
 
 
