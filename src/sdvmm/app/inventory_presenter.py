@@ -19,6 +19,7 @@ from sdvmm.domain.models import (
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
     GameEnvironmentStatus,
+    ModDiscoveryResult,
     ModUpdateReport,
     ModsInventory,
     PackageInspectionResult,
@@ -407,6 +408,49 @@ def build_update_report_text(report: ModUpdateReport) -> str:
     return "\n".join(lines)
 
 
+def build_discovery_search_text(result: ModDiscoveryResult) -> str:
+    lines: list[str] = []
+    lines.append("Mod Discovery")
+    lines.append("- Source: SMAPI compatibility index")
+    lines.append(f"- Query: {result.query}")
+    lines.append(f"- Results: {len(result.results)}")
+
+    if result.notes:
+        for note in result.notes:
+            lines.append(f"- note: {note}")
+
+    lines.append("")
+    if not result.results:
+        lines.append("No matching mods found.")
+        lines.append("")
+        lines.append("Recommended next step:")
+        lines.append("- Try a broader search term (mod name, UniqueID, or author).")
+        return "\n".join(lines)
+
+    lines.append("Search results:")
+    for entry in result.results:
+        lines.append(
+            "- "
+            f"{entry.name} | UniqueID: {entry.unique_id} | "
+            f"source={_discovery_source_provider_label(entry.source_provider)} | "
+            f"compatibility={_discovery_compatibility_label(entry.compatibility_state)} "
+            f"(code: {entry.compatibility_state})"
+        )
+        lines.append(f"  author: {entry.author}")
+        if entry.compatibility_summary:
+            lines.append(f"  compatibility note: {entry.compatibility_summary}")
+        if entry.source_page_url:
+            lines.append(f"  page: {entry.source_page_url}")
+        else:
+            lines.append("  page: <not available>")
+
+    lines.append("")
+    lines.append("Recommended next step:")
+    lines.append("- Select a discovery result row and click Open discovered page.")
+    lines.append("- If the package is downloaded manually, use existing intake + plan-install flow.")
+    return "\n".join(lines)
+
+
 def build_downloads_intake_text(result: DownloadsWatchPollResult) -> str:
     lines: list[str] = []
     lines.append("Downloads Intake")
@@ -695,6 +739,30 @@ def _remote_requirements_state_label(state: str) -> str:
         NO_REMOTE_LINK_FOR_REQUIREMENTS: "No remote link",
     }
     return labels.get(state, state.replace("_", " ").title())
+
+
+def _discovery_compatibility_label(state: str) -> str:
+    labels = {
+        "compatible": "Compatible",
+        "compatible_with_caveat": "Compatible with caveat",
+        "unofficial_update": "Use unofficial update",
+        "workaround_available": "Use workaround",
+        "incompatible": "Incompatible",
+        "abandoned": "Abandoned",
+        "obsolete": "Obsolete",
+        "compatibility_unknown": "Compatibility unknown",
+    }
+    return labels.get(state, state.replace("_", " ").title())
+
+
+def _discovery_source_provider_label(provider: str) -> str:
+    labels = {
+        "nexus": "Nexus",
+        "github": "GitHub",
+        "custom_url": "Custom URL",
+        "none": "No source link",
+    }
+    return labels.get(provider, provider.replace("_", " ").title())
 
 
 def _install_action_label(action: str) -> str:

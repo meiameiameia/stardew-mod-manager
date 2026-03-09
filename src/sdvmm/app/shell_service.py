@@ -13,6 +13,8 @@ from sdvmm.domain.models import (
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
     GameEnvironmentStatus,
+    ModDiscoveryEntry,
+    ModDiscoveryResult,
     ModUpdateReport,
     ModsInventory,
     NexusIntegrationStatus,
@@ -60,6 +62,10 @@ from sdvmm.services.update_metadata import (
     normalize_nexus_api_key,
 )
 from sdvmm.services.remote_requirements import evaluate_remote_requirements_for_package_mods
+from sdvmm.services.mod_discovery import (
+    DiscoveryServiceError,
+    search_discoverable_mods,
+)
 
 
 class AppShellError(ValueError):
@@ -328,6 +334,30 @@ class AppShellService:
             )
         except OSError as exc:
             raise AppShellError(f"Could not check remote metadata: {exc}") from exc
+
+    def search_mod_discovery(
+        self,
+        *,
+        query_text: str,
+        max_results: int = 50,
+    ) -> ModDiscoveryResult:
+        try:
+            return search_discoverable_mods(
+                query_text,
+                max_results=max_results,
+            )
+        except DiscoveryServiceError as exc:
+            raise AppShellError(f"Could not search mod discovery index: [{exc.reason}] {exc.message}") from exc
+        except OSError as exc:
+            raise AppShellError(f"Could not search mod discovery index: {exc}") from exc
+
+    @staticmethod
+    def resolve_discovery_source_page_url(entry: ModDiscoveryEntry) -> str:
+        if entry.source_page_url:
+            return entry.source_page_url
+        raise AppShellError(
+            f"No source page URL is available for discovered mod: {entry.unique_id}"
+        )
 
     def get_nexus_integration_status(
         self,

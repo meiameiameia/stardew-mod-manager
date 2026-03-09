@@ -30,6 +30,14 @@ from .update_metadata import (
     resolve_remote_link,
 )
 from .remote_requirements import evaluate_remote_requirements_for_package_mods
+from .mod_discovery import (
+    DISCOVERY_INVALID_PAYLOAD,
+    DISCOVERY_INVALID_QUERY,
+    DISCOVERY_REQUEST_FAILURE,
+    DiscoveryServiceError,
+    SMAPI_COMPATIBILITY_INDEX_URL,
+    search_discoverable_mods,
+)
 
 __all__ = [
     "APP_STATE_VERSION",
@@ -53,6 +61,12 @@ __all__ = [
     "check_updates_for_inventory",
     "check_nexus_connection",
     "evaluate_remote_requirements_for_package_mods",
+    "search_discoverable_mods",
+    "SMAPI_COMPATIBILITY_INDEX_URL",
+    "DISCOVERY_INVALID_QUERY",
+    "DISCOVERY_INVALID_PAYLOAD",
+    "DISCOVERY_REQUEST_FAILURE",
+    "DiscoveryServiceError",
     "compare_versions",
     "mask_api_key",
     "normalize_nexus_api_key",

@@ -26,6 +26,7 @@ from PySide6.QtGui import QDesktopServices
 
 from sdvmm.app.inventory_presenter import (
     build_dependency_preflight_text,
+    build_discovery_search_text,
     build_downloads_intake_text,
     build_environment_status_text,
     build_findings_text,
@@ -48,6 +49,7 @@ from sdvmm.domain.models import (
     AppConfig,
     DownloadsIntakeResult,
     GameEnvironmentStatus,
+    ModDiscoveryResult,
     ModUpdateStatus,
     ModUpdateReport,
     ModsInventory,
@@ -64,8 +66,10 @@ class MainWindow(QMainWindow):
         self._pending_install_plan: SandboxInstallPlan | None = None
         self._current_inventory: ModsInventory | None = None
         self._current_update_report: ModUpdateReport | None = None
+        self._current_discovery_result: ModDiscoveryResult | None = None
         self._row_remote_links: dict[int, str] = {}
         self._row_update_statuses: dict[int, ModUpdateStatus] = {}
+        self._discovery_row_links: dict[int, str] = {}
         self._known_watched_zip_paths: tuple[Path, ...] = tuple()
         self._detected_intakes: tuple[DownloadsIntakeResult, ...] = tuple()
         self._intake_correlations: tuple[IntakeUpdateCorrelation, ...] = tuple()
@@ -89,6 +93,10 @@ class MainWindow(QMainWindow):
         self._real_archive_path_input.setPlaceholderText("/path/to/Real/Mods/.sdvmm-archive")
         self._watched_downloads_path_input = QLineEdit()
         self._watched_downloads_path_input.setPlaceholderText("/path/to/Downloads")
+        self._discovery_query_input = QLineEdit()
+        self._discovery_query_input.setPlaceholderText(
+            "Search by mod name, UniqueID, or author"
+        )
         self._nexus_api_key_input = QLineEdit()
         self._nexus_api_key_input.setPlaceholderText("Nexus API key")
         self._nexus_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -115,6 +123,13 @@ class MainWindow(QMainWindow):
         )
         self._mods_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._mods_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+
+        self._discovery_table = QTableWidget(0, 6)
+        self._discovery_table.setHorizontalHeaderLabels(
+            ["Name", "UniqueID", "Author", "Source", "Compatibility", "Page"]
+        )
+        self._discovery_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._discovery_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
 
         self._findings_box = QPlainTextEdit()
         self._findings_box.setReadOnly(True)
@@ -143,6 +158,7 @@ class MainWindow(QMainWindow):
         self._watched_downloads_path_input.textChanged.connect(self._on_watched_path_changed)
         self._nexus_api_key_input.textChanged.connect(self._on_nexus_key_changed)
         self._intake_result_combo.currentIndexChanged.connect(self._on_intake_selection_changed)
+        self._discovery_query_input.returnPressed.connect(self._on_search_discovery)
 
         self._build_layout()
         self._refresh_intake_selector()
@@ -216,6 +232,8 @@ class MainWindow(QMainWindow):
         path_layout.addWidget(QLabel("Detected packages (from watcher)"), 11, 0)
         path_layout.addWidget(self._intake_result_combo, 11, 1)
         path_layout.addWidget(self._plan_selected_intake_button, 11, 2)
+        path_layout.addWidget(QLabel("Discover mods"), 12, 0)
+        path_layout.addWidget(self._discovery_query_input, 12, 1, 1, 2)
 
         actions_row = QHBoxLayout()
         save_button = QPushButton("Save config")
@@ -246,6 +264,14 @@ class MainWindow(QMainWindow):
         check_updates_button.clicked.connect(self._on_check_updates)
         actions_row.addWidget(check_updates_button)
 
+        search_mods_button = QPushButton("Search mods")
+        search_mods_button.clicked.connect(self._on_search_discovery)
+        actions_row.addWidget(search_mods_button)
+
+        open_discovered_button = QPushButton("Open discovered page")
+        open_discovered_button.clicked.connect(self._on_open_discovered_page)
+        actions_row.addWidget(open_discovered_button)
+
         check_nexus_button = QPushButton("Check Nexus")
         check_nexus_button.clicked.connect(self._on_check_nexus_connection)
         actions_row.addWidget(check_nexus_button)
@@ -268,6 +294,8 @@ class MainWindow(QMainWindow):
         root_layout.addLayout(actions_row)
         root_layout.addWidget(QLabel("Installed mods"))
         root_layout.addWidget(self._mods_table)
+        root_layout.addWidget(QLabel("Discovery results"))
+        root_layout.addWidget(self._discovery_table)
         root_layout.addWidget(QLabel("Summary and guidance"))
         root_layout.addWidget(self._findings_box)
         root_layout.addWidget(self._scan_context_label)
@@ -543,6 +571,59 @@ class MainWindow(QMainWindow):
         self._recompute_intake_correlations()
         self._set_status(f"Update check complete: {len(report.statuses)} mod(s)")
 
+    def _on_search_discovery(self) -> None:
+        try:
+            discovery_result = self._shell_service.search_mod_discovery(
+                query_text=self._discovery_query_input.text(),
+            )
+        except AppShellError as exc:
+            QMessageBox.critical(self, "Discovery search failed", str(exc))
+            self._set_status(str(exc))
+            return
+
+        self._current_discovery_result = discovery_result
+        self._render_discovery_results(discovery_result)
+        self._findings_box.setPlainText(build_discovery_search_text(discovery_result))
+        self._set_status(f"Discovery search complete: {len(discovery_result.results)} result(s)")
+
+    def _on_open_discovered_page(self) -> None:
+        if self._current_discovery_result is None:
+            message = "Run Search mods first."
+            QMessageBox.warning(self, "No discovery results", message)
+            self._set_status(message)
+            return
+
+        row = self._discovery_table.currentRow()
+        if row < 0:
+            message = "Select a discovery result row first."
+            QMessageBox.warning(self, "No selection", message)
+            self._set_status(message)
+            return
+
+        if row >= len(self._current_discovery_result.results):
+            message = "Selected discovery row is out of range."
+            QMessageBox.warning(self, "Invalid selection", message)
+            self._set_status(message)
+            return
+
+        url = self._discovery_row_links.get(row)
+        if not url:
+            entry = self._current_discovery_result.results[row]
+            try:
+                url = self._shell_service.resolve_discovery_source_page_url(entry)
+            except AppShellError as exc:
+                QMessageBox.information(self, "No source link", str(exc))
+                self._set_status(str(exc))
+                return
+
+        if not QDesktopServices.openUrl(QUrl(url)):
+            message = f"Could not open discovered page: {url}"
+            QMessageBox.critical(self, "Open failed", message)
+            self._set_status(message)
+            return
+
+        self._set_status(f"Opened discovered page: {url}")
+
     def _on_check_nexus_connection(self) -> None:
         status = self._shell_service.get_nexus_integration_status(
             nexus_api_key_text=self._nexus_api_key_input.text(),
@@ -715,6 +796,23 @@ class MainWindow(QMainWindow):
             self._row_update_statuses[row] = status
             if status.remote_link is not None:
                 self._row_remote_links[row] = status.remote_link.page_url
+
+    def _render_discovery_results(self, discovery_result: ModDiscoveryResult) -> None:
+        self._discovery_row_links = {}
+        self._discovery_table.setRowCount(len(discovery_result.results))
+
+        for row, entry in enumerate(discovery_result.results):
+            self._discovery_table.setItem(row, 0, QTableWidgetItem(entry.name))
+            self._discovery_table.setItem(row, 1, QTableWidgetItem(entry.unique_id))
+            self._discovery_table.setItem(row, 2, QTableWidgetItem(entry.author))
+            self._discovery_table.setItem(row, 3, QTableWidgetItem(entry.source_provider))
+            self._discovery_table.setItem(row, 4, QTableWidgetItem(entry.compatibility_state))
+            page_text = entry.source_page_url or "-"
+            self._discovery_table.setItem(row, 5, QTableWidgetItem(page_text))
+            if entry.source_page_url:
+                self._discovery_row_links[row] = entry.source_page_url
+
+        self._discovery_table.resizeColumnsToContents()
 
     def _set_status(self, text: str) -> None:
         self._status_label.setText(text)

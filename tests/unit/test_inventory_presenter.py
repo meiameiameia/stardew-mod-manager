@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from sdvmm.app.inventory_presenter import (
+    build_discovery_search_text,
     build_downloads_intake_text,
     build_environment_status_text,
     build_package_inspection_text,
@@ -13,6 +14,8 @@ from sdvmm.domain.models import (
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
     GameEnvironmentStatus,
+    ModDiscoveryEntry,
+    ModDiscoveryResult,
     ModUpdateReport,
     ModUpdateStatus,
     PackageFinding,
@@ -88,6 +91,34 @@ def test_downloads_intake_text_shows_classification_summary_and_action() -> None
     assert "Unusable package: 1" in text
     assert "recommended next step" in text
     assert "Not actionable" in text
+
+
+def test_discovery_search_text_shows_compatibility_and_next_step() -> None:
+    result = ModDiscoveryResult(
+        query="spacecore",
+        provider="smapi_compatibility_list",
+        results=(
+            ModDiscoveryEntry(
+                name="SpaceCore",
+                unique_id="spacechase0.SpaceCore",
+                author="spacechase0",
+                provider="smapi_compatibility_list",
+                source_provider="nexus",
+                source_page_url="https://www.nexusmods.com/stardewvalley/mods/1348",
+                compatibility_state="compatible",
+                compatibility_status="ok",
+                compatibility_summary="Compatible on latest SMAPI.",
+            ),
+        ),
+    )
+
+    text = build_discovery_search_text(result)
+
+    assert "Mod Discovery" in text
+    assert "SMAPI compatibility index" in text
+    assert "SpaceCore" in text
+    assert "Compatible" in text
+    assert "Open discovered page" in text
 
 
 def test_package_inspection_text_separates_blocking_and_non_blocking_guidance() -> None:

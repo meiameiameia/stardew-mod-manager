@@ -15,7 +15,14 @@ from sdvmm.app.shell_service import (
     AppShellError,
     AppShellService,
 )
-from sdvmm.domain.models import AppConfig, ModUpdateReport, ModUpdateStatus, NexusIntegrationStatus
+from sdvmm.domain.models import (
+    AppConfig,
+    ModDiscoveryEntry,
+    ModDiscoveryResult,
+    ModUpdateReport,
+    ModUpdateStatus,
+    NexusIntegrationStatus,
+)
 from sdvmm.domain.update_codes import UpdateState
 from sdvmm.services.app_state_store import save_app_config
 
@@ -672,6 +679,68 @@ def test_check_updates_passes_resolved_nexus_key_to_metadata_service(
 
     assert captured["inventory"] is inventory
     assert captured["nexus_api_key"] == "persisted-nexus-key"
+
+
+def test_search_mod_discovery_delegates_to_discovery_service(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    captured: dict[str, object] = {}
+    expected = ModDiscoveryResult(
+        query="spacecore",
+        provider="smapi_compatibility_list",
+        results=(
+            ModDiscoveryEntry(
+                name="SpaceCore",
+                unique_id="spacechase0.SpaceCore",
+                author="spacechase0",
+                provider="smapi_compatibility_list",
+                source_provider="nexus",
+                source_page_url="https://www.nexusmods.com/stardewvalley/mods/1348",
+                compatibility_state="compatible",
+                compatibility_status="ok",
+            ),
+        ),
+    )
+
+    def _fake_search_discoverable_mods(
+        query: str,
+        *,
+        fetcher=None,
+        timeout_seconds: float = 10.0,
+        max_results: int = 50,
+    ) -> ModDiscoveryResult:
+        _ = fetcher
+        _ = timeout_seconds
+        captured["query"] = query
+        captured["max_results"] = max_results
+        return expected
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(shell_service_module, "search_discoverable_mods", _fake_search_discoverable_mods)
+    try:
+        result = service.search_mod_discovery(query_text="spacecore", max_results=25)
+    finally:
+        monkeypatch.undo()
+
+    assert captured["query"] == "spacecore"
+    assert captured["max_results"] == 25
+    assert result == expected
+
+
+def test_resolve_discovery_source_page_url_requires_url(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    entry_without_url = ModDiscoveryEntry(
+        name="No Link",
+        unique_id="sample.NoLink",
+        author="Sample",
+        provider="smapi_compatibility_list",
+        source_provider="none",
+        source_page_url=None,
+        compatibility_state="compatibility_unknown",
+        compatibility_status="unknown",
+    )
+
+    with pytest.raises(AppShellError, match="No source page URL is available"):
+        _ = service.resolve_discovery_source_page_url(entry_without_url)
 
 
 def test_get_nexus_status_reports_saved_config_state(tmp_path: Path) -> None:

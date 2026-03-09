@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from sdvmm.domain.discovery_codes import (
+    DiscoveryCompatibilityState,
+    DiscoveryProvider,
+    DiscoverySourceProvider,
+)
 from sdvmm.domain.dependency_codes import DependencyState
 from sdvmm.domain.environment_codes import EnvironmentState
 from sdvmm.domain.install_codes import SandboxInstallAction
@@ -124,6 +129,29 @@ class ModUpdateStatus:
 @dataclass(frozen=True, slots=True)
 class ModUpdateReport:
     statuses: tuple[ModUpdateStatus, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ModDiscoveryEntry:
+    name: str
+    unique_id: str
+    author: str
+    provider: DiscoveryProvider
+    source_provider: DiscoverySourceProvider
+    source_page_url: str | None
+    compatibility_state: DiscoveryCompatibilityState
+    compatibility_status: str
+    compatibility_summary: str | None = None
+    alternate_names: tuple[str, ...] = tuple()
+    alternate_unique_ids: tuple[str, ...] = tuple()
+
+
+@dataclass(frozen=True, slots=True)
+class ModDiscoveryResult:
+    query: str
+    provider: DiscoveryProvider
+    results: tuple[ModDiscoveryEntry, ...]
+    notes: tuple[str, ...] = tuple()
 
 
 RemoteRequirementContextSource = Literal[
