@@ -36,25 +36,34 @@ from sdvmm.domain.remote_requirement_codes import (
 
 def build_findings_text(inventory: ModsInventory) -> str:
     lines: list[str] = []
+    lines.append("Installed Mods Scan Summary")
+    lines.append(f"- Installed mods detected: {len(inventory.mods)}")
+    lines.append(f"- Parse warnings: {len(inventory.parse_warnings)}")
+    lines.append(f"- Duplicate UniqueIDs: {len(inventory.duplicate_unique_ids)}")
+    lines.append(f"- Missing required dependencies: {len(inventory.missing_required_dependencies)}")
+    lines.append("")
 
     if inventory.scan_entry_findings:
-        lines.append("Scan entry findings:")
+        lines.append("Folder scan findings:")
         for finding in inventory.scan_entry_findings:
-            kind = finding.kind.replace("_", " ")
-            lines.append(f"- [{kind}] {finding.entry_path.name}: {finding.message}")
+            kind = _scan_entry_kind_label(finding.kind)
+            lines.append(
+                f"- {kind}: {finding.entry_path.name}: {finding.message} (code: {finding.kind})"
+            )
     else:
-        lines.append("Scan entry findings: none")
+        lines.append("Folder scan findings: none")
 
     lines.append("")
 
     if inventory.parse_warnings:
-        lines.append("Warnings:")
+        lines.append("Manifest warnings:")
         for warning in inventory.parse_warnings:
             lines.append(
-                f"- [{warning.code}] {warning.mod_path.name}: {warning.message}"
+                f"- {_warning_code_label(warning.code)}: {warning.mod_path.name}: "
+                f"{warning.message} (code: {warning.code})"
             )
     else:
-        lines.append("Warnings: none")
+        lines.append("Manifest warnings: none")
 
     if inventory.duplicate_unique_ids:
         lines.append("")
@@ -79,29 +88,40 @@ def build_findings_text(inventory: ModsInventory) -> str:
         lines.append("")
         lines.append("Missing required dependencies: none")
 
+    lines.append("")
+    lines.append("Recommended next step:")
+    if inventory.missing_required_dependencies:
+        lines.append("- Install missing required dependencies first, then scan again.")
+    elif inventory.parse_warnings:
+        lines.append("- Review manifest warnings and replace or fix broken mod folders.")
+    else:
+        lines.append("- Run update check to see if newer versions are available.")
+
     return "\n".join(lines)
 
 
 def build_environment_status_text(status: GameEnvironmentStatus) -> str:
     lines: list[str] = []
-    lines.append(f"Game path: {status.game_path}")
+    lines.append("Environment Detection")
+    lines.append(f"- Selected game path: {status.game_path}")
 
     for state in status.state_codes:
-        lines.append(f"- [{state}]")
+        lines.append(f"- {_environment_state_label(state)} (code: {state})")
 
     if status.mods_path is not None:
-        lines.append(f"Detected Mods path: {status.mods_path}")
+        lines.append(f"- Detected Mods path: {status.mods_path}")
     else:
-        lines.append("Detected Mods path: <not detected>")
+        lines.append("- Detected Mods path: <not detected>")
 
     if status.smapi_path is not None:
-        lines.append(f"Detected SMAPI path: {status.smapi_path}")
+        lines.append(f"- Detected SMAPI path: {status.smapi_path}")
     else:
-        lines.append("Detected SMAPI path: <not detected>")
+        lines.append("- Detected SMAPI path: <not detected>")
 
     for note in status.notes:
         lines.append(f"- note: {note}")
 
+    lines.append("")
     if INVALID_GAME_PATH in status.state_codes:
         lines.append("Environment summary: invalid game path")
     elif GAME_PATH_DETECTED in status.state_codes:
@@ -115,6 +135,19 @@ def build_environment_status_text(status: GameEnvironmentStatus) -> str:
         elif SMAPI_NOT_DETECTED in status.state_codes:
             parts.append("SMAPI not detected")
         lines.append(f"Environment summary: {', '.join(parts)}")
+    else:
+        lines.append("Environment summary: incomplete detection state")
+
+    lines.append("")
+    lines.append("Recommended next step:")
+    if INVALID_GAME_PATH in status.state_codes:
+        lines.append("- Pick the Stardew Valley install folder (not only a random folder with Mods).")
+    elif MODS_PATH_DETECTED not in status.state_codes:
+        lines.append("- Create or select a valid Mods folder before scanning.")
+    elif SMAPI_DETECTED not in status.state_codes:
+        lines.append("- SMAPI not detected. Install/verify SMAPI if your mods require it.")
+    else:
+        lines.append("- Environment looks usable. Save config and run Scan.")
 
     return "\n".join(lines)
 
@@ -147,7 +180,7 @@ def build_dependency_preflight_text(
         entries = grouped.get(state, [])
         if not entries:
             continue
-        lines.append(f"- [{state}] {len(entries)}")
+        lines.append(f"- {_dependency_state_label(state)}: {len(entries)} (code: {state})")
         for entry in entries:
             requirement = "required" if entry.required else "optional"
             lines.append(
@@ -161,24 +194,30 @@ def build_dependency_preflight_text(
 
 def build_package_inspection_text(result: PackageInspectionResult) -> str:
     lines: list[str] = []
-    lines.append(f"Package: {result.package_path.name}")
+    lines.append("Package Inspection")
+    lines.append(f"- Package: {result.package_path.name}")
+    lines.append(f"- Detected mods: {len(result.mods)}")
+    lines.append(f"- Findings: {len(result.findings)}")
+    lines.append(f"- Warnings: {len(result.warnings)}")
 
     lines.append("")
     if result.mods:
-        lines.append("Detected package mods:")
+        lines.append("Detected mods in this zip:")
         for mod in result.mods:
             lines.append(
-                f"- {mod.name} | {mod.unique_id} | {mod.version} | {mod.manifest_path}"
+                f"- {mod.name} | UniqueID: {mod.unique_id} | Version: {mod.version} | {mod.manifest_path}"
             )
     else:
-        lines.append("Detected package mods: none")
+        lines.append("Detected mods in this zip: none")
 
     lines.append("")
     if result.findings:
         lines.append("Package findings:")
         for finding in result.findings:
-            kind = finding.kind.replace("_", " ")
-            lines.append(f"- [{kind}] {finding.message}")
+            lines.append(
+                f"- {_package_finding_label(finding.kind)}: {finding.message} "
+                f"(code: {finding.kind})"
+            )
     else:
         lines.append("Package findings: none")
 
@@ -186,7 +225,10 @@ def build_package_inspection_text(result: PackageInspectionResult) -> str:
     if result.warnings:
         lines.append("Package warnings:")
         for warning in result.warnings:
-            lines.append(f"- [{warning.code}] {warning.manifest_path}: {warning.message}")
+            lines.append(
+                f"- {_warning_code_label(warning.code)}: {warning.manifest_path}: "
+                f"{warning.message} (code: {warning.code})"
+            )
     else:
         lines.append("Package warnings: none")
 
@@ -204,27 +246,44 @@ def build_package_inspection_text(result: PackageInspectionResult) -> str:
             guidance=result.remote_requirements,
         )
     )
+    lines.append("")
+    lines.append("Recommended next step:")
+    if not result.mods:
+        lines.append("- Package is not ready for install planning. Choose another zip.")
+    elif any(
+        finding.state == MISSING_REQUIRED_DEPENDENCY for finding in result.dependency_findings
+    ):
+        lines.append("- Missing required dependencies detected. Install dependencies first.")
+    else:
+        lines.append("- Package looks plannable. Use Plan install (sandbox only).")
 
     return "\n".join(lines)
 
 
 def build_sandbox_install_plan_text(plan: SandboxInstallPlan) -> str:
     lines: list[str] = []
-    lines.append(f"Sandbox target: {plan.sandbox_mods_path}")
-    lines.append(f"Sandbox archive: {plan.sandbox_archive_path}")
-    lines.append(f"Package: {plan.package_path.name}")
+    blocked_count = sum(1 for entry in plan.entries if not entry.can_install)
+    installable_count = sum(1 for entry in plan.entries if entry.can_install)
+    lines.append("Sandbox Install Plan")
+    lines.append(f"- Sandbox Mods target: {plan.sandbox_mods_path}")
+    lines.append(f"- Sandbox archive path: {plan.sandbox_archive_path}")
+    lines.append(f"- Source package: {plan.package_path.name}")
+    lines.append(
+        f"- Plan status: {'BLOCKED' if blocked_count else 'READY'} "
+        f"(installable={installable_count}, blocked={blocked_count})"
+    )
     lines.append("")
 
     if plan.entries:
         lines.append("Install plan entries:")
         for entry in plan.entries:
-            status = "new" if not entry.target_exists else "exists"
-            action = entry.action.replace("_", " ")
-            executable = "installable" if entry.can_install else "blocked"
+            status = "new target" if not entry.target_exists else "target already exists"
+            action = _install_action_label(entry.action)
+            executable = "ready" if entry.can_install else "blocked"
             lines.append(
                 "- "
-                f"{entry.name} | {entry.unique_id} | {entry.version}"
-                f" -> {entry.target_path.name} ({status}, {action}, {executable})"
+                f"{entry.name} | UniqueID: {entry.unique_id} | Version: {entry.version}"
+                f" -> {entry.target_path.name} ({status}, action={action}, {executable})"
             )
             if entry.archive_path is not None:
                 lines.append(f"  archive: {entry.archive_path}")
@@ -245,7 +304,10 @@ def build_sandbox_install_plan_text(plan: SandboxInstallPlan) -> str:
     if plan.package_findings:
         lines.append("Package findings:")
         for finding in plan.package_findings:
-            lines.append(f"- [{finding.kind}] {finding.message}")
+            lines.append(
+                f"- {_package_finding_label(finding.kind)}: {finding.message} "
+                f"(code: {finding.kind})"
+            )
     else:
         lines.append("Package findings: none")
 
@@ -263,6 +325,12 @@ def build_sandbox_install_plan_text(plan: SandboxInstallPlan) -> str:
             guidance=plan.remote_requirements,
         )
     )
+    lines.append("")
+    lines.append("Recommended next step:")
+    if blocked_count:
+        lines.append("- Plan is blocked. Resolve warnings (especially missing required dependencies) and rebuild plan.")
+    else:
+        lines.append("- Plan is ready. Review target/archive actions, then run Install to sandbox explicitly.")
 
     return "\n".join(lines)
 
@@ -288,43 +356,71 @@ def build_sandbox_install_result_text(result: SandboxInstallResult) -> str:
 
 def build_update_report_text(report: ModUpdateReport) -> str:
     lines: list[str] = []
-    lines.append("Mod metadata/update status:")
-    lines.append("Manifest dependency blocking is separate from remote requirement guidance.")
+    lines.append("Update Awareness")
+    lines.append("Manifest dependency preflight (blocking) is separate from remote requirement guidance (non-blocking).")
 
     if not report.statuses:
         lines.append("- No installed mods in current inventory.")
         return "\n".join(lines)
 
+    update_available_count = sum(1 for status in report.statuses if status.state == "update_available")
+    up_to_date_count = sum(1 for status in report.statuses if status.state == "up_to_date")
+    no_link_count = sum(1 for status in report.statuses if status.state == "no_remote_link")
+    unavailable_count = sum(1 for status in report.statuses if status.state == "metadata_unavailable")
+    lines.append(
+        f"- Summary: update available={update_available_count}, up to date={up_to_date_count}, "
+        f"no remote link={no_link_count}, metadata unavailable={unavailable_count}"
+    )
+    lines.append("")
+
     for status in report.statuses:
         remote_version = status.remote_version or "unknown"
         lines.append(
             "- "
-            f"{status.name} | {status.unique_id} | "
-            f"installed={status.installed_version} | remote={remote_version} | state={status.state}"
+            f"{status.name} | UniqueID: {status.unique_id} | "
+            f"installed={status.installed_version} | remote={remote_version} | "
+            f"state={_update_state_label(status.state)} (code: {status.state})"
         )
         if status.remote_link is not None:
             lines.append(f"  remote: {status.remote_link.page_url}")
         if status.message:
             lines.append(f"  note: {status.message}")
         lines.append(
-            f"  remote-requirements[{status.remote_requirements_state}]: "
+            f"  remote requirements [{_remote_requirements_state_label(status.remote_requirements_state)} "
+            f"/ code: {status.remote_requirements_state}]: "
             f"{_format_remote_requirements_inline(status.remote_requirements, status.remote_requirements_message)}"
         )
+
+    lines.append("")
+    lines.append("Recommended next step:")
+    if update_available_count:
+        lines.append("- Select an 'Update available' mod row and click Open remote page, then use intake + sandbox planning.")
+    elif unavailable_count:
+        lines.append("- Metadata unavailable for some mods. Check API key/network and try Check updates again.")
+    else:
+        lines.append("- No immediate update action is required.")
 
     return "\n".join(lines)
 
 
 def build_downloads_intake_text(result: DownloadsWatchPollResult) -> str:
     lines: list[str] = []
-    lines.append(f"Watched downloads: {result.watched_path}")
-    lines.append(f"Known zip files: {len(result.known_zip_paths)}")
-    lines.append("Manifest dependency preflight stays blocking; remote requirements are guidance only.")
+    lines.append("Downloads Intake")
+    lines.append(f"- Watched downloads path: {result.watched_path}")
+    lines.append(f"- Known zip files: {len(result.known_zip_paths)}")
+    lines.append("- Manifest dependency preflight stays blocking; remote requirements are guidance only.")
     lines.append("")
 
     if not result.intakes:
         lines.append("No new zip packages detected.")
+        lines.append("Recommended next step: keep watcher running, then add new zip files.")
         return "\n".join(lines)
 
+    lines.append(
+        "- Intake summary: "
+        + _intake_classification_summary(result.intakes)
+    )
+    lines.append("")
     lines.append("New package intake results:")
     for intake in result.intakes:
         lines.extend(_format_single_intake(intake))
@@ -336,10 +432,11 @@ def _format_single_intake(intake: DownloadsIntakeResult) -> list[str]:
     lines: list[str] = []
     lines.append(
         "- "
-        f"{intake.package_path.name} | classification={intake.classification}"
+        f"{intake.package_path.name} | classification={_intake_classification_label(intake.classification)} "
+        f"(code: {intake.classification})"
     )
     lines.append(f"  message: {intake.message}")
-    lines.append(f"  next-action: {_intake_next_action(intake.classification)}")
+    lines.append(f"  recommended next step: {_intake_next_action(intake.classification)}")
 
     if intake.mods:
         for mod in intake.mods:
@@ -352,10 +449,14 @@ def _format_single_intake(intake: DownloadsIntakeResult) -> list[str]:
         lines.append(f"  installed-match: {matches}")
 
     for warning in intake.warnings:
-        lines.append(f"  warning[{warning.code}]: {warning.message}")
+        lines.append(
+            f"  warning [{_warning_code_label(warning.code)} / code: {warning.code}]: {warning.message}"
+        )
 
     for finding in intake.findings:
-        lines.append(f"  finding[{finding.kind}]: {finding.message}")
+        lines.append(
+            f"  finding [{_package_finding_label(finding.kind)} / code: {finding.kind}]: {finding.message}"
+        )
 
     dependency_summary = _dependency_summary(intake.dependency_findings)
     if dependency_summary:
@@ -374,12 +475,12 @@ def _format_single_intake(intake: DownloadsIntakeResult) -> list[str]:
 
 def _intake_next_action(classification: str) -> str:
     if classification == "unusable_package":
-        return "non-actionable (inspect/fix package)"
+        return "Not actionable. Inspect/fix this package or choose a different zip."
     if classification == "multi_mod_package":
-        return "actionable (plan install and review all entries)"
+        return "Actionable. Plan install and review every entry before executing."
     if classification == "update_replace_candidate":
-        return "actionable (plan install, review overwrite/archive preflight)"
-    return "actionable (plan install)"
+        return "Actionable. Plan install and review overwrite/archive warnings carefully."
+    return "Actionable. Plan install in sandbox."
 
 
 def _dependency_summary(findings: tuple[DependencyPreflightFinding, ...]) -> str:
@@ -440,7 +541,8 @@ def build_remote_requirement_guidance_text(
         provider = item.provider or "none"
         lines.append(
             "- "
-            f"{item.name} ({item.unique_id}) | provider={provider} | state={item.state}"
+            f"{item.name} ({item.unique_id}) | provider={provider} | "
+            f"state={_remote_requirements_state_label(item.state)} (code: {item.state})"
         )
         if item.requirements:
             joined = "; ".join(item.requirements)
@@ -503,7 +605,7 @@ def _remote_requirement_details(
 
 def build_intake_correlation_text(correlations: tuple[IntakeUpdateCorrelation, ...]) -> str:
     lines: list[str] = []
-    lines.append("Intake update-flow guidance:")
+    lines.append("Intake and Update Correlation")
 
     if not correlations:
         lines.append("- none")
@@ -514,3 +616,116 @@ def build_intake_correlation_text(correlations: tuple[IntakeUpdateCorrelation, .
         lines.append(f"  next-step: {correlation.next_step}")
 
     return "\n".join(lines)
+
+
+def _environment_state_label(state: str) -> str:
+    labels = {
+        GAME_PATH_DETECTED: "Game installation path detected",
+        MODS_PATH_DETECTED: "Mods folder detected",
+        SMAPI_DETECTED: "SMAPI detected",
+        SMAPI_NOT_DETECTED: "SMAPI not detected",
+        INVALID_GAME_PATH: "Invalid game path",
+    }
+    return labels.get(state, state.replace("_", " ").title())
+
+
+def _scan_entry_kind_label(kind: str) -> str:
+    labels = {
+        "direct_mod": "Direct mod folder",
+        "nested_mod_container": "Nested container with mod",
+        "multi_mod_container": "Container with multiple mods",
+        "missing_manifest": "No usable manifest found",
+        "invalid_manifest": "Invalid manifest",
+    }
+    return labels.get(kind, kind.replace("_", " ").title())
+
+
+def _warning_code_label(code: str) -> str:
+    labels = {
+        "missing_manifest": "Missing manifest",
+        "malformed_manifest": "Malformed manifest JSON",
+        "invalid_manifest": "Invalid manifest data",
+        "manifest_read_error": "Manifest read error",
+        "invalid_dependency_entry": "Invalid dependency entry",
+    }
+    return labels.get(code, code.replace("_", " ").title())
+
+
+def _package_finding_label(kind: str) -> str:
+    labels = {
+        "direct_single_mod_package": "Direct single-mod package",
+        "nested_single_mod_package": "Nested single-mod package",
+        "multi_mod_package": "Multi-mod package",
+        "invalid_manifest_package": "Invalid manifest package",
+        "no_usable_manifest_found": "No usable manifest found",
+        "too_deep_unsupported_package": "Unsupported deep package layout",
+    }
+    return labels.get(kind, kind.replace("_", " ").title())
+
+
+def _update_state_label(state: str) -> str:
+    labels = {
+        "up_to_date": "Up to date",
+        "update_available": "Update available",
+        "no_remote_link": "No remote link",
+        "metadata_unavailable": "Metadata unavailable",
+    }
+    return labels.get(state, state.replace("_", " ").title())
+
+
+def _dependency_state_label(state: str) -> str:
+    labels = {
+        SATISFIED: "Satisfied",
+        MISSING_REQUIRED_DEPENDENCY: "Missing required dependency",
+        OPTIONAL_DEPENDENCY_MISSING: "Optional dependency missing",
+        UNRESOLVED_DEPENDENCY_CONTEXT: "Dependency context unresolved",
+    }
+    return labels.get(state, state.replace("_", " ").title())
+
+
+def _remote_requirements_state_label(state: str) -> str:
+    labels = {
+        REQUIREMENTS_PRESENT: "Requirements present",
+        REQUIREMENTS_ABSENT: "No requirements declared",
+        REQUIREMENTS_UNAVAILABLE: "Requirements unavailable",
+        NO_REMOTE_LINK_FOR_REQUIREMENTS: "No remote link",
+    }
+    return labels.get(state, state.replace("_", " ").title())
+
+
+def _install_action_label(action: str) -> str:
+    labels = {
+        "install_new": "install new",
+        "overwrite_with_archive": "overwrite (archive first)",
+        "blocked": "blocked",
+    }
+    return labels.get(action, action.replace("_", " "))
+
+
+def _intake_classification_label(classification: str) -> str:
+    labels = {
+        "new_install_candidate": "New install candidate",
+        "update_replace_candidate": "Update/replace candidate",
+        "multi_mod_package": "Multi-mod package",
+        "unusable_package": "Unusable package",
+    }
+    return labels.get(classification, classification.replace("_", " ").title())
+
+
+def _intake_classification_summary(intakes: tuple[DownloadsIntakeResult, ...]) -> str:
+    counts: dict[str, int] = {}
+    for intake in intakes:
+        counts[intake.classification] = counts.get(intake.classification, 0) + 1
+
+    order = (
+        "new_install_candidate",
+        "update_replace_candidate",
+        "multi_mod_package",
+        "unusable_package",
+    )
+    parts = [
+        f"{_intake_classification_label(key)}: {counts[key]}"
+        for key in order
+        if counts.get(key, 0) > 0
+    ]
+    return ", ".join(parts) if parts else "none"
