@@ -21,8 +21,10 @@ class AppConfig:
     app_data_path: Path
     sandbox_mods_path: Path | None = None
     sandbox_archive_path: Path | None = None
+    real_archive_path: Path | None = None
     watched_downloads_path: Path | None = None
     scan_target: str = "configured_real_mods"
+    install_target: str = "sandbox_mods"
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +262,7 @@ class SandboxInstallPlan:
     plan_warnings: tuple[str, ...]
     dependency_findings: tuple[DependencyPreflightFinding, ...] = tuple()
     remote_requirements: tuple[RemoteRequirementGuidance, ...] = tuple()
+    destination_kind: str = "sandbox_mods"
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +272,7 @@ class SandboxInstallResult:
     archived_targets: tuple[Path, ...]
     scan_context_path: Path
     inventory: ModsInventory
+    destination_kind: str = "sandbox_mods"
 
 
 @dataclass(frozen=True, slots=True)

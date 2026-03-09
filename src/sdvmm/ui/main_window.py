@@ -36,6 +36,8 @@ from sdvmm.app.inventory_presenter import (
     build_update_report_text,
 )
 from sdvmm.app.shell_service import (
+    INSTALL_TARGET_CONFIGURED_REAL_MODS,
+    INSTALL_TARGET_SANDBOX_MODS,
     SCAN_TARGET_CONFIGURED_REAL_MODS,
     SCAN_TARGET_SANDBOX_MODS,
     AppShellError,
@@ -83,14 +85,26 @@ class MainWindow(QMainWindow):
         self._sandbox_mods_path_input.setPlaceholderText("/path/to/Sandbox/Mods")
         self._sandbox_archive_path_input = QLineEdit()
         self._sandbox_archive_path_input.setPlaceholderText("/path/to/Sandbox/.sdvmm-archive")
+        self._real_archive_path_input = QLineEdit()
+        self._real_archive_path_input.setPlaceholderText("/path/to/Real/Mods/.sdvmm-archive")
         self._watched_downloads_path_input = QLineEdit()
         self._watched_downloads_path_input.setPlaceholderText("/path/to/Downloads")
         self._overwrite_checkbox = QCheckBox("Allow overwrite with archive")
+        self._install_target_combo = QComboBox()
+        self._install_target_combo.addItem(
+            "Sandbox Mods destination (safe/test)",
+            INSTALL_TARGET_SANDBOX_MODS,
+        )
+        self._install_target_combo.addItem(
+            "Game Mods destination (real)",
+            INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        )
         self._scan_target_combo = QComboBox()
         self._scan_target_combo.addItem("Real Mods path (scan only)", SCAN_TARGET_CONFIGURED_REAL_MODS)
-        self._scan_target_combo.addItem("Sandbox Mods target (scan/install)", SCAN_TARGET_SANDBOX_MODS)
+        self._scan_target_combo.addItem("Sandbox Mods path (scan only)", SCAN_TARGET_SANDBOX_MODS)
         self._intake_result_combo = QComboBox()
         self._plan_selected_intake_button = QPushButton("Plan selected intake")
+        self._install_archive_label = QLabel("Archive path for selected install destination")
 
         self._mods_table = QTableWidget(0, 6)
         self._mods_table.setHorizontalHeaderLabels(
@@ -113,11 +127,15 @@ class MainWindow(QMainWindow):
         self._zip_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._sandbox_mods_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._sandbox_archive_path_input.textChanged.connect(self._invalidate_pending_plan)
+        self._real_archive_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._overwrite_checkbox.toggled.connect(self._invalidate_pending_plan)
         self._scan_target_combo.currentIndexChanged.connect(self._refresh_scan_context_preview)
+        self._install_target_combo.currentIndexChanged.connect(self._on_install_target_changed)
         self._game_path_input.textChanged.connect(self._on_game_path_changed)
         self._mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
+        self._mods_path_input.textChanged.connect(self._refresh_install_destination_preview)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
+        self._sandbox_mods_path_input.textChanged.connect(self._refresh_install_destination_preview)
         self._watched_downloads_path_input.textChanged.connect(self._on_watched_path_changed)
         self._intake_result_combo.currentIndexChanged.connect(self._on_intake_selection_changed)
 
@@ -165,19 +183,30 @@ class MainWindow(QMainWindow):
         browse_archive_button.clicked.connect(self._on_browse_sandbox_archive)
         path_layout.addWidget(browse_archive_button, 4, 2)
 
-        path_layout.addWidget(self._overwrite_checkbox, 5, 1)
-        path_layout.addWidget(QLabel("Watched downloads path"), 6, 0)
-        path_layout.addWidget(self._watched_downloads_path_input, 6, 1)
+        path_layout.addWidget(QLabel("Real Mods archive path"), 5, 0)
+        path_layout.addWidget(self._real_archive_path_input, 5, 1)
+
+        browse_real_archive_button = QPushButton("Browse real archive")
+        browse_real_archive_button.clicked.connect(self._on_browse_real_archive)
+        path_layout.addWidget(browse_real_archive_button, 5, 2)
+
+        path_layout.addWidget(self._overwrite_checkbox, 6, 1)
+        path_layout.addWidget(QLabel("Watched downloads path"), 7, 0)
+        path_layout.addWidget(self._watched_downloads_path_input, 7, 1)
 
         browse_downloads_button = QPushButton("Browse downloads")
         browse_downloads_button.clicked.connect(self._on_browse_watched_downloads)
-        path_layout.addWidget(browse_downloads_button, 6, 2)
+        path_layout.addWidget(browse_downloads_button, 7, 2)
 
-        path_layout.addWidget(QLabel("Scan target"), 7, 0)
-        path_layout.addWidget(self._scan_target_combo, 7, 1)
-        path_layout.addWidget(QLabel("Detected packages (from watcher)"), 8, 0)
-        path_layout.addWidget(self._intake_result_combo, 8, 1)
-        path_layout.addWidget(self._plan_selected_intake_button, 8, 2)
+        path_layout.addWidget(QLabel("Install destination"), 8, 0)
+        path_layout.addWidget(self._install_target_combo, 8, 1)
+        path_layout.addWidget(self._install_archive_label, 8, 2)
+
+        path_layout.addWidget(QLabel("Scan target"), 9, 0)
+        path_layout.addWidget(self._scan_target_combo, 9, 1)
+        path_layout.addWidget(QLabel("Detected packages (from watcher)"), 10, 0)
+        path_layout.addWidget(self._intake_result_combo, 10, 1)
+        path_layout.addWidget(self._plan_selected_intake_button, 10, 2)
 
         actions_row = QHBoxLayout()
         save_button = QPushButton("Save config")
@@ -200,7 +229,7 @@ class MainWindow(QMainWindow):
         plan_install_button.clicked.connect(self._on_plan_install)
         actions_row.addWidget(plan_install_button)
 
-        run_install_button = QPushButton("Install to sandbox")
+        run_install_button = QPushButton("Run install")
         run_install_button.clicked.connect(self._on_run_install)
         actions_row.addWidget(run_install_button)
 
@@ -246,9 +275,12 @@ class MainWindow(QMainWindow):
                 self._sandbox_mods_path_input.setText(str(state.config.sandbox_mods_path))
             if state.config.sandbox_archive_path is not None:
                 self._sandbox_archive_path_input.setText(str(state.config.sandbox_archive_path))
+            if state.config.real_archive_path is not None:
+                self._real_archive_path_input.setText(str(state.config.real_archive_path))
             if state.config.watched_downloads_path is not None:
                 self._watched_downloads_path_input.setText(str(state.config.watched_downloads_path))
             self._set_current_scan_target(state.config.scan_target)
+            self._set_current_install_target(state.config.install_target)
             self._set_status(f"Loaded saved config from {self._shell_service.state_file}")
 
         if state.message:
@@ -256,6 +288,7 @@ class MainWindow(QMainWindow):
             self._set_status(state.message)
 
         self._refresh_scan_context_preview()
+        self._refresh_install_destination_preview()
 
     def _on_browse_game(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -308,6 +341,16 @@ class MainWindow(QMainWindow):
             self._pending_install_plan = None
             self._sandbox_archive_path_input.setText(selected)
 
+    def _on_browse_real_archive(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select real Mods archive directory",
+            self._real_archive_path_input.text() or "",
+        )
+        if selected:
+            self._pending_install_plan = None
+            self._real_archive_path_input.setText(selected)
+
     def _on_browse_watched_downloads(self) -> None:
         selected = QFileDialog.getExistingDirectory(
             self,
@@ -325,7 +368,9 @@ class MainWindow(QMainWindow):
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
                 sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
                 watched_downloads_path_text=self._watched_downloads_path_input.text(),
+                real_archive_path_text=self._real_archive_path_input.text(),
                 scan_target=self._current_scan_target(),
+                install_target=self._current_install_target(),
                 existing_config=self._config,
             )
         except AppShellError as exc:
@@ -384,12 +429,15 @@ class MainWindow(QMainWindow):
 
     def _on_plan_install(self) -> None:
         try:
-            plan = self._shell_service.build_sandbox_install_plan(
+            plan = self._shell_service.build_install_plan(
                 package_path_text=self._zip_path_input.text(),
+                install_target=self._current_install_target(),
+                configured_mods_path_text=self._mods_path_input.text(),
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                real_archive_path_text=self._real_archive_path_input.text(),
                 sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
                 allow_overwrite=self._overwrite_checkbox.isChecked(),
-                configured_real_mods_path=self._config.mods_path if self._config else None,
+                configured_real_mods_path=None,
             )
         except AppShellError as exc:
             self._pending_install_plan = None
@@ -399,43 +447,55 @@ class MainWindow(QMainWindow):
 
         self._pending_install_plan = plan
         self._findings_box.setPlainText(build_sandbox_install_plan_text(plan))
-        self._set_status(f"Install plan ready: {len(plan.entries)} entry(ies)")
+        destination = "real Mods" if plan.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS else "sandbox"
+        self._set_status(f"Install plan ready for {destination}: {len(plan.entries)} entry(ies)")
 
     def _on_run_install(self) -> None:
         if self._pending_install_plan is None:
-            message = "Create an install plan before executing sandbox install."
+            message = "Create an install plan before executing install."
             QMessageBox.warning(self, "No install plan", message)
             self._set_status(message)
             return
 
+        is_real_destination = (
+            self._pending_install_plan.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+        )
+
         yes = QMessageBox.question(
             self,
-            "Confirm sandbox install",
+            ("Confirm REAL Mods install" if is_real_destination else "Confirm sandbox install"),
             (
-                "Execute sandbox install now?\n"
-                f"Target: {self._pending_install_plan.sandbox_mods_path}\n"
-                f"Archive: {self._pending_install_plan.sandbox_archive_path}\n"
+                ("You are about to write to the REAL game Mods directory.\n\n" if is_real_destination else "")
+                + "Execute install now?\n"
+                + f"Target: {self._pending_install_plan.sandbox_mods_path}\n"
+                + f"Archive: {self._pending_install_plan.sandbox_archive_path}\n"
                 "Overwrite operations in plan: "
                 f"{'yes' if any(entry.action == 'overwrite_with_archive' for entry in self._pending_install_plan.entries) else 'no'}\n"
                 f"Entries: {len(self._pending_install_plan.entries)}"
             ),
         )
         if yes != QMessageBox.StandardButton.Yes:
-            self._set_status("Sandbox install cancelled.")
+            self._set_status("Install cancelled.")
             return
 
         try:
-            result = self._shell_service.execute_sandbox_install_plan(self._pending_install_plan)
+            result = self._shell_service.execute_sandbox_install_plan(
+                self._pending_install_plan,
+                confirm_real_destination=is_real_destination,
+            )
         except AppShellError as exc:
-            QMessageBox.critical(self, "Sandbox install failed", str(exc))
+            QMessageBox.critical(self, "Install failed", str(exc))
             self._set_status(str(exc))
             return
 
         self._render_inventory(result.inventory)
         self._findings_box.setPlainText(build_sandbox_install_result_text(result))
-        self._set_current_scan_target(SCAN_TARGET_SANDBOX_MODS)
-        self._set_scan_context(result.scan_context_path, "sandbox Mods directory")
-        self._set_status(f"Sandbox install complete: {len(result.installed_targets)} target(s)")
+        self._set_current_scan_target(result.destination_kind)
+        self._set_scan_context(result.scan_context_path, self._scan_target_label(result.destination_kind))
+        if is_real_destination:
+            self._set_status(f"Real Mods install complete: {len(result.installed_targets)} target(s)")
+        else:
+            self._set_status(f"Sandbox install complete: {len(result.installed_targets)} target(s)")
 
     def _on_check_updates(self) -> None:
         if self._current_inventory is None:
@@ -638,6 +698,14 @@ class MainWindow(QMainWindow):
         self._last_environment_status = None
         self._environment_status_label.setText("Environment: not checked")
 
+    def _on_install_target_changed(self, *_: object) -> None:
+        self._pending_install_plan = None
+        self._refresh_install_destination_preview()
+        if self._current_install_target() == INSTALL_TARGET_CONFIGURED_REAL_MODS:
+            self._set_status("Install destination set to REAL game Mods path. Review carefully before executing.")
+        else:
+            self._set_status("Install destination set to sandbox Mods path.")
+
     def _on_plan_selected_intake(self) -> None:
         selected_index = self._selected_intake_index()
         try:
@@ -662,12 +730,15 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            plan = self._shell_service.build_sandbox_install_plan_from_intake(
+            plan = self._shell_service.build_install_plan_from_intake(
                 intake=intake,
+                install_target=self._current_install_target(),
+                configured_mods_path_text=self._mods_path_input.text(),
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                real_archive_path_text=self._real_archive_path_input.text(),
                 sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
                 allow_overwrite=self._overwrite_checkbox.isChecked(),
-                configured_real_mods_path=self._config.mods_path if self._config else None,
+                configured_real_mods_path=None,
             )
         except AppShellError as exc:
             self._pending_install_plan = None
@@ -684,7 +755,10 @@ class MainWindow(QMainWindow):
                 "Review overwrite/archive actions before execution."
             )
             return
-        self._set_status(f"Install plan ready from intake package: {plan.package_path.name}")
+        destination = "real Mods" if plan.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS else "sandbox"
+        self._set_status(
+            f"Install plan ready for {destination} from intake package: {plan.package_path.name}"
+        )
 
     def _on_intake_selection_changed(self, *_: object) -> None:
         self._plan_selected_intake_button.setEnabled(self._selected_intake_index() >= 0)
@@ -715,13 +789,40 @@ class MainWindow(QMainWindow):
             f"Selected scan source: {self._scan_target_label(target)} ({path_text})"
         )
 
+    def _refresh_install_destination_preview(self) -> None:
+        target = self._current_install_target()
+        if target == INSTALL_TARGET_CONFIGURED_REAL_MODS:
+            self._install_archive_label.setText("Archive path for real Game Mods destination")
+            if not self._real_archive_path_input.text().strip() and self._mods_path_input.text().strip():
+                self._real_archive_path_input.setText(
+                    str(Path(self._mods_path_input.text().strip()) / ".sdvmm-archive")
+                )
+            return
+
+        self._install_archive_label.setText("Archive path for sandbox destination")
+        if (
+            not self._sandbox_archive_path_input.text().strip()
+            and self._sandbox_mods_path_input.text().strip()
+        ):
+            self._sandbox_archive_path_input.setText(
+                str(Path(self._sandbox_mods_path_input.text().strip()) / ".sdvmm-archive")
+            )
+
     def _current_scan_target(self) -> str:
         return str(self._scan_target_combo.currentData())
+
+    def _current_install_target(self) -> str:
+        return str(self._install_target_combo.currentData())
 
     def _set_current_scan_target(self, target: str) -> None:
         index = self._scan_target_combo.findData(target)
         if index >= 0:
             self._scan_target_combo.setCurrentIndex(index)
+
+    def _set_current_install_target(self, target: str) -> None:
+        index = self._install_target_combo.findData(target)
+        if index >= 0:
+            self._install_target_combo.setCurrentIndex(index)
 
     def _refresh_intake_selector(self) -> None:
         self._intake_result_combo.clear()

@@ -151,7 +151,25 @@ def test_sandbox_plan_text_highlights_blocked_plan() -> None:
 
     text = build_sandbox_install_plan_text(plan)
 
-    assert "Sandbox Install Plan" in text
+    assert "Install Plan" in text
+    assert "Sandbox Mods destination" in text
     assert "Plan status: BLOCKED" in text
     assert "Recommended next step" in text
     assert "Resolve warnings" in text
+
+
+def test_real_destination_plan_text_is_explicit() -> None:
+    plan = SandboxInstallPlan(
+        package_path=Path("/tmp/mod.zip"),
+        sandbox_mods_path=Path("/tmp/RealMods"),
+        sandbox_archive_path=Path("/tmp/RealMods/.sdvmm-archive"),
+        entries=tuple(),
+        package_findings=tuple(),
+        package_warnings=tuple(),
+        plan_warnings=tuple(),
+        destination_kind="configured_real_mods",
+    )
+
+    text = build_sandbox_install_plan_text(plan)
+
+    assert "Game Mods destination (real)" in text

@@ -184,6 +184,7 @@ def execute_sandbox_install_plan(plan: SandboxInstallPlan) -> SandboxInstallResu
         archived_targets=tuple(sorted(archived_targets, key=lambda path: path.name.lower())),
         scan_context_path=plan.sandbox_mods_path,
         inventory=inventory,
+        destination_kind=plan.destination_kind,
     )
 
 

@@ -64,6 +64,9 @@ class StartupConfigState:
 ScanTargetKind = Literal["configured_real_mods", "sandbox_mods"]
 SCAN_TARGET_CONFIGURED_REAL_MODS: ScanTargetKind = "configured_real_mods"
 SCAN_TARGET_SANDBOX_MODS: ScanTargetKind = "sandbox_mods"
+InstallTargetKind = ScanTargetKind
+INSTALL_TARGET_CONFIGURED_REAL_MODS: InstallTargetKind = SCAN_TARGET_CONFIGURED_REAL_MODS
+INSTALL_TARGET_SANDBOX_MODS: InstallTargetKind = SCAN_TARGET_SANDBOX_MODS
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +80,7 @@ class ScanResult:
 class InstallTargetSafetyDecision:
     allowed: bool
     message: str | None
+    requires_explicit_confirmation: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,11 +157,15 @@ class AppShellService:
         sandbox_mods_path_text: str,
         sandbox_archive_path_text: str,
         watched_downloads_path_text: str,
+        real_archive_path_text: str = "",
         scan_target: ScanTargetKind,
+        install_target: InstallTargetKind = INSTALL_TARGET_SANDBOX_MODS,
         existing_config: AppConfig | None,
     ) -> AppConfig:
         if scan_target not in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS}:
             raise AppShellError(f"Unknown scan target: {scan_target}")
+        if install_target not in {INSTALL_TARGET_CONFIGURED_REAL_MODS, INSTALL_TARGET_SANDBOX_MODS}:
+            raise AppShellError(f"Unknown install target: {install_target}")
 
         game_path = self._resolve_game_path(game_path_text, existing_config)
         mods_path = self._resolve_mods_path(mods_dir_text, game_path)
@@ -180,6 +188,7 @@ class AppShellService:
             sandbox_archive_path = archive_path
 
         watched_downloads_path = self._parse_optional_directory(watched_downloads_path_text)
+        real_archive_path = self._parse_optional_archive_directory(real_archive_path_text)
 
         config = self._build_config(
             game_path=game_path,
@@ -192,8 +201,10 @@ class AppShellService:
             app_data_path=config.app_data_path,
             sandbox_mods_path=sandbox_mods_path,
             sandbox_archive_path=sandbox_archive_path,
+            real_archive_path=real_archive_path,
             watched_downloads_path=watched_downloads_path,
             scan_target=scan_target,
+            install_target=install_target,
         )
 
         try:
@@ -339,14 +350,40 @@ class AppShellService:
         allow_overwrite: bool,
         configured_real_mods_path: Path | None = None,
     ) -> SandboxInstallPlan:
+        return self.build_install_plan_from_intake(
+            intake=intake,
+            install_target=INSTALL_TARGET_SANDBOX_MODS,
+            configured_mods_path_text=str(configured_real_mods_path) if configured_real_mods_path else "",
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text="",
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            allow_overwrite=allow_overwrite,
+            configured_real_mods_path=configured_real_mods_path,
+        )
+
+    def build_install_plan_from_intake(
+        self,
+        *,
+        intake: DownloadsIntakeResult,
+        install_target: InstallTargetKind,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        real_archive_path_text: str,
+        sandbox_archive_path_text: str,
+        allow_overwrite: bool,
+        configured_real_mods_path: Path | None = None,
+    ) -> SandboxInstallPlan:
         if not self.is_actionable_intake_result(intake):
             raise AppShellError(
                 f"Selected package is not actionable for install planning: {intake.classification}"
             )
 
-        return self.build_sandbox_install_plan(
+        return self.build_install_plan(
             package_path_text=str(intake.package_path),
+            install_target=install_target,
+            configured_mods_path_text=configured_mods_path_text,
             sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text=real_archive_path_text,
             sandbox_archive_path_text=sandbox_archive_path_text,
             allow_overwrite=allow_overwrite,
             configured_real_mods_path=configured_real_mods_path,
@@ -433,7 +470,7 @@ class AppShellService:
             f"2. Save the zip into watched downloads path: {watched_path}\n"
             f"3. {watch_step}\n"
             "4. In detected packages, select that zip and click 'Plan selected intake'.\n"
-            "5. Review plan warnings/dependencies, then run sandbox install explicitly."
+            "5. Review plan warnings/dependencies, then run install explicitly."
         )
 
     def build_sandbox_install_plan(
@@ -445,29 +482,60 @@ class AppShellService:
         allow_overwrite: bool,
         configured_real_mods_path: Path | None = None,
     ) -> SandboxInstallPlan:
-        package_path = self._parse_and_validate_zip_path(package_path_text)
-        sandbox_mods_path = self._parse_and_validate_sandbox_mods_path(sandbox_mods_path_text)
-        safety = self.evaluate_install_target_safety(
-            sandbox_mods_path=sandbox_mods_path,
+        return self.build_install_plan(
+            package_path_text=package_path_text,
+            install_target=INSTALL_TARGET_SANDBOX_MODS,
+            configured_mods_path_text=str(configured_real_mods_path) if configured_real_mods_path else "",
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text="",
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            allow_overwrite=allow_overwrite,
             configured_real_mods_path=configured_real_mods_path,
+        )
+
+    def build_install_plan(
+        self,
+        *,
+        package_path_text: str,
+        install_target: InstallTargetKind,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        real_archive_path_text: str,
+        sandbox_archive_path_text: str,
+        allow_overwrite: bool,
+        configured_real_mods_path: Path | None = None,
+    ) -> SandboxInstallPlan:
+        package_path = self._parse_and_validate_zip_path(package_path_text)
+
+        destination_mods_path, destination_archive_path = self._resolve_install_destination_paths(
+            install_target=install_target,
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+        )
+
+        effective_real_mods_path = configured_real_mods_path
+        if effective_real_mods_path is None and configured_mods_path_text.strip():
+            effective_real_mods_path = self._parse_and_validate_mods_path(configured_mods_path_text)
+
+        safety = self.evaluate_install_target_safety(
+            install_target=install_target,
+            destination_mods_path=destination_mods_path,
+            configured_real_mods_path=effective_real_mods_path,
         )
         if not safety.allowed:
             assert safety.message is not None
             raise AppShellError(safety.message)
 
-        sandbox_archive_path = self._parse_and_validate_sandbox_archive_path(
-            sandbox_archive_path_text=sandbox_archive_path_text,
-            sandbox_mods_path=sandbox_mods_path,
-        )
-
         try:
             plan = build_sandbox_install_plan_service(
                 package_path=package_path,
-                sandbox_mods_path=sandbox_mods_path,
-                sandbox_archive_path=sandbox_archive_path,
+                sandbox_mods_path=destination_mods_path,
+                sandbox_archive_path=destination_archive_path,
                 allow_overwrite=allow_overwrite,
             )
-            inventory = scan_mods_directory(sandbox_mods_path)
+            inventory = scan_mods_directory(destination_mods_path)
             dependency_findings = _evaluate_sandbox_plan_dependencies(
                 plan=plan,
                 base_findings=plan.dependency_findings,
@@ -485,15 +553,30 @@ class AppShellService:
             return replace(
                 plan_with_dependency_preflight,
                 remote_requirements=remote_requirements,
+                destination_kind=install_target,
             )
         except (SandboxInstallError, zipfile.BadZipFile) as exc:
             raise AppShellError(str(exc)) from exc
         except OSError as exc:
             raise AppShellError(f"Could not build sandbox install plan: {exc}") from exc
 
-    def execute_sandbox_install_plan(self, plan: SandboxInstallPlan) -> SandboxInstallResult:
+    def execute_sandbox_install_plan(
+        self,
+        plan: SandboxInstallPlan,
+        *,
+        confirm_real_destination: bool = False,
+    ) -> SandboxInstallResult:
+        if (
+            plan.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+            and not confirm_real_destination
+        ):
+            raise AppShellError(
+                "Real Mods destination selected. Explicit confirmation is required before execution."
+            )
+
         try:
-            return execute_sandbox_install_plan_service(plan)
+            result = execute_sandbox_install_plan_service(plan)
+            return replace(result, destination_kind=plan.destination_kind)
         except SandboxInstallError as exc:
             raise AppShellError(str(exc)) from exc
         except OSError as exc:
@@ -502,22 +585,61 @@ class AppShellService:
     def evaluate_install_target_safety(
         self,
         *,
-        sandbox_mods_path: Path,
+        install_target: InstallTargetKind,
+        destination_mods_path: Path,
         configured_real_mods_path: Path | None,
     ) -> InstallTargetSafetyDecision:
-        if configured_real_mods_path is None:
-            return InstallTargetSafetyDecision(allowed=True, message=None)
+        if install_target not in {INSTALL_TARGET_SANDBOX_MODS, INSTALL_TARGET_CONFIGURED_REAL_MODS}:
+            return InstallTargetSafetyDecision(
+                allowed=False,
+                message=f"Unknown install target: {install_target}",
+                requires_explicit_confirmation=False,
+            )
 
-        if _paths_deterministically_match(sandbox_mods_path, configured_real_mods_path):
+        if configured_real_mods_path is None:
+            if install_target == INSTALL_TARGET_SANDBOX_MODS:
+                return InstallTargetSafetyDecision(
+                    allowed=True,
+                    message="Sandbox destination selected.",
+                    requires_explicit_confirmation=False,
+                )
+            return InstallTargetSafetyDecision(
+                allowed=False,
+                message="Configured real Mods path is required for destination safety checks.",
+                requires_explicit_confirmation=False,
+            )
+
+        if install_target == INSTALL_TARGET_SANDBOX_MODS:
+            if _paths_deterministically_match(destination_mods_path, configured_real_mods_path):
+                return InstallTargetSafetyDecision(
+                    allowed=False,
+                    message=(
+                        "Sandbox install target matches configured real Mods path. "
+                        "Select sandbox destination or choose a different path."
+                    ),
+                    requires_explicit_confirmation=False,
+                )
+
+            return InstallTargetSafetyDecision(
+                allowed=True,
+                message="Sandbox destination selected.",
+                requires_explicit_confirmation=False,
+            )
+
+        if not _paths_deterministically_match(destination_mods_path, configured_real_mods_path):
             return InstallTargetSafetyDecision(
                 allowed=False,
                 message=(
-                    "Sandbox install target matches configured real Mods path. "
-                    "This stage blocks installs to that destination."
+                    "Real install destination must exactly match the configured real Mods path."
                 ),
+                requires_explicit_confirmation=False,
             )
 
-        return InstallTargetSafetyDecision(allowed=True, message=None)
+        return InstallTargetSafetyDecision(
+            allowed=True,
+            message="Real game Mods destination selected. Explicit confirmation required before install.",
+            requires_explicit_confirmation=True,
+        )
 
     def _build_config(
         self,
@@ -533,8 +655,10 @@ class AppShellService:
                 app_data_path=existing_config.app_data_path,
                 sandbox_mods_path=existing_config.sandbox_mods_path,
                 sandbox_archive_path=existing_config.sandbox_archive_path,
+                real_archive_path=existing_config.real_archive_path,
                 watched_downloads_path=existing_config.watched_downloads_path,
                 scan_target=existing_config.scan_target,
+                install_target=existing_config.install_target,
             )
 
         return AppConfig(
@@ -542,7 +666,37 @@ class AppShellService:
             mods_path=mods_path,
             app_data_path=self._state_file.parent,
             scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            install_target=INSTALL_TARGET_SANDBOX_MODS,
         )
+
+    def _resolve_install_destination_paths(
+        self,
+        *,
+        install_target: InstallTargetKind,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        real_archive_path_text: str,
+        sandbox_archive_path_text: str,
+    ) -> tuple[Path, Path]:
+        if install_target == INSTALL_TARGET_CONFIGURED_REAL_MODS:
+            real_mods_path = self._parse_and_validate_mods_path(configured_mods_path_text)
+            real_archive_path = self._parse_and_validate_archive_path(
+                archive_path_text=real_archive_path_text,
+                destination_mods_path=real_mods_path,
+                field_label="Real Mods archive path",
+            )
+            return real_mods_path, real_archive_path
+
+        if install_target == INSTALL_TARGET_SANDBOX_MODS:
+            sandbox_mods_path = self._parse_and_validate_sandbox_mods_path(sandbox_mods_path_text)
+            sandbox_archive_path = self._parse_and_validate_archive_path(
+                archive_path_text=sandbox_archive_path_text,
+                destination_mods_path=sandbox_mods_path,
+                field_label="Sandbox archive path",
+            )
+            return sandbox_mods_path, sandbox_archive_path
+
+        raise AppShellError(f"Unknown install target: {install_target}")
 
     @staticmethod
     def _resolve_game_path(game_path_text: str, existing_config: AppConfig | None) -> Path:
@@ -645,20 +799,33 @@ class AppShellService:
         sandbox_archive_path_text: str,
         sandbox_mods_path: Path,
     ) -> Path:
-        raw_value = sandbox_archive_path_text.strip()
+        return AppShellService._parse_and_validate_archive_path(
+            archive_path_text=sandbox_archive_path_text,
+            destination_mods_path=sandbox_mods_path,
+            field_label="Sandbox archive path",
+        )
+
+    @staticmethod
+    def _parse_and_validate_archive_path(
+        *,
+        archive_path_text: str,
+        destination_mods_path: Path,
+        field_label: str,
+    ) -> Path:
+        raw_value = archive_path_text.strip()
         archive_path = (
-            (sandbox_mods_path / ".sdvmm-archive")
+            (destination_mods_path / ".sdvmm-archive")
             if not raw_value
             else Path(raw_value).expanduser()
         )
 
         if archive_path.exists() and not archive_path.is_dir():
-            raise AppShellError(f"Sandbox archive path is not a directory: {archive_path}")
+            raise AppShellError(f"{field_label} is not a directory: {archive_path}")
 
         parent = archive_path.parent
         if not parent.exists() or not parent.is_dir():
             raise AppShellError(
-                f"Sandbox archive parent directory is not accessible: {parent}"
+                f"{field_label} parent directory is not accessible: {parent}"
             )
 
         return archive_path
@@ -691,6 +858,21 @@ class AppShellService:
         if not path.is_dir():
             raise AppShellError(f"Path is not a directory: {path}")
 
+        return path
+
+    @staticmethod
+    def _parse_optional_archive_directory(path_text: str) -> Path | None:
+        raw_value = path_text.strip()
+        if not raw_value:
+            return None
+
+        path = Path(raw_value).expanduser()
+        if path.exists() and not path.is_dir():
+            raise AppShellError(f"Real archive path is not a directory: {path}")
+        if not path.parent.exists() or not path.parent.is_dir():
+            raise AppShellError(
+                f"Real archive parent directory is not accessible: {path.parent}"
+            )
         return path
 
 
@@ -739,7 +921,7 @@ def _build_intake_flow_messages(
         joined = ", ".join(matched_guided)
         return (
             f"Detected package likely matches guided update target(s): {joined}.",
-            "Select this package and click 'Plan selected intake', then review sandbox plan warnings.",
+            "Select this package and click 'Plan selected intake', then review plan warnings.",
         )
 
     if matched_update_available:
@@ -752,7 +934,7 @@ def _build_intake_flow_messages(
     if intake.classification == "update_replace_candidate":
         return (
             "Detected package matches an installed mod by UniqueID.",
-            "Select package and plan update in sandbox after reviewing overwrite/archive actions.",
+            "Select package and plan update after reviewing overwrite/archive actions.",
         )
 
     if intake.classification == "multi_mod_package":
@@ -761,10 +943,10 @@ def _build_intake_flow_messages(
             "Select package and review all sandbox plan entries before execution.",
         )
 
-    return (
-        "Detected package appears to be a new install candidate.",
-        "Select package and plan sandbox install.",
-    )
+        return (
+            "Detected package appears to be a new install candidate.",
+            "Select package and plan install.",
+        )
 
 
 def _evaluate_sandbox_plan_dependencies(

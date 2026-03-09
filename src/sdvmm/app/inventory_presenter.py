@@ -255,7 +255,7 @@ def build_package_inspection_text(result: PackageInspectionResult) -> str:
     ):
         lines.append("- Missing required dependencies detected. Install dependencies first.")
     else:
-        lines.append("- Package looks plannable. Use Plan install (sandbox only).")
+        lines.append("- Package looks plannable. Build an install plan for your selected destination.")
 
     return "\n".join(lines)
 
@@ -264,9 +264,11 @@ def build_sandbox_install_plan_text(plan: SandboxInstallPlan) -> str:
     lines: list[str] = []
     blocked_count = sum(1 for entry in plan.entries if not entry.can_install)
     installable_count = sum(1 for entry in plan.entries if entry.can_install)
-    lines.append("Sandbox Install Plan")
-    lines.append(f"- Sandbox Mods target: {plan.sandbox_mods_path}")
-    lines.append(f"- Sandbox archive path: {plan.sandbox_archive_path}")
+    destination_label = _install_destination_label(plan.destination_kind)
+    lines.append("Install Plan")
+    lines.append(f"- Destination type: {destination_label}")
+    lines.append(f"- Destination Mods path: {plan.sandbox_mods_path}")
+    lines.append(f"- Destination archive path: {plan.sandbox_archive_path}")
     lines.append(f"- Source package: {plan.package_path.name}")
     lines.append(
         f"- Plan status: {'BLOCKED' if blocked_count else 'READY'} "
@@ -330,15 +332,17 @@ def build_sandbox_install_plan_text(plan: SandboxInstallPlan) -> str:
     if blocked_count:
         lines.append("- Plan is blocked. Resolve warnings (especially missing required dependencies) and rebuild plan.")
     else:
-        lines.append("- Plan is ready. Review target/archive actions, then run Install to sandbox explicitly.")
+        lines.append("- Plan is ready. Review target/archive actions, then run install explicitly.")
 
     return "\n".join(lines)
 
 
 def build_sandbox_install_result_text(result: SandboxInstallResult) -> str:
     lines: list[str] = []
-    lines.append("Sandbox install completed.")
-    lines.append(f"Scan context: {result.scan_context_path}")
+    destination_label = _install_destination_label(result.destination_kind)
+    lines.append("Install completed.")
+    lines.append(f"- Destination type: {destination_label}")
+    lines.append(f"- Scan context: {result.scan_context_path}")
     lines.append(f"Installed targets: {len(result.installed_targets)}")
 
     for target in result.installed_targets:
@@ -394,7 +398,7 @@ def build_update_report_text(report: ModUpdateReport) -> str:
     lines.append("")
     lines.append("Recommended next step:")
     if update_available_count:
-        lines.append("- Select an 'Update available' mod row and click Open remote page, then use intake + sandbox planning.")
+        lines.append("- Select an 'Update available' mod row and click Open remote page, then use intake + install planning.")
     elif unavailable_count:
         lines.append("- Metadata unavailable for some mods. Check API key/network and try Check updates again.")
     else:
@@ -480,7 +484,7 @@ def _intake_next_action(classification: str) -> str:
         return "Actionable. Plan install and review every entry before executing."
     if classification == "update_replace_candidate":
         return "Actionable. Plan install and review overwrite/archive warnings carefully."
-    return "Actionable. Plan install in sandbox."
+    return "Actionable. Plan install for the selected destination."
 
 
 def _dependency_summary(findings: tuple[DependencyPreflightFinding, ...]) -> str:
@@ -700,6 +704,14 @@ def _install_action_label(action: str) -> str:
         "blocked": "blocked",
     }
     return labels.get(action, action.replace("_", " "))
+
+
+def _install_destination_label(destination_kind: str) -> str:
+    labels = {
+        "configured_real_mods": "Game Mods destination (real)",
+        "sandbox_mods": "Sandbox Mods destination",
+    }
+    return labels.get(destination_kind, destination_kind.replace("_", " ").title())
 
 
 def _intake_classification_label(classification: str) -> str:

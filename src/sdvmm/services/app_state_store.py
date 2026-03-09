@@ -42,8 +42,10 @@ def load_app_config(state_file: Path) -> AppConfig | None:
     app_data_path = _require_non_empty_string(app_config, "app_data_path")
     sandbox_mods_path = _optional_non_empty_string(app_config, "sandbox_mods_path")
     sandbox_archive_path = _optional_non_empty_string(app_config, "sandbox_archive_path")
+    real_archive_path = _optional_non_empty_string(app_config, "real_archive_path")
     watched_downloads_path = _optional_non_empty_string(app_config, "watched_downloads_path")
     scan_target = _optional_non_empty_string(app_config, "scan_target") or "configured_real_mods"
+    install_target = _optional_non_empty_string(app_config, "install_target") or "sandbox_mods"
 
     return AppConfig(
         game_path=Path(game_path),
@@ -51,8 +53,10 @@ def load_app_config(state_file: Path) -> AppConfig | None:
         app_data_path=Path(app_data_path),
         sandbox_mods_path=Path(sandbox_mods_path) if sandbox_mods_path else None,
         sandbox_archive_path=Path(sandbox_archive_path) if sandbox_archive_path else None,
+        real_archive_path=Path(real_archive_path) if real_archive_path else None,
         watched_downloads_path=Path(watched_downloads_path) if watched_downloads_path else None,
         scan_target=scan_target,
+        install_target=install_target,
     )
 
 
@@ -67,10 +71,14 @@ def save_app_config(state_file: Path, config: AppConfig) -> None:
             "sandbox_archive_path": (
                 str(config.sandbox_archive_path) if config.sandbox_archive_path else None
             ),
+            "real_archive_path": (
+                str(config.real_archive_path) if config.real_archive_path else None
+            ),
             "watched_downloads_path": (
                 str(config.watched_downloads_path) if config.watched_downloads_path else None
             ),
             "scan_target": config.scan_target,
+            "install_target": config.install_target,
         },
     }
 

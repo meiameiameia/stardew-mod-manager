@@ -7,6 +7,8 @@ from typing import Literal
 import pytest
 
 from sdvmm.app.shell_service import (
+    INSTALL_TARGET_CONFIGURED_REAL_MODS,
+    INSTALL_TARGET_SANDBOX_MODS,
     SCAN_TARGET_CONFIGURED_REAL_MODS,
     SCAN_TARGET_SANDBOX_MODS,
     AppShellError,
@@ -323,6 +325,137 @@ def test_build_sandbox_install_plan_allows_safe_custom_target(tmp_path: Path) ->
     assert plan.remote_requirements[0].state == "no_remote_link"
 
 
+def test_build_install_plan_supports_configured_real_mods_destination(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox.mkdir()
+
+    package = tmp_path / "single.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "Mod/manifest.json",
+            '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
+        )
+
+    plan = service.build_install_plan(
+        package_path_text=str(package),
+        install_target=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        allow_overwrite=False,
+        configured_real_mods_path=real_mods,
+    )
+
+    assert plan.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+    assert plan.sandbox_mods_path == real_mods
+    assert plan.sandbox_archive_path == real_mods / ".sdvmm-archive"
+    assert len(plan.entries) == 1
+    assert plan.entries[0].action == "install_new"
+
+
+def test_build_install_plan_uses_archive_overwrite_for_real_mods_destination(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox.mkdir()
+    (real_mods / "Mod").mkdir()
+
+    package = tmp_path / "update.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "Mod/manifest.json",
+            '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"2.0.0"}',
+        )
+
+    plan = service.build_install_plan(
+        package_path_text=str(package),
+        install_target=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        allow_overwrite=True,
+        configured_real_mods_path=real_mods,
+    )
+
+    assert len(plan.entries) == 1
+    assert plan.entries[0].action == "overwrite_with_archive"
+    assert plan.entries[0].archive_path is not None
+    assert plan.entries[0].archive_path.parent == real_mods / ".sdvmm-archive"
+
+
+def test_execute_real_mods_plan_requires_explicit_confirmation(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox.mkdir()
+
+    package = tmp_path / "single.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "Mod/manifest.json",
+            '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
+        )
+        archive.writestr("Mod/file.txt", "hello")
+
+    plan = service.build_install_plan(
+        package_path_text=str(package),
+        install_target=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        allow_overwrite=False,
+        configured_real_mods_path=real_mods,
+    )
+
+    with pytest.raises(AppShellError, match="Explicit confirmation is required"):
+        service.execute_sandbox_install_plan(plan)
+
+    result = service.execute_sandbox_install_plan(
+        plan,
+        confirm_real_destination=True,
+    )
+    assert result.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+    assert result.scan_context_path == real_mods
+    assert (real_mods / "Mod" / "file.txt").read_text(encoding="utf-8") == "hello"
+
+
+def test_build_install_plan_blocks_real_destination_mismatch(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    configured_real_mods = tmp_path / "ConfiguredRealMods"
+    different_mods = tmp_path / "DifferentMods"
+    sandbox = tmp_path / "SandboxMods"
+    configured_real_mods.mkdir()
+    different_mods.mkdir()
+    sandbox.mkdir()
+
+    package = tmp_path / "single.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "Mod/manifest.json",
+            '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
+        )
+
+    with pytest.raises(AppShellError, match="must exactly match the configured real Mods path"):
+        service.build_install_plan(
+            package_path_text=str(package),
+            install_target=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+            configured_mods_path_text=str(different_mods),
+            sandbox_mods_path_text=str(sandbox),
+            real_archive_path_text="",
+            sandbox_archive_path_text="",
+            allow_overwrite=False,
+            configured_real_mods_path=configured_real_mods,
+        )
+
+
 def test_build_sandbox_install_plan_includes_dependency_preflight_warnings(
     tmp_path: Path,
 ) -> None:
@@ -506,10 +639,12 @@ def test_save_operational_config_persists_paths_and_scan_target(tmp_path: Path) 
     mods = tmp_path / "Mods"
     sandbox = tmp_path / "SandboxMods"
     archive = tmp_path / "SandboxArchive"
+    real_archive = tmp_path / "RealArchive"
     downloads = tmp_path / "Downloads"
     mods.mkdir()
     sandbox.mkdir()
     archive.mkdir()
+    real_archive.mkdir()
     downloads.mkdir()
 
     saved = service.save_operational_config(
@@ -518,22 +653,28 @@ def test_save_operational_config_persists_paths_and_scan_target(tmp_path: Path) 
         sandbox_mods_path_text=str(sandbox),
         sandbox_archive_path_text=str(archive),
         watched_downloads_path_text=str(downloads),
+        real_archive_path_text=str(real_archive),
         scan_target="sandbox_mods",
+        install_target=INSTALL_TARGET_CONFIGURED_REAL_MODS,
         existing_config=None,
     )
 
     assert saved.mods_path == mods
     assert saved.sandbox_mods_path == sandbox
     assert saved.sandbox_archive_path == archive
+    assert saved.real_archive_path == real_archive
     assert saved.watched_downloads_path == downloads
     assert saved.scan_target == "sandbox_mods"
+    assert saved.install_target == INSTALL_TARGET_CONFIGURED_REAL_MODS
 
     reloaded = AppShellService(state_file=tmp_path / "app-state.json").load_startup_config()
     assert reloaded.config is not None
     assert reloaded.config.sandbox_mods_path == sandbox
     assert reloaded.config.sandbox_archive_path == archive
+    assert reloaded.config.real_archive_path == real_archive
     assert reloaded.config.watched_downloads_path == downloads
     assert reloaded.config.scan_target == "sandbox_mods"
+    assert reloaded.config.install_target == INSTALL_TARGET_CONFIGURED_REAL_MODS
 
 
 def test_save_operational_config_can_derive_mods_path_from_game_path(tmp_path: Path) -> None:
@@ -561,6 +702,7 @@ def test_save_operational_config_can_derive_mods_path_from_game_path(tmp_path: P
 
     assert saved.game_path == game_path
     assert saved.mods_path == mods
+    assert saved.install_target == INSTALL_TARGET_SANDBOX_MODS
 
 
 def test_detect_game_environment_reports_smapi_states(tmp_path: Path) -> None:
