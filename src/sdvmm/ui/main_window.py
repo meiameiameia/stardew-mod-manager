@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 from PySide6.QtCore import QTimer
+from PySide6.QtCore import QThreadPool
 from PySide6.QtCore import QUrl
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
@@ -51,6 +53,7 @@ from sdvmm.app.shell_service import (
     AppShellError,
     AppShellService,
     IntakeUpdateCorrelation,
+    ScanResult,
 )
 from sdvmm.domain.models import (
     AppConfig,
@@ -63,6 +66,7 @@ from sdvmm.domain.models import (
     SandboxInstallPlan,
 )
 from sdvmm.domain.unique_id import canonicalize_unique_id
+from sdvmm.ui.background_task import BackgroundTask
 
 _ROLE_MOD_UPDATE_STATUS = int(Qt.ItemDataRole.UserRole) + 1
 _ROLE_REMOTE_LINK = int(Qt.ItemDataRole.UserRole) + 2
@@ -86,6 +90,10 @@ class MainWindow(QMainWindow):
         self._intake_correlations: tuple[IntakeUpdateCorrelation, ...] = tuple()
         self._guided_update_unique_ids: tuple[str, ...] = tuple()
         self._last_environment_status: GameEnvironmentStatus | None = None
+        self._thread_pool = QThreadPool.globalInstance()
+        self._active_operation_name: str | None = None
+        self._active_background_task: BackgroundTask | None = None
+        self._background_action_buttons: tuple[QPushButton, ...] = tuple()
 
         self.setWindowTitle("Stardew Mod Manager (Sandbox-first)")
         self.resize(950, 600)
@@ -183,6 +191,7 @@ class MainWindow(QMainWindow):
         self._environment_status_label = QLabel("Not checked")
         self._nexus_status_label = QLabel("Not configured")
         self._watch_status_label = QLabel("Stopped")
+        self._operation_state_label = QLabel("Idle")
         self._status_label.setWordWrap(False)
         self._blocking_issues_label.setWordWrap(False)
         self._next_step_label.setWordWrap(False)
@@ -242,13 +251,16 @@ class MainWindow(QMainWindow):
         context_layout.addWidget(self._nexus_status_label, 0, 3)
         context_layout.addWidget(QLabel("Watcher"), 0, 4)
         context_layout.addWidget(self._watch_status_label, 0, 5)
+        context_layout.addWidget(QLabel("Operation"), 0, 6)
+        context_layout.addWidget(self._operation_state_label, 0, 7)
         context_layout.addWidget(QLabel("Scan source"), 1, 0)
         context_layout.addWidget(self._scan_context_label, 1, 1, 1, 2)
         context_layout.addWidget(QLabel("Install destination"), 1, 3)
-        context_layout.addWidget(self._install_context_label, 1, 4, 1, 2)
+        context_layout.addWidget(self._install_context_label, 1, 4, 1, 4)
         context_layout.setColumnStretch(1, 1)
         context_layout.setColumnStretch(3, 1)
         context_layout.setColumnStretch(5, 1)
+        context_layout.setColumnStretch(7, 1)
         root_layout.addWidget(context_group)
 
         self._setup_toggle = QCheckBox("Show setup and path configuration")
@@ -322,12 +334,12 @@ class MainWindow(QMainWindow):
         inventory_controls.setSpacing(6)
         inventory_controls.addWidget(QLabel("Scan source"))
         inventory_controls.addWidget(self._scan_target_combo)
-        scan_button = QPushButton("Scan")
-        scan_button.clicked.connect(self._on_scan)
-        inventory_controls.addWidget(scan_button)
-        check_updates_button = QPushButton("Check updates")
-        check_updates_button.clicked.connect(self._on_check_updates)
-        inventory_controls.addWidget(check_updates_button)
+        self._scan_button = QPushButton("Scan")
+        self._scan_button.clicked.connect(self._on_scan)
+        inventory_controls.addWidget(self._scan_button)
+        self._check_updates_button = QPushButton("Check updates")
+        self._check_updates_button.clicked.connect(self._on_check_updates)
+        inventory_controls.addWidget(self._check_updates_button)
         open_remote_button = QPushButton("Open remote page")
         open_remote_button.clicked.connect(self._on_open_remote_page)
         inventory_controls.addWidget(open_remote_button)
@@ -363,9 +375,9 @@ class MainWindow(QMainWindow):
         discovery_search_layout.setSpacing(6)
         discovery_search_layout.addWidget(QLabel("Search query"))
         discovery_search_layout.addWidget(self._discovery_query_input)
-        search_mods_button = QPushButton("Search mods")
-        search_mods_button.clicked.connect(self._on_search_discovery)
-        discovery_search_layout.addWidget(search_mods_button)
+        self._search_mods_button = QPushButton("Search mods")
+        self._search_mods_button.clicked.connect(self._on_search_discovery)
+        discovery_search_layout.addWidget(self._search_mods_button)
         open_discovered_button = QPushButton("Open discovered page")
         open_discovered_button.clicked.connect(self._on_open_discovered_page)
         discovery_search_layout.addWidget(open_discovered_button)
@@ -517,6 +529,11 @@ class MainWindow(QMainWindow):
         guidance_layout.addWidget(details_group)
         root_layout.addWidget(guidance_group)
         self._apply_guidance_compact_mode(details_visible=False)
+        self._background_action_buttons = (
+            self._scan_button,
+            self._check_updates_button,
+            self._search_mods_button,
+        )
 
         self.setCentralWidget(container)
 
@@ -670,18 +687,20 @@ class MainWindow(QMainWindow):
         self._set_status("Environment detection complete.")
 
     def _on_scan(self) -> None:
-        self._set_status("Scanning selected Mods directory...")
-        try:
-            result = self._shell_service.scan_with_target(
+        self._run_background_operation(
+            operation_name="Scan",
+            running_label="Scan",
+            started_status="Scanning selected Mods directory...",
+            error_title="Scan failed",
+            task_fn=lambda: self._shell_service.scan_with_target(
                 scan_target=self._current_scan_target(),
                 configured_mods_path_text=self._mods_path_input.text(),
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
-            )
-        except AppShellError as exc:
-            QMessageBox.critical(self, "Scan failed", str(exc))
-            self._set_status(str(exc))
-            return
+            ),
+            on_success=self._on_scan_completed,
+        )
 
+    def _on_scan_completed(self, result: ScanResult) -> None:
         self._render_inventory(result.inventory)
         self._set_scan_context(result.scan_path, self._scan_target_label(result.target_kind))
         self._set_status(f"Scan complete: {len(result.inventory.mods)} mods")
@@ -782,18 +801,23 @@ class MainWindow(QMainWindow):
             self._set_status(message)
             return
 
-        self._set_status("Checking remote metadata/update states...")
-        try:
-            report = self._shell_service.check_updates(
-                self._current_inventory,
-                nexus_api_key_text=self._nexus_api_key_input.text(),
-                existing_config=self._config,
-            )
-        except AppShellError as exc:
-            QMessageBox.critical(self, "Update check failed", str(exc))
-            self._set_status(str(exc))
-            return
+        inventory = self._current_inventory
+        nexus_api_key_text = self._nexus_api_key_input.text()
+        config = self._config
+        self._run_background_operation(
+            operation_name="Update check",
+            running_label="Update check",
+            started_status="Checking remote metadata/update states...",
+            error_title="Update check failed",
+            task_fn=lambda: self._shell_service.check_updates(
+                inventory,
+                nexus_api_key_text=nexus_api_key_text,
+                existing_config=config,
+            ),
+            on_success=self._on_check_updates_completed,
+        )
 
+    def _on_check_updates_completed(self, report: ModUpdateReport) -> None:
         self._current_update_report = report
         self._apply_update_report(report)
         self._set_details_text(build_update_report_text(report))
@@ -802,16 +826,19 @@ class MainWindow(QMainWindow):
         self._set_status(f"Update check complete: {len(report.statuses)} mod(s)")
 
     def _on_search_discovery(self) -> None:
-        self._set_status("Searching discovery index...")
-        try:
-            discovery_result = self._shell_service.search_mod_discovery(
-                query_text=self._discovery_query_input.text(),
-            )
-        except AppShellError as exc:
-            QMessageBox.critical(self, "Discovery search failed", str(exc))
-            self._set_status(str(exc))
-            return
+        query_text = self._discovery_query_input.text()
+        self._run_background_operation(
+            operation_name="Discovery search",
+            running_label="Discovery search",
+            started_status="Searching discovery index...",
+            error_title="Discovery search failed",
+            task_fn=lambda: self._shell_service.search_mod_discovery(
+                query_text=query_text,
+            ),
+            on_success=self._on_search_discovery_completed,
+        )
 
+    def _on_search_discovery_completed(self, discovery_result: ModDiscoveryResult) -> None:
         self._current_discovery_result = discovery_result
         self._discovery_correlations = self._shell_service.correlate_discovery_results(
             discovery_result=discovery_result,
@@ -1147,6 +1174,92 @@ class MainWindow(QMainWindow):
     def _set_status(self, text: str) -> None:
         self._status_label.setText(text)
         self._status_label.setToolTip(text)
+
+    def _run_background_operation(
+        self,
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn: Callable[[], object],
+        on_success: Callable[[object], None],
+    ) -> None:
+        if self._active_operation_name is not None:
+            self._set_status(
+                f"{self._active_operation_name} is already running. Wait for it to finish."
+            )
+            return
+
+        task = BackgroundTask(task_fn)
+        self._active_background_task = task
+        self._active_operation_name = operation_name
+        self._operation_state_label.setText(f"Running: {running_label}")
+        self._set_background_actions_enabled(False)
+        self._set_status(started_status)
+
+        task.signals.succeeded.connect(
+            lambda result, _name=operation_name, _handler=on_success: self._on_background_operation_succeeded(
+                _name,
+                _handler,
+                result,
+            )
+        )
+        task.signals.failed.connect(
+            lambda exc, _name=operation_name, _title=error_title: self._on_background_operation_failed(
+                _name,
+                _title,
+                exc,
+            )
+        )
+        self._thread_pool.start(task)
+
+    def _on_background_operation_succeeded(
+        self,
+        operation_name: str,
+        on_success: Callable[[object], None],
+        result: object,
+    ) -> None:
+        try:
+            on_success(result)
+        except Exception as exc:  # pragma: no cover - unexpected UI-path errors
+            message = f"{operation_name} completed, but result handling failed: {exc}"
+            QMessageBox.critical(self, f"{operation_name} failed", message)
+            self._set_details_text(message)
+            self._set_status(message)
+            self._finish_background_operation(operation_name, success=False)
+            return
+
+        self._finish_background_operation(operation_name, success=True)
+
+    def _on_background_operation_failed(
+        self,
+        operation_name: str,
+        error_title: str,
+        exc: object,
+    ) -> None:
+        message = str(exc)
+        QMessageBox.critical(self, error_title, message)
+        self._set_details_text(message)
+        self._set_status(message)
+        self._finish_background_operation(operation_name, success=False)
+
+    def _finish_background_operation(self, operation_name: str, *, success: bool) -> None:
+        if self._active_operation_name != operation_name:
+            return
+
+        self._active_operation_name = None
+        self._active_background_task = None
+        self._set_background_actions_enabled(True)
+        if success:
+            self._operation_state_label.setText(f"Last: {operation_name} finished")
+            return
+        self._operation_state_label.setText(f"Last: {operation_name} failed")
+
+    def _set_background_actions_enabled(self, enabled: bool) -> None:
+        for button in self._background_action_buttons:
+            button.setEnabled(enabled)
+        self._discovery_query_input.setEnabled(enabled)
 
     def _set_details_text(self, text: str) -> None:
         self._findings_box.setPlainText(text)
