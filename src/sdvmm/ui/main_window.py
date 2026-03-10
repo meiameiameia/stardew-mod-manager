@@ -24,8 +24,9 @@ from PySide6.QtWidgets import (
     QWidget,
     QSizePolicy,
 )
-from PySide6.QtCore import QUrl
 from PySide6.QtCore import QTimer
+from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
 
 from sdvmm.app.inventory_presenter import (
@@ -40,6 +41,7 @@ from sdvmm.app.inventory_presenter import (
     build_sandbox_install_result_text,
     build_update_report_text,
 )
+from sdvmm.app.table_filters import row_matches_filter
 from sdvmm.app.shell_service import (
     DiscoveryContextCorrelation,
     INSTALL_TARGET_CONFIGURED_REAL_MODS,
@@ -62,6 +64,12 @@ from sdvmm.domain.models import (
 )
 from sdvmm.domain.unique_id import canonicalize_unique_id
 
+_ROLE_MOD_UPDATE_STATUS = int(Qt.ItemDataRole.UserRole) + 1
+_ROLE_REMOTE_LINK = int(Qt.ItemDataRole.UserRole) + 2
+_ROLE_DISCOVERY_INDEX = int(Qt.ItemDataRole.UserRole) + 3
+_ROLE_DISCOVERY_LINK = int(Qt.ItemDataRole.UserRole) + 4
+_ROLE_MOD_FOLDER_PATH = int(Qt.ItemDataRole.UserRole) + 5
+
 
 class MainWindow(QMainWindow):
     def __init__(self, shell_service: AppShellService) -> None:
@@ -73,9 +81,6 @@ class MainWindow(QMainWindow):
         self._current_update_report: ModUpdateReport | None = None
         self._current_discovery_result: ModDiscoveryResult | None = None
         self._discovery_correlations: tuple[DiscoveryContextCorrelation, ...] = tuple()
-        self._row_remote_links: dict[int, str] = {}
-        self._row_update_statuses: dict[int, ModUpdateStatus] = {}
-        self._discovery_row_links: dict[int, str] = {}
         self._known_watched_zip_paths: tuple[Path, ...] = tuple()
         self._detected_intakes: tuple[DownloadsIntakeResult, ...] = tuple()
         self._intake_correlations: tuple[IntakeUpdateCorrelation, ...] = tuple()
@@ -103,6 +108,15 @@ class MainWindow(QMainWindow):
         self._discovery_query_input.setPlaceholderText(
             "Search by mod name, UniqueID, or author"
         )
+        self._mods_filter_input = QLineEdit()
+        self._mods_filter_input.setPlaceholderText("Filter installed mods")
+        self._mods_filter_input.setClearButtonEnabled(True)
+        self._discovery_filter_input = QLineEdit()
+        self._discovery_filter_input.setPlaceholderText("Filter discovery results")
+        self._discovery_filter_input.setClearButtonEnabled(True)
+        self._intake_filter_input = QLineEdit()
+        self._intake_filter_input.setPlaceholderText("Filter detected packages")
+        self._intake_filter_input.setClearButtonEnabled(True)
         self._nexus_api_key_input = QLineEdit()
         self._nexus_api_key_input.setPlaceholderText("Nexus API key")
         self._nexus_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -132,6 +146,7 @@ class MainWindow(QMainWindow):
         self._mods_table.verticalHeader().setDefaultSectionSize(20)
         self._mods_table.verticalHeader().setVisible(False)
         self._mods_table.setAlternatingRowColors(True)
+        self._mods_table.setSortingEnabled(True)
 
         self._discovery_table = QTableWidget(0, 8)
         self._discovery_table.setHorizontalHeaderLabels(
@@ -142,6 +157,7 @@ class MainWindow(QMainWindow):
         self._discovery_table.verticalHeader().setDefaultSectionSize(20)
         self._discovery_table.verticalHeader().setVisible(False)
         self._discovery_table.setAlternatingRowColors(True)
+        self._discovery_table.setSortingEnabled(True)
 
         self._findings_box = QPlainTextEdit()
         self._findings_box.setReadOnly(True)
@@ -189,6 +205,9 @@ class MainWindow(QMainWindow):
         self._intake_result_combo.currentIndexChanged.connect(self._on_intake_selection_changed)
         self._discovery_query_input.returnPressed.connect(self._on_search_discovery)
         self._details_toggle.toggled.connect(self._on_toggle_details_panel)
+        self._mods_filter_input.textChanged.connect(self._apply_mods_filter)
+        self._discovery_filter_input.textChanged.connect(self._apply_discovery_filter)
+        self._intake_filter_input.textChanged.connect(self._refresh_intake_selector)
 
         self._build_layout()
         self._refresh_intake_selector()
@@ -300,6 +319,8 @@ class MainWindow(QMainWindow):
         open_remote_button = QPushButton("Open remote page")
         open_remote_button.clicked.connect(self._on_open_remote_page)
         inventory_controls.addWidget(open_remote_button)
+        inventory_controls.addWidget(QLabel("Filter"))
+        inventory_controls.addWidget(self._mods_filter_input, 1)
         inventory_controls.addStretch(1)
         inventory_layout.addLayout(inventory_controls)
         flow_hint_label = QLabel(
@@ -339,6 +360,11 @@ class MainWindow(QMainWindow):
         discovery_results_group = QGroupBox("Results")
         discovery_results_layout = QVBoxLayout(discovery_results_group)
         discovery_results_layout.setContentsMargins(8, 6, 8, 6)
+        discovery_filter_layout = QHBoxLayout()
+        discovery_filter_layout.setSpacing(6)
+        discovery_filter_layout.addWidget(QLabel("Filter"))
+        discovery_filter_layout.addWidget(self._discovery_filter_input, 1)
+        discovery_results_layout.addLayout(discovery_filter_layout)
         discovery_results_layout.addWidget(self._discovery_table)
         discovery_layout.addWidget(discovery_results_group)
         discovery_layout.setStretch(1, 1)
@@ -392,10 +418,12 @@ class MainWindow(QMainWindow):
         detected_layout.setContentsMargins(8, 6, 8, 6)
         detected_layout.setHorizontalSpacing(8)
         detected_layout.setVerticalSpacing(4)
-        detected_layout.addWidget(QLabel("Detected packages"), 0, 0)
-        detected_layout.addWidget(self._intake_result_combo, 0, 1, 1, 2)
+        detected_layout.addWidget(QLabel("Filter"), 0, 0)
+        detected_layout.addWidget(self._intake_filter_input, 0, 1, 1, 3)
+        detected_layout.addWidget(QLabel("Detected packages"), 1, 0)
+        detected_layout.addWidget(self._intake_result_combo, 1, 1, 1, 2)
         self._plan_selected_intake_button.clicked.connect(self._on_plan_selected_intake)
-        detected_layout.addWidget(self._plan_selected_intake_button, 0, 3)
+        detected_layout.addWidget(self._plan_selected_intake_button, 1, 3)
         intake_layout.addWidget(detected_group)
         intake_layout.addStretch(1)
         context_tabs.addTab(intake_tab, "Packages & Intake")
@@ -793,14 +821,34 @@ class MainWindow(QMainWindow):
             return
 
         if row >= len(self._current_discovery_result.results):
-            message = "Selected discovery row is out of range."
+            message = "Selected discovery row is invalid."
             QMessageBox.warning(self, "Invalid selection", message)
             self._set_status(message)
             return
 
-        url = self._discovery_row_links.get(row)
+        row_item = self._discovery_table.item(row, 0)
+        if row_item is None:
+            message = "Selected discovery row is invalid."
+            QMessageBox.warning(self, "Invalid selection", message)
+            self._set_status(message)
+            return
+
+        result_index = row_item.data(_ROLE_DISCOVERY_INDEX)
+        if not isinstance(result_index, int) or not (
+            0 <= result_index < len(self._current_discovery_result.results)
+        ):
+            message = "Selected discovery row is invalid."
+            QMessageBox.warning(self, "Invalid selection", message)
+            self._set_status(message)
+            return
+
+        url = row_item.data(_ROLE_DISCOVERY_LINK)
+        if isinstance(url, str):
+            url = url.strip()
+        else:
+            url = ""
         if not url:
-            entry = self._current_discovery_result.results[row]
+            entry = self._current_discovery_result.results[result_index]
             try:
                 url = self._shell_service.resolve_discovery_source_page_url(entry)
             except AppShellError as exc:
@@ -866,7 +914,18 @@ class MainWindow(QMainWindow):
             self._set_status(message)
             return
 
-        url = self._row_remote_links.get(row)
+        row_item = self._mods_table.item(row, 0)
+        if row_item is None:
+            message = "Selected mod row is invalid."
+            QMessageBox.warning(self, "Invalid selection", message)
+            self._set_status(message)
+            return
+
+        url = row_item.data(_ROLE_REMOTE_LINK)
+        if isinstance(url, str):
+            url = url.strip()
+        else:
+            url = ""
         if not url:
             message = "No remote page is available for the selected mod."
             QMessageBox.information(self, "No remote link", message)
@@ -879,8 +938,8 @@ class MainWindow(QMainWindow):
             self._set_status(message)
             return
 
-        status = self._row_update_statuses.get(row)
-        if status is not None and status.state == "update_available":
+        status = row_item.data(_ROLE_MOD_UPDATE_STATUS)
+        if isinstance(status, ModUpdateStatus) and status.state == "update_available":
             self._guided_update_unique_ids = self._add_guided_unique_id(
                 self._guided_update_unique_ids,
                 status.unique_id,
@@ -964,20 +1023,26 @@ class MainWindow(QMainWindow):
     def _render_inventory(self, inventory: ModsInventory) -> None:
         self._current_inventory = inventory
         self._current_update_report = None
-        self._row_remote_links = {}
-        self._row_update_statuses = {}
         self._guided_update_unique_ids = tuple()
+        was_sorting = self._mods_table.isSortingEnabled()
+        self._mods_table.setSortingEnabled(False)
         self._mods_table.setRowCount(len(inventory.mods))
 
         for row, mod in enumerate(inventory.mods):
-            self._mods_table.setItem(row, 0, QTableWidgetItem(mod.name))
+            name_item = QTableWidgetItem(mod.name)
+            name_item.setData(_ROLE_REMOTE_LINK, "")
+            name_item.setData(_ROLE_MOD_UPDATE_STATUS, None)
+            name_item.setData(_ROLE_MOD_FOLDER_PATH, str(mod.folder_path))
+            self._mods_table.setItem(row, 0, name_item)
             self._mods_table.setItem(row, 1, QTableWidgetItem(mod.unique_id))
             self._mods_table.setItem(row, 2, QTableWidgetItem(mod.version))
             self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
             self._mods_table.setItem(row, 4, QTableWidgetItem("not_checked"))
             self._mods_table.setItem(row, 5, QTableWidgetItem(mod.folder_path.name))
 
+        self._mods_table.setSortingEnabled(was_sorting)
         self._mods_table.resizeColumnsToContents()
+        self._apply_mods_filter()
         dependency_findings = self._shell_service.evaluate_installed_dependency_preflight(inventory)
         self._set_details_text(
             "\n\n".join(
@@ -996,32 +1061,45 @@ class MainWindow(QMainWindow):
         if self._current_inventory is None:
             return
 
-        by_folder = {status.folder_path: status for status in report.statuses}
-        self._row_remote_links = {}
-        self._row_update_statuses = {}
-
-        for row, mod in enumerate(self._current_inventory.mods):
-            status = by_folder.get(mod.folder_path)
+        by_folder_text = {str(status.folder_path): status for status in report.statuses}
+        was_sorting = self._mods_table.isSortingEnabled()
+        self._mods_table.setSortingEnabled(False)
+        for row in range(self._mods_table.rowCount()):
+            name_item = self._mods_table.item(row, 0)
+            if name_item is None:
+                continue
+            folder_path_text = name_item.data(_ROLE_MOD_FOLDER_PATH)
+            if not isinstance(folder_path_text, str):
+                continue
+            status = by_folder_text.get(folder_path_text)
             if status is None:
                 self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
                 self._mods_table.setItem(row, 4, QTableWidgetItem("metadata_unavailable"))
+                name_item.setData(_ROLE_MOD_UPDATE_STATUS, None)
+                name_item.setData(_ROLE_REMOTE_LINK, "")
                 continue
 
             self._mods_table.setItem(row, 3, QTableWidgetItem(status.remote_version or "-"))
             self._mods_table.setItem(row, 4, QTableWidgetItem(status.state))
-            self._row_update_statuses[row] = status
-            if status.remote_link is not None:
-                self._row_remote_links[row] = status.remote_link.page_url
+            name_item.setData(_ROLE_MOD_UPDATE_STATUS, status)
+            name_item.setData(
+                _ROLE_REMOTE_LINK,
+                status.remote_link.page_url if status.remote_link is not None else "",
+            )
+        self._mods_table.setSortingEnabled(was_sorting)
+        self._apply_mods_filter()
 
     def _render_discovery_results(
         self,
         discovery_result: ModDiscoveryResult,
         correlations: tuple[DiscoveryContextCorrelation, ...],
     ) -> None:
-        self._discovery_row_links = {}
+        was_sorting = self._discovery_table.isSortingEnabled()
+        self._discovery_table.setSortingEnabled(False)
         self._discovery_table.setRowCount(len(discovery_result.results))
 
-        for row, entry in enumerate(discovery_result.results):
+        for result_index, entry in enumerate(discovery_result.results):
+            row = result_index
             correlation = correlations[row] if row < len(correlations) else None
             source_label = _discovery_source_label(entry.source_provider)
             compatibility_label = _discovery_compatibility_label(entry.compatibility_state)
@@ -1031,7 +1109,10 @@ class MainWindow(QMainWindow):
                 if correlation is not None and correlation.provider_relation_note
                 else "-"
             )
-            self._discovery_table.setItem(row, 0, QTableWidgetItem(entry.name))
+            name_item = QTableWidgetItem(entry.name)
+            name_item.setData(_ROLE_DISCOVERY_INDEX, result_index)
+            name_item.setData(_ROLE_DISCOVERY_LINK, entry.source_page_url or "")
+            self._discovery_table.setItem(row, 0, name_item)
             self._discovery_table.setItem(row, 1, QTableWidgetItem(entry.unique_id))
             self._discovery_table.setItem(row, 2, QTableWidgetItem(entry.author))
             self._discovery_table.setItem(row, 3, QTableWidgetItem(source_label))
@@ -1040,10 +1121,10 @@ class MainWindow(QMainWindow):
             self._discovery_table.setItem(row, 6, QTableWidgetItem(provider_relation))
             page_text = entry.source_page_url or "-"
             self._discovery_table.setItem(row, 7, QTableWidgetItem(page_text))
-            if entry.source_page_url:
-                self._discovery_row_links[row] = entry.source_page_url
 
+        self._discovery_table.setSortingEnabled(was_sorting)
         self._discovery_table.resizeColumnsToContents()
+        self._apply_discovery_filter()
 
     def _set_status(self, text: str) -> None:
         self._status_label.setText(text)
@@ -1152,6 +1233,30 @@ class MainWindow(QMainWindow):
         if correlation is not None:
             self._set_status(correlation.next_step)
 
+    def _apply_mods_filter(self, *_: object) -> None:
+        filter_text = self._mods_filter_input.text()
+        for row in range(self._mods_table.rowCount()):
+            row_values = []
+            for col in range(self._mods_table.columnCount()):
+                item = self._mods_table.item(row, col)
+                row_values.append(item.text() if item is not None else "")
+            self._mods_table.setRowHidden(
+                row,
+                not row_matches_filter(row_values, filter_text),
+            )
+
+    def _apply_discovery_filter(self, *_: object) -> None:
+        filter_text = self._discovery_filter_input.text()
+        for row in range(self._discovery_table.rowCount()):
+            row_values = []
+            for col in range(self._discovery_table.columnCount()):
+                item = self._discovery_table.item(row, col)
+                row_values.append(item.text() if item is not None else "")
+            self._discovery_table.setRowHidden(
+                row,
+                not row_matches_filter(row_values, filter_text),
+            )
+
     def _current_inventory_or_empty(self) -> ModsInventory:
         if self._current_inventory is not None:
             return self._current_inventory
@@ -1228,7 +1333,8 @@ class MainWindow(QMainWindow):
         if index >= 0:
             self._install_target_combo.setCurrentIndex(index)
 
-    def _refresh_intake_selector(self) -> None:
+    def _refresh_intake_selector(self, *_: object) -> None:
+        selected_before = self._selected_intake_index()
         self._intake_result_combo.clear()
 
         if not self._detected_intakes:
@@ -1237,7 +1343,9 @@ class MainWindow(QMainWindow):
             self._plan_selected_intake_button.setEnabled(False)
             return
 
+        filter_text = self._intake_filter_input.text()
         self._intake_result_combo.setEnabled(True)
+        visible_count = 0
         for idx, intake in enumerate(self._detected_intakes):
             correlation = self._intake_correlations[idx] if idx < len(self._intake_correlations) else None
             actionable = (
@@ -1254,10 +1362,31 @@ class MainWindow(QMainWindow):
                 f"{intake.package_path.name} "
                 f"[{intake.classification}, {actionable}{flow_tag}]"
             )
+            search_values = (
+                intake.package_path.name,
+                intake.classification,
+                " ".join(mod.name for mod in intake.mods),
+                " ".join(mod.unique_id for mod in intake.mods),
+                " ".join(mod.version for mod in intake.mods),
+            )
+            if not row_matches_filter(search_values, filter_text):
+                continue
             self._intake_result_combo.addItem(label, idx)
+            visible_count += 1
 
-        self._intake_result_combo.setCurrentIndex(len(self._detected_intakes) - 1)
-        self._plan_selected_intake_button.setEnabled(True)
+        if visible_count == 0:
+            self._intake_result_combo.clear()
+            self._intake_result_combo.addItem("<no detected packages match filter>", -1)
+            self._intake_result_combo.setEnabled(False)
+            self._plan_selected_intake_button.setEnabled(False)
+            return
+
+        selected_after = self._intake_result_combo.findData(selected_before)
+        if selected_after >= 0:
+            self._intake_result_combo.setCurrentIndex(selected_after)
+        else:
+            self._intake_result_combo.setCurrentIndex(self._intake_result_combo.count() - 1)
+        self._plan_selected_intake_button.setEnabled(self._selected_intake_index() >= 0)
 
     def _selected_intake_index(self) -> int:
         value = self._intake_result_combo.currentData()
@@ -1273,9 +1402,17 @@ class MainWindow(QMainWindow):
 
     def _selected_discovery_correlation(self) -> DiscoveryContextCorrelation | None:
         row = self._discovery_table.currentRow()
-        if row < 0 or row >= len(self._discovery_correlations):
+        if row < 0:
             return None
-        return self._discovery_correlations[row]
+        row_item = self._discovery_table.item(row, 0)
+        if row_item is None:
+            return None
+        result_index = row_item.data(_ROLE_DISCOVERY_INDEX)
+        if not isinstance(result_index, int):
+            return None
+        if result_index < 0 or result_index >= len(self._discovery_correlations):
+            return None
+        return self._discovery_correlations[result_index]
 
     def _recompute_intake_correlations(self) -> None:
         self._intake_correlations = self._shell_service.correlate_intakes_with_updates(
@@ -1288,7 +1425,6 @@ class MainWindow(QMainWindow):
     def _refresh_discovery_correlations(self) -> None:
         if self._current_discovery_result is None:
             self._discovery_correlations = tuple()
-            self._discovery_row_links = {}
             self._discovery_table.setRowCount(0)
             return
 
