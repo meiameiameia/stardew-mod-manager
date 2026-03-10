@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QGroupBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -15,6 +16,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
+    QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -137,10 +140,16 @@ class MainWindow(QMainWindow):
         self._findings_box.setReadOnly(True)
 
         self._status_label = QLabel()
+        self._blocking_issues_label = QLabel("No blocking issues detected.")
+        self._next_step_label = QLabel("Run Scan to refresh installed inventory.")
         self._scan_context_label = QLabel("Current scan source: not set")
+        self._install_context_label = QLabel("Current install destination: not set")
         self._environment_status_label = QLabel("Environment: not checked")
         self._nexus_status_label = QLabel("Nexus: not configured")
         self._watch_status_label = QLabel("Downloads watch: stopped")
+        self._status_label.setWordWrap(True)
+        self._blocking_issues_label.setWordWrap(True)
+        self._next_step_label.setWordWrap(True)
         self._watch_timer = QTimer(self)
         self._watch_timer.setInterval(2000)
         self._watch_timer.timeout.connect(self._on_watch_tick)
@@ -170,140 +179,180 @@ class MainWindow(QMainWindow):
         container = QWidget()
         root_layout = QVBoxLayout(container)
 
-        path_layout = QGridLayout()
-        path_layout.addWidget(QLabel("Game directory (real install)"), 0, 0)
-        path_layout.addWidget(self._game_path_input, 0, 1)
+        context_group = QGroupBox("Current Context")
+        context_layout = QGridLayout(context_group)
+        context_layout.addWidget(QLabel("Environment"), 0, 0)
+        context_layout.addWidget(self._environment_status_label, 0, 1)
+        context_layout.addWidget(QLabel("Nexus"), 0, 2)
+        context_layout.addWidget(self._nexus_status_label, 0, 3)
+        context_layout.addWidget(QLabel("Scan source"), 1, 0)
+        context_layout.addWidget(self._scan_context_label, 1, 1)
+        context_layout.addWidget(QLabel("Install destination"), 1, 2)
+        context_layout.addWidget(self._install_context_label, 1, 3)
+        context_layout.addWidget(QLabel("Watcher"), 2, 0)
+        context_layout.addWidget(self._watch_status_label, 2, 1)
+        root_layout.addWidget(context_group)
 
+        self._setup_toggle = QCheckBox("Show setup and path configuration")
+        self._setup_toggle.toggled.connect(self._on_toggle_setup_panel)
+        root_layout.addWidget(self._setup_toggle)
+
+        setup_group = QGroupBox("Setup and Configuration")
+        setup_layout = QGridLayout(setup_group)
+        setup_layout.addWidget(QLabel("Game directory (real install)"), 0, 0)
+        setup_layout.addWidget(self._game_path_input, 0, 1)
         browse_game_button = QPushButton("Browse game")
         browse_game_button.clicked.connect(self._on_browse_game)
-        path_layout.addWidget(browse_game_button, 0, 2)
+        setup_layout.addWidget(browse_game_button, 0, 2)
 
-        path_layout.addWidget(QLabel("Mods directory (real path)"), 1, 0)
-        path_layout.addWidget(self._mods_path_input, 1, 1)
+        setup_layout.addWidget(QLabel("Mods directory (real path)"), 1, 0)
+        setup_layout.addWidget(self._mods_path_input, 1, 1)
+        browse_mods_button = QPushButton("Browse Mods")
+        browse_mods_button.clicked.connect(self._on_browse)
+        setup_layout.addWidget(browse_mods_button, 1, 2)
 
-        browse_button = QPushButton("Browse")
-        browse_button.clicked.connect(self._on_browse)
-        path_layout.addWidget(browse_button, 1, 2)
-
-        path_layout.addWidget(QLabel("Zip package"), 2, 0)
-        path_layout.addWidget(self._zip_path_input, 2, 1)
-
-        browse_zip_button = QPushButton("Browse zip")
-        browse_zip_button.clicked.connect(self._on_browse_zip)
-        path_layout.addWidget(browse_zip_button, 2, 2)
-
-        path_layout.addWidget(QLabel("Sandbox Mods target (safe install path)"), 3, 0)
-        path_layout.addWidget(self._sandbox_mods_path_input, 3, 1)
-
+        setup_layout.addWidget(QLabel("Sandbox Mods target"), 2, 0)
+        setup_layout.addWidget(self._sandbox_mods_path_input, 2, 1)
         browse_sandbox_button = QPushButton("Browse sandbox")
         browse_sandbox_button.clicked.connect(self._on_browse_sandbox_mods)
-        path_layout.addWidget(browse_sandbox_button, 3, 2)
+        setup_layout.addWidget(browse_sandbox_button, 2, 2)
 
-        path_layout.addWidget(QLabel("Sandbox archive path"), 4, 0)
-        path_layout.addWidget(self._sandbox_archive_path_input, 4, 1)
+        setup_layout.addWidget(QLabel("Sandbox archive path"), 3, 0)
+        setup_layout.addWidget(self._sandbox_archive_path_input, 3, 1)
+        browse_sandbox_archive_button = QPushButton("Browse archive")
+        browse_sandbox_archive_button.clicked.connect(self._on_browse_sandbox_archive)
+        setup_layout.addWidget(browse_sandbox_archive_button, 3, 2)
 
-        browse_archive_button = QPushButton("Browse archive")
-        browse_archive_button.clicked.connect(self._on_browse_sandbox_archive)
-        path_layout.addWidget(browse_archive_button, 4, 2)
-
-        path_layout.addWidget(QLabel("Real Mods archive path"), 5, 0)
-        path_layout.addWidget(self._real_archive_path_input, 5, 1)
-
+        setup_layout.addWidget(QLabel("Real Mods archive path"), 4, 0)
+        setup_layout.addWidget(self._real_archive_path_input, 4, 1)
         browse_real_archive_button = QPushButton("Browse real archive")
         browse_real_archive_button.clicked.connect(self._on_browse_real_archive)
-        path_layout.addWidget(browse_real_archive_button, 5, 2)
+        setup_layout.addWidget(browse_real_archive_button, 4, 2)
 
-        path_layout.addWidget(self._overwrite_checkbox, 6, 1)
-        path_layout.addWidget(QLabel("Watched downloads path"), 7, 0)
-        path_layout.addWidget(self._watched_downloads_path_input, 7, 1)
-
-        browse_downloads_button = QPushButton("Browse downloads")
-        browse_downloads_button.clicked.connect(self._on_browse_watched_downloads)
-        path_layout.addWidget(browse_downloads_button, 7, 2)
-
-        path_layout.addWidget(QLabel("Nexus API key"), 8, 0)
-        path_layout.addWidget(self._nexus_api_key_input, 8, 1)
-        path_layout.addWidget(self._nexus_status_label, 8, 2)
-
-        path_layout.addWidget(QLabel("Install destination"), 9, 0)
-        path_layout.addWidget(self._install_target_combo, 9, 1)
-        path_layout.addWidget(self._install_archive_label, 9, 2)
-
-        path_layout.addWidget(QLabel("Scan target"), 10, 0)
-        path_layout.addWidget(self._scan_target_combo, 10, 1)
-        path_layout.addWidget(QLabel("Detected packages (from watcher)"), 11, 0)
-        path_layout.addWidget(self._intake_result_combo, 11, 1)
-        path_layout.addWidget(self._plan_selected_intake_button, 11, 2)
-        path_layout.addWidget(QLabel("Discover mods"), 12, 0)
-        path_layout.addWidget(self._discovery_query_input, 12, 1, 1, 2)
-
-        actions_row = QHBoxLayout()
-        save_button = QPushButton("Save config")
-        save_button.clicked.connect(self._on_save_config)
-        actions_row.addWidget(save_button)
-
-        detect_environment_button = QPushButton("Detect environment")
-        detect_environment_button.clicked.connect(self._on_detect_environment)
-        actions_row.addWidget(detect_environment_button)
-
-        scan_button = QPushButton("Scan")
-        scan_button.clicked.connect(self._on_scan)
-        actions_row.addWidget(scan_button)
-
-        inspect_button = QPushButton("Inspect zip")
-        inspect_button.clicked.connect(self._on_inspect_zip)
-        actions_row.addWidget(inspect_button)
-
-        plan_install_button = QPushButton("Plan install")
-        plan_install_button.clicked.connect(self._on_plan_install)
-        actions_row.addWidget(plan_install_button)
-
-        run_install_button = QPushButton("Run install")
-        run_install_button.clicked.connect(self._on_run_install)
-        actions_row.addWidget(run_install_button)
-
-        check_updates_button = QPushButton("Check updates")
-        check_updates_button.clicked.connect(self._on_check_updates)
-        actions_row.addWidget(check_updates_button)
-
-        search_mods_button = QPushButton("Search mods")
-        search_mods_button.clicked.connect(self._on_search_discovery)
-        actions_row.addWidget(search_mods_button)
-
-        open_discovered_button = QPushButton("Open discovered page")
-        open_discovered_button.clicked.connect(self._on_open_discovered_page)
-        actions_row.addWidget(open_discovered_button)
-
+        setup_layout.addWidget(QLabel("Nexus API key"), 5, 0)
+        setup_layout.addWidget(self._nexus_api_key_input, 5, 1)
         check_nexus_button = QPushButton("Check Nexus")
         check_nexus_button.clicked.connect(self._on_check_nexus_connection)
-        actions_row.addWidget(check_nexus_button)
+        setup_layout.addWidget(check_nexus_button, 5, 2)
 
+        setup_actions = QHBoxLayout()
+        save_button = QPushButton("Save config")
+        save_button.clicked.connect(self._on_save_config)
+        setup_actions.addWidget(save_button)
+        detect_environment_button = QPushButton("Detect environment")
+        detect_environment_button.clicked.connect(self._on_detect_environment)
+        setup_actions.addWidget(detect_environment_button)
+        setup_actions.addStretch(1)
+        setup_layout.addLayout(setup_actions, 6, 0, 1, 3)
+
+        setup_group.setVisible(False)
+        self._setup_group = setup_group
+        root_layout.addWidget(setup_group)
+
+        workspace_splitter = QSplitter()
+
+        inventory_group = QGroupBox("Installed Mods Workspace")
+        inventory_layout = QVBoxLayout(inventory_group)
+        inventory_controls = QHBoxLayout()
+        inventory_controls.addWidget(QLabel("Scan source"))
+        inventory_controls.addWidget(self._scan_target_combo)
+        scan_button = QPushButton("Scan")
+        scan_button.clicked.connect(self._on_scan)
+        inventory_controls.addWidget(scan_button)
+        check_updates_button = QPushButton("Check updates")
+        check_updates_button.clicked.connect(self._on_check_updates)
+        inventory_controls.addWidget(check_updates_button)
         open_remote_button = QPushButton("Open remote page")
         open_remote_button.clicked.connect(self._on_open_remote_page)
-        actions_row.addWidget(open_remote_button)
+        inventory_controls.addWidget(open_remote_button)
+        inventory_controls.addStretch(1)
+        inventory_layout.addLayout(inventory_controls)
+        inventory_layout.addWidget(self._mods_table)
+        workspace_splitter.addWidget(inventory_group)
 
+        context_tabs = QTabWidget()
+
+        discovery_tab = QWidget()
+        discovery_layout = QVBoxLayout(discovery_tab)
+        discovery_controls = QHBoxLayout()
+        discovery_controls.addWidget(QLabel("Search query"))
+        discovery_controls.addWidget(self._discovery_query_input)
+        search_mods_button = QPushButton("Search mods")
+        search_mods_button.clicked.connect(self._on_search_discovery)
+        discovery_controls.addWidget(search_mods_button)
+        open_discovered_button = QPushButton("Open discovered page")
+        open_discovered_button.clicked.connect(self._on_open_discovered_page)
+        discovery_controls.addWidget(open_discovered_button)
+        discovery_layout.addLayout(discovery_controls)
+        discovery_layout.addWidget(self._discovery_table)
+        context_tabs.addTab(discovery_tab, "Discovery")
+
+        intake_tab = QWidget()
+        intake_layout = QGridLayout(intake_tab)
+        intake_layout.addWidget(QLabel("Zip package"), 0, 0)
+        intake_layout.addWidget(self._zip_path_input, 0, 1)
+        browse_zip_button = QPushButton("Browse zip")
+        browse_zip_button.clicked.connect(self._on_browse_zip)
+        intake_layout.addWidget(browse_zip_button, 0, 2)
+        inspect_button = QPushButton("Inspect zip")
+        inspect_button.clicked.connect(self._on_inspect_zip)
+        intake_layout.addWidget(inspect_button, 0, 3)
+
+        intake_layout.addWidget(QLabel("Watched downloads path"), 1, 0)
+        intake_layout.addWidget(self._watched_downloads_path_input, 1, 1)
+        browse_downloads_button = QPushButton("Browse downloads")
+        browse_downloads_button.clicked.connect(self._on_browse_watched_downloads)
+        intake_layout.addWidget(browse_downloads_button, 1, 2)
+        watch_actions = QHBoxLayout()
         start_watch_button = QPushButton("Start watch")
         start_watch_button.clicked.connect(self._on_start_watch)
-        actions_row.addWidget(start_watch_button)
-
+        watch_actions.addWidget(start_watch_button)
         stop_watch_button = QPushButton("Stop watch")
         stop_watch_button.clicked.connect(self._on_stop_watch)
-        actions_row.addWidget(stop_watch_button)
-        actions_row.addStretch(1)
-        self._plan_selected_intake_button.clicked.connect(self._on_plan_selected_intake)
+        watch_actions.addWidget(stop_watch_button)
+        intake_layout.addLayout(watch_actions, 1, 3)
 
-        root_layout.addLayout(path_layout)
-        root_layout.addLayout(actions_row)
-        root_layout.addWidget(QLabel("Installed mods"))
-        root_layout.addWidget(self._mods_table)
-        root_layout.addWidget(QLabel("Discovery results"))
-        root_layout.addWidget(self._discovery_table)
-        root_layout.addWidget(QLabel("Summary and guidance"))
-        root_layout.addWidget(self._findings_box)
-        root_layout.addWidget(self._scan_context_label)
-        root_layout.addWidget(self._environment_status_label)
-        root_layout.addWidget(self._watch_status_label)
-        root_layout.addWidget(self._status_label)
+        intake_layout.addWidget(QLabel("Detected packages"), 2, 0)
+        intake_layout.addWidget(self._intake_result_combo, 2, 1, 1, 2)
+        self._plan_selected_intake_button.clicked.connect(self._on_plan_selected_intake)
+        intake_layout.addWidget(self._plan_selected_intake_button, 2, 3)
+        context_tabs.addTab(intake_tab, "Packages & Intake")
+
+        plan_tab = QWidget()
+        plan_layout = QGridLayout(plan_tab)
+        plan_layout.addWidget(QLabel("Install destination"), 0, 0)
+        plan_layout.addWidget(self._install_target_combo, 0, 1)
+        plan_layout.addWidget(self._overwrite_checkbox, 0, 2)
+        plan_layout.addWidget(self._install_archive_label, 1, 0, 1, 3)
+        plan_actions = QHBoxLayout()
+        plan_install_button = QPushButton("Plan install")
+        plan_install_button.clicked.connect(self._on_plan_install)
+        plan_actions.addWidget(plan_install_button)
+        run_install_button = QPushButton("Run install")
+        run_install_button.clicked.connect(self._on_run_install)
+        plan_actions.addWidget(run_install_button)
+        plan_actions.addStretch(1)
+        plan_layout.addLayout(plan_actions, 2, 0, 1, 3)
+        context_tabs.addTab(plan_tab, "Plan & Install")
+
+        workspace_splitter.addWidget(context_tabs)
+        workspace_splitter.setStretchFactor(0, 3)
+        workspace_splitter.setStretchFactor(1, 4)
+        root_layout.addWidget(workspace_splitter)
+
+        guidance_group = QGroupBox("Guidance and Status")
+        guidance_layout = QVBoxLayout(guidance_group)
+        summary_layout = QGridLayout()
+        summary_layout.addWidget(QLabel("Current status"), 0, 0)
+        summary_layout.addWidget(self._status_label, 0, 1)
+        summary_layout.addWidget(QLabel("Blocking issues"), 1, 0)
+        summary_layout.addWidget(self._blocking_issues_label, 1, 1)
+        summary_layout.addWidget(QLabel("Recommended next step"), 2, 0)
+        summary_layout.addWidget(self._next_step_label, 2, 1)
+        guidance_layout.addLayout(summary_layout)
+        guidance_layout.addWidget(QLabel("Detailed output"))
+        guidance_layout.addWidget(self._findings_box)
+        root_layout.addWidget(guidance_group)
 
         self.setCentralWidget(container)
 
@@ -329,8 +378,9 @@ class MainWindow(QMainWindow):
             self._set_status(f"Loaded saved config from {self._shell_service.state_file}")
 
         if state.message:
-            self._findings_box.setPlainText(state.message)
+            self._set_details_text(state.message)
             self._set_status(state.message)
+            self._setup_toggle.setChecked(True)
 
         self._refresh_scan_context_preview()
         self._refresh_install_destination_preview()
@@ -344,6 +394,9 @@ class MainWindow(QMainWindow):
         )
         if selected:
             self._game_path_input.setText(selected)
+
+    def _on_toggle_setup_panel(self, checked: bool) -> None:
+        self._setup_group.setVisible(checked)
 
     def _on_browse(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -441,7 +494,7 @@ class MainWindow(QMainWindow):
             self._mods_path_input.setText(str(status.mods_path))
 
         self._environment_status_label.setText(_environment_summary_label(status))
-        self._findings_box.setPlainText(build_environment_status_text(status))
+        self._set_details_text(build_environment_status_text(status))
         self._set_status("Environment detection complete.")
 
     def _on_scan(self) -> None:
@@ -474,7 +527,7 @@ class MainWindow(QMainWindow):
             return
 
         self._pending_install_plan = None
-        self._findings_box.setPlainText(build_package_inspection_text(inspection))
+        self._set_details_text(build_package_inspection_text(inspection))
         self._set_status(f"Zip inspection complete: {len(inspection.mods)} mod(s) detected")
 
     def _on_plan_install(self) -> None:
@@ -498,7 +551,7 @@ class MainWindow(QMainWindow):
             return
 
         self._pending_install_plan = plan
-        self._findings_box.setPlainText(build_sandbox_install_plan_text(plan))
+        self._set_details_text(build_sandbox_install_plan_text(plan))
         destination = "real Mods" if plan.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS else "sandbox"
         self._set_status(f"Install plan ready for {destination}: {len(plan.entries)} entry(ies)")
 
@@ -541,7 +594,7 @@ class MainWindow(QMainWindow):
             return
 
         self._render_inventory(result.inventory)
-        self._findings_box.setPlainText(build_sandbox_install_result_text(result))
+        self._set_details_text(build_sandbox_install_result_text(result))
         self._set_current_scan_target(result.destination_kind)
         self._set_scan_context(result.scan_context_path, self._scan_target_label(result.destination_kind))
         if is_real_destination:
@@ -569,7 +622,7 @@ class MainWindow(QMainWindow):
 
         self._current_update_report = report
         self._apply_update_report(report)
-        self._findings_box.setPlainText(build_update_report_text(report))
+        self._set_details_text(build_update_report_text(report))
         self._recompute_intake_correlations()
         self._refresh_discovery_correlations()
         self._set_status(f"Update check complete: {len(report.statuses)} mod(s)")
@@ -591,7 +644,7 @@ class MainWindow(QMainWindow):
             update_report=self._current_update_report,
         )
         self._render_discovery_results(discovery_result, self._discovery_correlations)
-        self._findings_box.setPlainText(
+        self._set_details_text(
             build_discovery_search_text(discovery_result, self._discovery_correlations)
         )
         self._set_status(f"Discovery search complete: {len(discovery_result.results)} result(s)")
@@ -649,7 +702,7 @@ class MainWindow(QMainWindow):
                 watched_downloads_path_text=self._watched_downloads_path_input.text(),
                 watcher_running=self._watch_timer.isActive(),
             )
-            self._findings_box.setPlainText(hint)
+            self._set_details_text(hint)
             self._set_status(
                 f"Opened discovered page for {correlation.entry.unique_id}. Follow manual flow guidance."
             )
@@ -665,7 +718,7 @@ class MainWindow(QMainWindow):
         )
         self._nexus_status_label.setText(_nexus_status_label(status.state, status.masked_key))
         if status.message:
-            self._findings_box.setPlainText(status.message)
+            self._set_details_text(status.message)
             self._set_status(status.message)
         else:
             self._set_status("Nexus status check complete.")
@@ -709,7 +762,7 @@ class MainWindow(QMainWindow):
                 watched_downloads_path_text=self._watched_downloads_path_input.text(),
                 watcher_running=self._watch_timer.isActive(),
             )
-            self._findings_box.setPlainText(hint)
+            self._set_details_text(hint)
             self._set_status(
                 f"Opened remote page for update target {status.unique_id}. Follow guided steps."
             )
@@ -755,7 +808,7 @@ class MainWindow(QMainWindow):
             self._watch_timer.stop()
             self._watch_status_label.setText("Downloads watch: stopped (error)")
             self._set_status(str(exc))
-            self._findings_box.setPlainText(str(exc))
+            self._set_details_text(str(exc))
             return
 
         self._known_watched_zip_paths = result.known_zip_paths
@@ -769,7 +822,7 @@ class MainWindow(QMainWindow):
         )
         self._detected_intakes = self._detected_intakes + result.intakes
         self._recompute_intake_correlations()
-        self._findings_box.setPlainText(
+        self._set_details_text(
             "\n\n".join(
                 (
                     build_downloads_intake_text(result),
@@ -797,7 +850,7 @@ class MainWindow(QMainWindow):
 
         self._mods_table.resizeColumnsToContents()
         dependency_findings = self._shell_service.evaluate_installed_dependency_preflight(inventory)
-        self._findings_box.setPlainText(
+        self._set_details_text(
             "\n\n".join(
                 (
                     build_findings_text(inventory),
@@ -865,6 +918,12 @@ class MainWindow(QMainWindow):
 
     def _set_status(self, text: str) -> None:
         self._status_label.setText(text)
+
+    def _set_details_text(self, text: str) -> None:
+        self._findings_box.setPlainText(text)
+        blocking_issue, next_step = _summarize_details_text(text)
+        self._blocking_issues_label.setText(blocking_issue)
+        self._next_step_label.setText(next_step)
 
     def _set_scan_context(self, path: Path, label: str) -> None:
         self._scan_context_label.setText(f"Current scan source: {label} ({path})")
@@ -940,7 +999,7 @@ class MainWindow(QMainWindow):
             return
 
         self._pending_install_plan = plan
-        self._findings_box.setPlainText(build_sandbox_install_plan_text(plan))
+        self._set_details_text(build_sandbox_install_plan_text(plan))
         correlation = self._selected_intake_correlation()
         if correlation is not None and correlation.matched_update_available_unique_ids:
             self._set_status(
@@ -976,10 +1035,12 @@ class MainWindow(QMainWindow):
         target = self._current_scan_target()
         if target == SCAN_TARGET_CONFIGURED_REAL_MODS:
             path_text = self._mods_path_input.text().strip() or "<unset>"
+            target_label = "REAL Mods"
         else:
             path_text = self._sandbox_mods_path_input.text().strip() or "<unset>"
+            target_label = "Sandbox Mods"
         self._scan_context_label.setText(
-            f"Selected scan source: {self._scan_target_label(target)} ({path_text})"
+            f"{target_label} ({path_text})"
         )
 
     def _refresh_nexus_status(self, *, validated: bool) -> None:
@@ -994,6 +1055,10 @@ class MainWindow(QMainWindow):
         target = self._current_install_target()
         if target == INSTALL_TARGET_CONFIGURED_REAL_MODS:
             self._install_archive_label.setText("Archive path for real Game Mods destination")
+            path_text = self._mods_path_input.text().strip() or "<unset>"
+            self._install_context_label.setText(
+                f"REAL game Mods ({path_text}) - explicit confirmation required"
+            )
             if not self._real_archive_path_input.text().strip() and self._mods_path_input.text().strip():
                 self._real_archive_path_input.setText(
                     str(Path(self._mods_path_input.text().strip()) / ".sdvmm-archive")
@@ -1001,6 +1066,8 @@ class MainWindow(QMainWindow):
             return
 
         self._install_archive_label.setText("Archive path for sandbox destination")
+        path_text = self._sandbox_mods_path_input.text().strip() or "<unset>"
+        self._install_context_label.setText(f"Sandbox Mods ({path_text})")
         if (
             not self._sandbox_archive_path_input.text().strip()
             and self._sandbox_mods_path_input.text().strip()
@@ -1150,3 +1217,40 @@ def _nexus_status_label(state: str, masked_key: str | None) -> str:
     if state == "invalid_auth_failure":
         return f"Nexus: invalid/auth failed ({masked_key or 'key set'})"
     return f"Nexus: configured ({masked_key or 'key set'})"
+
+
+def _summarize_details_text(text: str) -> tuple[str, str]:
+    lowered = text.casefold()
+    blocking_indicators = (
+        ("plan status: blocked", "Install plan has blocked entries."),
+        ("missing required dependencies", "Missing required dependencies need resolution."),
+        ("invalid game path", "Game environment path is invalid."),
+        ("unusable package", "Selected package is unusable for planning."),
+        ("failed", "Last operation reported a failure."),
+        ("error", "Last operation reported an error."),
+    )
+    blocking_message = "No blocking issues detected in current view."
+    for needle, message in blocking_indicators:
+        if needle in lowered:
+            blocking_message = message
+            break
+
+    next_step = _extract_recommended_next_step(text)
+    if not next_step:
+        next_step = "Follow workflow tabs: scan/update -> discovery/source -> intake -> plan/install."
+
+    return blocking_message, next_step
+
+
+def _extract_recommended_next_step(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines()]
+    for idx, line in enumerate(lines):
+        if line.casefold() != "recommended next step:":
+            continue
+        for candidate in lines[idx + 1 :]:
+            if not candidate:
+                continue
+            normalized = candidate.lstrip("- ").strip()
+            if normalized:
+                return normalized
+    return ""
