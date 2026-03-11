@@ -205,6 +205,26 @@ class MainWindow(QMainWindow):
         self._plan_selected_intake_button = QPushButton("Plan selected intake")
         self._install_archive_label = QLabel("Archive path for selected install destination")
 
+        for control in (
+            self._game_path_input,
+            self._mods_path_input,
+            self._zip_path_input,
+            self._sandbox_mods_path_input,
+            self._sandbox_archive_path_input,
+            self._real_archive_path_input,
+            self._watched_downloads_path_input,
+            self._discovery_query_input,
+            self._mods_filter_input,
+            self._discovery_filter_input,
+            self._intake_filter_input,
+            self._archive_filter_input,
+            self._nexus_api_key_input,
+            self._scan_target_combo,
+            self._install_target_combo,
+            self._intake_result_combo,
+        ):
+            control.setMinimumHeight(28)
+
         self._mods_table = QTableWidget(0, 6)
         self._mods_table.setHorizontalHeaderLabels(
             ["Name", "UniqueID", "Installed ver.", "Remote ver.", "Update status", "Folder"]
@@ -280,6 +300,12 @@ class MainWindow(QMainWindow):
         self._findings_box.setReadOnly(True)
         self._findings_box.setMinimumHeight(110)
         self._findings_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._package_inspection_result_box = QPlainTextEdit()
+        self._package_inspection_result_box.setReadOnly(True)
+        self._package_inspection_result_box.setMinimumHeight(110)
+        self._package_inspection_result_box.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
 
         self._status_label = QLabel()
         self._blocking_issues_label = QLabel("No blocking issues detected.")
@@ -312,6 +338,7 @@ class MainWindow(QMainWindow):
         self._watch_timer.timeout.connect(self._on_watch_tick)
 
         self._zip_path_input.textChanged.connect(self._invalidate_pending_plan)
+        self._zip_path_input.textChanged.connect(self._on_zip_path_changed)
         self._sandbox_mods_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._sandbox_archive_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._real_archive_path_input.textChanged.connect(self._invalidate_pending_plan)
@@ -415,10 +442,6 @@ class MainWindow(QMainWindow):
         context_layout.setColumnStretch(2, 2)
         root_layout.addWidget(context_group)
 
-        self._setup_toggle = QCheckBox("Show setup and path configuration")
-        self._setup_toggle.toggled.connect(self._on_toggle_setup_panel)
-        root_layout.addWidget(self._setup_toggle)
-
         setup_group = QGroupBox("Setup and Configuration")
         setup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         setup_layout = QGridLayout(setup_group)
@@ -494,56 +517,37 @@ class MainWindow(QMainWindow):
         inventory_layout.setContentsMargins(8, 6, 8, 6)
         inventory_layout.setSpacing(6)
 
-        inventory_controls_widget = QWidget()
-        inventory_controls_widget.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
-        )
-        inventory_controls_layout = QVBoxLayout(inventory_controls_widget)
-        inventory_controls_layout.setContentsMargins(0, 0, 0, 0)
-        inventory_controls_layout.setSpacing(6)
-        inventory_controls_layout.addWidget(_section_label("Installed Mods"))
+        inventory_controls_tabs = QTabWidget()
+        inventory_controls_tabs.setDocumentMode(True)
+        inventory_controls_tabs.setUsesScrollButtons(True)
+        inventory_controls_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self._inventory_controls_tabs = inventory_controls_tabs
 
-        inventory_actions_group = QWidget()
-        inventory_actions_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
-        )
-        inventory_actions_group_layout = QVBoxLayout(inventory_actions_group)
-        inventory_actions_group_layout.setContentsMargins(0, 0, 0, 0)
-        inventory_actions_group_layout.setSpacing(2)
-        inventory_actions_group_layout.addWidget(_section_label("Inventory Actions"))
-        inventory_actions_layout = QGridLayout()
-        inventory_actions_layout.setContentsMargins(8, 6, 8, 6)
-        inventory_actions_layout.setHorizontalSpacing(8)
-        inventory_actions_layout.setVerticalSpacing(4)
-        inventory_actions_layout.addWidget(QLabel("Scan source"), 0, 0)
-        inventory_actions_layout.addWidget(self._scan_target_combo, 0, 1, 1, 3)
+        inventory_tab = QWidget()
+        inventory_tab_layout = QGridLayout(inventory_tab)
+        inventory_tab_layout.setContentsMargins(8, 6, 8, 6)
+        inventory_tab_layout.setHorizontalSpacing(8)
+        inventory_tab_layout.setVerticalSpacing(4)
+        inventory_tab_layout.addWidget(QLabel("Scan source"), 0, 0)
+        inventory_tab_layout.addWidget(self._scan_target_combo, 0, 1, 1, 3)
         self._scan_button = QPushButton("Scan")
         self._scan_button.clicked.connect(self._on_scan)
         _set_primary_button_style(self._scan_button)
-        inventory_actions_layout.addWidget(self._scan_button, 1, 0)
+        inventory_tab_layout.addWidget(self._scan_button, 1, 0)
         self._check_updates_button = QPushButton("Check updates")
         self._check_updates_button.clicked.connect(self._on_check_updates)
         _set_primary_button_style(self._check_updates_button)
-        inventory_actions_layout.addWidget(self._check_updates_button, 1, 1)
+        inventory_tab_layout.addWidget(self._check_updates_button, 1, 1)
         open_remote_button = QPushButton("Open remote page")
         open_remote_button.clicked.connect(self._on_open_remote_page)
         _set_secondary_button_style(open_remote_button)
-        inventory_actions_layout.addWidget(open_remote_button, 1, 2)
-        inventory_actions_layout.addWidget(QLabel("Filter"), 2, 0)
-        inventory_actions_layout.addWidget(self._mods_filter_input, 2, 1, 1, 2)
-        inventory_actions_layout.addWidget(self._mods_filter_stats_label, 2, 3)
-        inventory_actions_layout.setColumnStretch(1, 1)
-        inventory_actions_layout.setColumnStretch(2, 1)
-        inventory_actions_group_layout.addLayout(inventory_actions_layout)
-        inventory_controls_layout.addWidget(inventory_actions_group)
+        inventory_tab_layout.addWidget(open_remote_button, 1, 2)
+        inventory_tab_layout.setColumnStretch(1, 1)
+        inventory_tab_layout.setColumnStretch(2, 1)
+        inventory_controls_tabs.addTab(inventory_tab, "Inventory")
 
-        game_smapi_group = QWidget()
-        game_smapi_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-        game_smapi_group_layout = QVBoxLayout(game_smapi_group)
-        game_smapi_group_layout.setContentsMargins(0, 0, 0, 0)
-        game_smapi_group_layout.setSpacing(2)
-        game_smapi_group_layout.addWidget(_section_label("Game and SMAPI Actions"))
-        game_smapi_layout = QGridLayout()
+        game_smapi_tab = QWidget()
+        game_smapi_layout = QGridLayout(game_smapi_tab)
         game_smapi_layout.setContentsMargins(8, 6, 8, 6)
         game_smapi_layout.setHorizontalSpacing(8)
         game_smapi_layout.setVerticalSpacing(4)
@@ -571,20 +575,16 @@ class MainWindow(QMainWindow):
         self._launch_smapi_button.clicked.connect(self._on_launch_smapi)
         _set_primary_button_style(self._launch_smapi_button)
         game_smapi_layout.addWidget(self._launch_smapi_button, 1, 2)
+        game_smapi_layout.setColumnStretch(1, 1)
         game_smapi_layout.setColumnStretch(2, 1)
-        game_smapi_group_layout.addLayout(game_smapi_layout)
-        inventory_controls_layout.addWidget(game_smapi_group)
+        inventory_controls_tabs.addTab(game_smapi_tab, "Game / SMAPI")
 
-        archive_actions_group = QWidget()
-        archive_actions_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
-        )
-        archive_actions_group_layout = QVBoxLayout(archive_actions_group)
-        archive_actions_group_layout.setContentsMargins(0, 0, 0, 0)
-        archive_actions_group_layout.setSpacing(2)
-        archive_actions_group_layout.addWidget(_section_label("Archive and Rollback Actions"))
+        inventory_archive_tab = QWidget()
+        inventory_archive_tab_layout = QVBoxLayout(inventory_archive_tab)
+        inventory_archive_tab_layout.setContentsMargins(8, 6, 8, 6)
+        inventory_archive_tab_layout.setSpacing(4)
         archive_actions_layout = QHBoxLayout()
-        archive_actions_layout.setContentsMargins(8, 6, 8, 6)
+        archive_actions_layout.setContentsMargins(0, 0, 0, 0)
         archive_actions_layout.setSpacing(8)
         self._remove_mod_button = QPushButton("Remove selected (archive)")
         self._remove_mod_button.clicked.connect(self._on_remove_selected_mod)
@@ -595,8 +595,15 @@ class MainWindow(QMainWindow):
         _set_secondary_button_style(self._rollback_mod_button)
         archive_actions_layout.addWidget(self._rollback_mod_button)
         archive_actions_layout.addStretch(1)
-        archive_actions_group_layout.addLayout(archive_actions_layout)
-        inventory_controls_layout.addWidget(archive_actions_group)
+        inventory_archive_tab_layout.addLayout(archive_actions_layout)
+        inventory_archive_tab_layout.addStretch(1)
+        inventory_controls_tabs.addTab(inventory_archive_tab, "Archive")
+
+        inventory_filter_row = QHBoxLayout()
+        inventory_filter_row.setSpacing(6)
+        inventory_filter_row.addWidget(QLabel("Filter"))
+        inventory_filter_row.addWidget(self._mods_filter_input, 1)
+        inventory_filter_row.addWidget(self._mods_filter_stats_label)
 
         flow_hint_label = QLabel(
             "Flow: Scan -> Check updates -> Open remote page -> manual download -> watcher intake -> plan/install."
@@ -606,17 +613,13 @@ class MainWindow(QMainWindow):
         flow_hint_label.setToolTip(
             "Workflow: Scan -> Check updates -> Open remote page -> manual download -> watcher intake -> plan/install."
         )
-        inventory_controls_layout.addWidget(flow_hint_label)
+        flow_hint_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        self._inventory_flow_hint_label = flow_hint_label
 
-        inventory_controls_scroll = QScrollArea()
-        inventory_controls_scroll.setWidgetResizable(True)
-        inventory_controls_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        inventory_controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        inventory_controls_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        inventory_controls_scroll.setWidget(inventory_controls_widget)
-        self._inventory_controls_scroll = inventory_controls_scroll
-
-        inventory_layout.addWidget(inventory_controls_scroll)
+        inventory_layout.addWidget(_section_label("Installed Mods Workspace"))
+        inventory_layout.addWidget(inventory_controls_tabs)
+        inventory_layout.addLayout(inventory_filter_row)
+        inventory_layout.addWidget(flow_hint_label)
         inventory_layout.addWidget(self._mods_table, 1)
         workspace_splitter.addWidget(inventory_group)
 
@@ -715,6 +718,18 @@ class MainWindow(QMainWindow):
         watch_actions.addStretch(1)
         watcher_layout.addLayout(watch_actions, 0, 3)
         intake_layout.addWidget(watcher_group)
+
+        inspection_result_group = QGroupBox("Inspection Result")
+        inspection_result_group.setFlat(True)
+        inspection_result_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
+        inspection_result_layout = QVBoxLayout(inspection_result_group)
+        inspection_result_layout.setContentsMargins(8, 6, 8, 6)
+        inspection_result_layout.addWidget(self._package_inspection_result_box)
+        inspection_result_group.setVisible(False)
+        self._package_inspection_result_group = inspection_result_group
+        intake_layout.addWidget(inspection_result_group)
 
         detected_group = QGroupBox("Detected Packages")
         detected_group.setFlat(True)
@@ -912,7 +927,7 @@ class MainWindow(QMainWindow):
         if state.message:
             self._set_details_text(state.message)
             self._set_status(state.message)
-            self._setup_toggle.setChecked(True)
+            self._secondary_tabs.setCurrentIndex(self._setup_tab_index)
 
         self._refresh_scan_context_preview()
         self._refresh_install_destination_preview()
@@ -932,20 +947,7 @@ class MainWindow(QMainWindow):
         if selected:
             self._game_path_input.setText(selected)
 
-    def _on_toggle_setup_panel(self, checked: bool) -> None:
-        self._secondary_tabs.setCurrentIndex(
-            self._setup_tab_index if checked else self._summary_tab_index
-        )
-        self._refresh_responsive_panel_bounds()
-
     def _on_secondary_tab_changed(self, index: int) -> None:
-        show_setup = index == self._setup_tab_index
-        if self._setup_toggle.isChecked() == show_setup:
-            self._refresh_responsive_panel_bounds()
-            return
-        self._setup_toggle.blockSignals(True)
-        self._setup_toggle.setChecked(show_setup)
-        self._setup_toggle.blockSignals(False)
         self._refresh_responsive_panel_bounds()
 
     def _on_toggle_details_panel(self, checked: bool) -> None:
@@ -976,6 +978,9 @@ class MainWindow(QMainWindow):
         if selected:
             self._pending_install_plan = None
             self._zip_path_input.setText(selected)
+
+    def _on_zip_path_changed(self, _: str) -> None:
+        self._set_package_inspection_result_text(None)
 
     def _on_browse_sandbox_mods(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -1134,7 +1139,9 @@ class MainWindow(QMainWindow):
             return
 
         self._pending_install_plan = None
-        self._set_details_text(build_package_inspection_text(inspection))
+        inspection_text = build_package_inspection_text(inspection)
+        self._set_package_inspection_result_text(inspection_text)
+        self._set_details_text(inspection_text)
         self._set_status(f"Zip inspection complete: {len(inspection.mods)} mod(s) detected")
 
     def _on_plan_install(self) -> None:
@@ -2190,6 +2197,12 @@ class MainWindow(QMainWindow):
         self._blocking_issues_label.setToolTip(blocking_issue)
         self._next_step_label.setToolTip(next_step)
 
+    def _set_package_inspection_result_text(self, text: str | None) -> None:
+        has_text = bool(text and text.strip())
+        self._package_inspection_result_box.setPlainText(text or "")
+        self._package_inspection_result_group.setVisible(has_text)
+        self._refresh_responsive_panel_bounds()
+
     def _set_scan_context(self, path: Path, label: str) -> None:
         path_text = str(path)
         self._scan_context_label.setText(f"{label}: {_compact_path_text(path_text)}")
@@ -2570,7 +2583,9 @@ class MainWindow(QMainWindow):
         window_height = max(self.height(), self.minimumHeight())
 
         context_cap = max(120, min(156, int(window_height * 0.22)))
-        inventory_controls_cap = max(132, min(190, int(window_height * 0.24)))
+        inventory_controls_cap = max(160, min(220, int(window_height * 0.30)))
+        flow_hint_cap = max(32, min(58, int(window_height * 0.08)))
+        intake_result_cap = max(120, min(190, int(window_height * 0.24)))
         setup_cap = max(150, min(210, int(window_height * 0.26)))
         details_cap = max(110, min(220, int(window_height * 0.28)))
         guidance_closed_cap = max(120, min(156, int(window_height * 0.20)))
@@ -2579,8 +2594,14 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_context_group"):
             self._context_group.setMaximumHeight(context_cap)
 
-        if hasattr(self, "_inventory_controls_scroll"):
-            self._inventory_controls_scroll.setMaximumHeight(inventory_controls_cap)
+        if hasattr(self, "_inventory_controls_tabs"):
+            self._inventory_controls_tabs.setMaximumHeight(inventory_controls_cap)
+
+        if hasattr(self, "_inventory_flow_hint_label"):
+            self._inventory_flow_hint_label.setMaximumHeight(flow_hint_cap)
+
+        if hasattr(self, "_package_inspection_result_box"):
+            self._package_inspection_result_box.setMaximumHeight(intake_result_cap)
 
         if hasattr(self, "_setup_scroll"):
             self._setup_scroll.setMaximumHeight(16777215)
@@ -2634,14 +2655,17 @@ def _summary_caption(text: str) -> QLabel:
 
 
 def _set_primary_button_style(button: QPushButton) -> None:
+    button.setMinimumHeight(28)
     button.setStyleSheet("font-weight: 600; padding: 4px 10px;")
 
 
 def _set_secondary_button_style(button: QPushButton) -> None:
+    button.setMinimumHeight(28)
     button.setStyleSheet("padding: 4px 10px;")
 
 
 def _set_danger_button_style(button: QPushButton) -> None:
+    button.setMinimumHeight(28)
     button.setStyleSheet("font-weight: 600; color: #8a1f1f; padding: 4px 10px;")
 
 
