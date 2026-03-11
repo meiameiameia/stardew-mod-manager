@@ -38,5 +38,5 @@ artifacts/
 .env
 .env.*
 
-# Generated project handoff archives
-/stardew-mod-manager-handoff-*.zip
+# Generated local release/audit archives
+/stardew-mod-manager-*.zip
