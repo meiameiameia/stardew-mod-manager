@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QTableWidget,
     QTabWidget,
     QWidget,
 )
@@ -196,3 +197,41 @@ def test_main_window_plan_install_surface_key_controls_exist(
     assert main_window._install_target_combo is install_target_combo
     assert main_window._overwrite_checkbox is overwrite_checkbox
     assert main_window._install_archive_label is install_archive_label
+
+
+def test_main_window_discovery_surface_has_expected_structure(
+    main_window: MainWindow,
+) -> None:
+    context_tabs = main_window._context_tabs
+    discovery_tab = main_window.findChild(QWidget, "discovery_tab")
+    discovery_search_group = main_window.findChild(QGroupBox, "discovery_search_group")
+    discovery_results_group = main_window.findChild(QGroupBox, "discovery_results_group")
+
+    assert context_tabs is not None
+    assert isinstance(context_tabs, QTabWidget)
+    assert discovery_tab is not None
+    assert discovery_search_group is not None
+    assert discovery_results_group is not None
+
+    tab_labels = {context_tabs.tabText(index) for index in range(context_tabs.count())}
+    assert "Discovery" in tab_labels
+    assert context_tabs.indexOf(discovery_tab) >= 0
+
+
+def test_main_window_discovery_surface_key_controls_exist(
+    main_window: MainWindow,
+) -> None:
+    discovery_query_input = main_window.findChild(QLineEdit, "discovery_query_input")
+    discovery_filter_input = main_window.findChild(QLineEdit, "discovery_filter_input")
+    discovery_table = main_window.findChild(QTableWidget, "discovery_results_table")
+    discovery_search_button = main_window.findChild(QPushButton, "discovery_search_button")
+
+    assert discovery_query_input is not None
+    assert discovery_filter_input is not None
+    assert discovery_table is not None
+    assert discovery_search_button is not None
+
+    assert main_window._discovery_query_input is discovery_query_input
+    assert main_window._discovery_filter_input is discovery_filter_input
+    assert main_window._discovery_table is discovery_table
+    assert main_window._search_mods_button is discovery_search_button
