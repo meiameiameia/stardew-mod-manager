@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QComboBox,
     QGroupBox,
     QLabel,
     QLineEdit,
@@ -155,3 +157,42 @@ def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: Mai
     for name in button_names:
         button = main_window.findChild(QPushButton, name)
         assert button is not None
+
+
+def test_main_window_plan_install_surface_has_expected_structure(
+    main_window: MainWindow,
+) -> None:
+    context_tabs = main_window._context_tabs
+    plan_tab = main_window.findChild(QWidget, "plan_install_tab")
+    destination_group = main_window.findChild(QGroupBox, "plan_install_destination_group")
+    execute_group = main_window.findChild(QGroupBox, "plan_install_execute_group")
+
+    assert context_tabs is not None
+    assert isinstance(context_tabs, QTabWidget)
+    assert plan_tab is not None
+    assert destination_group is not None
+    assert execute_group is not None
+
+    tab_labels = {context_tabs.tabText(index) for index in range(context_tabs.count())}
+    assert "Plan & Install" in tab_labels
+    assert context_tabs.indexOf(plan_tab) >= 0
+
+
+def test_main_window_plan_install_surface_key_controls_exist(
+    main_window: MainWindow,
+) -> None:
+    install_target_combo = main_window.findChild(QComboBox, "plan_install_target_combo")
+    overwrite_checkbox = main_window.findChild(QCheckBox, "plan_install_overwrite_checkbox")
+    install_archive_label = main_window.findChild(QLabel, "plan_install_archive_label")
+    plan_button = main_window.findChild(QPushButton, "plan_install_plan_button")
+    run_button = main_window.findChild(QPushButton, "plan_install_run_button")
+
+    assert install_target_combo is not None
+    assert overwrite_checkbox is not None
+    assert install_archive_label is not None
+    assert plan_button is not None
+    assert run_button is not None
+
+    assert main_window._install_target_combo is install_target_combo
+    assert main_window._overwrite_checkbox is overwrite_checkbox
+    assert main_window._install_archive_label is install_archive_label

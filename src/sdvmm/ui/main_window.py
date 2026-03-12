@@ -199,7 +199,9 @@ class MainWindow(QMainWindow):
         self._nexus_api_key_input.setPlaceholderText("Nexus API key")
         self._nexus_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self._overwrite_checkbox = QCheckBox("Allow overwrite with archive")
+        self._overwrite_checkbox.setObjectName("plan_install_overwrite_checkbox")
         self._install_target_combo = QComboBox()
+        self._install_target_combo.setObjectName("plan_install_target_combo")
         self._install_target_combo.addItem(
             "Sandbox Mods destination (safe/test)",
             INSTALL_TARGET_SANDBOX_MODS,
@@ -214,6 +216,7 @@ class MainWindow(QMainWindow):
         self._intake_result_combo = QComboBox()
         self._plan_selected_intake_button = QPushButton("Plan selected intake")
         self._install_archive_label = QLabel("Archive path for selected install destination")
+        self._install_archive_label.setObjectName("plan_install_archive_label")
 
         for control in (
             self._game_path_input,
@@ -714,10 +717,12 @@ class MainWindow(QMainWindow):
         context_tabs.addTab(archive_tab, "Archive")
 
         plan_tab = QWidget()
+        plan_tab.setObjectName("plan_install_tab")
         plan_tab_layout = QVBoxLayout(plan_tab)
         plan_tab_layout.setContentsMargins(6, 6, 6, 6)
         plan_tab_layout.setSpacing(6)
         destination_group = QGroupBox("Destination and Safety Context")
+        destination_group.setObjectName("plan_install_destination_group")
         destination_group.setFlat(True)
         destination_group.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
@@ -733,6 +738,7 @@ class MainWindow(QMainWindow):
         plan_tab_layout.addWidget(destination_group)
 
         execute_group = QGroupBox("Plan and Execute")
+        execute_group.setObjectName("plan_install_execute_group")
         execute_group.setFlat(True)
         execute_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         execute_layout = QVBoxLayout(execute_group)
@@ -741,10 +747,12 @@ class MainWindow(QMainWindow):
         plan_actions = QHBoxLayout()
         plan_actions.setSpacing(6)
         plan_install_button = QPushButton("Plan install")
+        plan_install_button.setObjectName("plan_install_plan_button")
         plan_install_button.clicked.connect(self._on_plan_install)
         _set_primary_button_style(plan_install_button)
         plan_actions.addWidget(plan_install_button)
         run_install_button = QPushButton("Run install")
+        run_install_button.setObjectName("plan_install_run_button")
         run_install_button.clicked.connect(self._on_run_install)
         _set_primary_button_style(run_install_button)
         plan_actions.addWidget(run_install_button)
