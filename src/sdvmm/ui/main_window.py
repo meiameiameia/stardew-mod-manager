@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
-    QFrame,
     QGroupBox,
     QGridLayout,
     QHeaderView,
@@ -20,7 +19,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
-    QScrollArea,
     QSplitter,
     QTabWidget,
     QTableWidget,
@@ -108,6 +106,7 @@ from sdvmm.domain.smapi_log_codes import (
 from sdvmm.ui.background_task import BackgroundTask
 from sdvmm.ui.bottom_details_region import BottomDetailsRegion
 from sdvmm.ui.global_status_strip import GlobalStatusStrip
+from sdvmm.ui.setup_configuration_surface import SetupConfigurationSurface
 from sdvmm.ui.top_context_surface import TopContextSurface
 
 _ROLE_MOD_UPDATE_STATUS = int(Qt.ItemDataRole.UserRole) + 1
@@ -387,68 +386,42 @@ class MainWindow(QMainWindow):
         self._context_group = context_group
         root_layout.addWidget(context_group)
 
-        setup_group = QGroupBox("Setup and Configuration")
-        setup_group.setObjectName("setup_surface_group")
-        setup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        setup_layout = QGridLayout(setup_group)
-        setup_layout.setContentsMargins(6, 4, 6, 4)
-        setup_layout.setHorizontalSpacing(8)
-        setup_layout.setVerticalSpacing(3)
-        setup_layout.addWidget(QLabel("Game directory (real install)"), 0, 0)
-        setup_layout.addWidget(self._game_path_input, 0, 1)
         browse_game_button = QPushButton("Browse game")
         browse_game_button.clicked.connect(self._on_browse_game)
-        setup_layout.addWidget(browse_game_button, 0, 2)
-
-        setup_layout.addWidget(QLabel("Mods directory (real path)"), 1, 0)
-        setup_layout.addWidget(self._mods_path_input, 1, 1)
         browse_mods_button = QPushButton("Browse Mods")
         browse_mods_button.clicked.connect(self._on_browse)
-        setup_layout.addWidget(browse_mods_button, 1, 2)
-
-        setup_layout.addWidget(QLabel("Sandbox Mods target"), 2, 0)
-        setup_layout.addWidget(self._sandbox_mods_path_input, 2, 1)
         browse_sandbox_button = QPushButton("Browse sandbox")
         browse_sandbox_button.clicked.connect(self._on_browse_sandbox_mods)
-        setup_layout.addWidget(browse_sandbox_button, 2, 2)
-
-        setup_layout.addWidget(QLabel("Sandbox archive path"), 3, 0)
-        setup_layout.addWidget(self._sandbox_archive_path_input, 3, 1)
         browse_sandbox_archive_button = QPushButton("Browse archive")
         browse_sandbox_archive_button.clicked.connect(self._on_browse_sandbox_archive)
-        setup_layout.addWidget(browse_sandbox_archive_button, 3, 2)
-
-        setup_layout.addWidget(QLabel("Real Mods archive path"), 4, 0)
-        setup_layout.addWidget(self._real_archive_path_input, 4, 1)
         browse_real_archive_button = QPushButton("Browse real archive")
         browse_real_archive_button.clicked.connect(self._on_browse_real_archive)
-        setup_layout.addWidget(browse_real_archive_button, 4, 2)
-
-        setup_layout.addWidget(QLabel("Nexus API key"), 5, 0)
-        setup_layout.addWidget(self._nexus_api_key_input, 5, 1)
         check_nexus_button = QPushButton("Check Nexus")
         check_nexus_button.clicked.connect(self._on_check_nexus_connection)
-        setup_layout.addWidget(check_nexus_button, 5, 2)
-
-        setup_actions = QHBoxLayout()
         save_button = QPushButton("Save config")
         save_button.setObjectName("setup_save_config_button")
         save_button.clicked.connect(self._on_save_config)
-        setup_actions.addWidget(save_button)
         detect_environment_button = QPushButton("Detect environment")
         detect_environment_button.setObjectName("setup_detect_environment_button")
         detect_environment_button.clicked.connect(self._on_detect_environment)
-        setup_actions.addWidget(detect_environment_button)
-        setup_actions.addStretch(1)
-        setup_layout.addLayout(setup_actions, 6, 0, 1, 3)
 
-        setup_scroll = QScrollArea()
-        setup_scroll.setWidgetResizable(True)
-        setup_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        setup_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        setup_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        setup_scroll.setWidget(setup_group)
-        self._setup_group = setup_group
+        setup_scroll = SetupConfigurationSurface(
+            game_path_input=self._game_path_input,
+            mods_path_input=self._mods_path_input,
+            sandbox_mods_path_input=self._sandbox_mods_path_input,
+            sandbox_archive_path_input=self._sandbox_archive_path_input,
+            real_archive_path_input=self._real_archive_path_input,
+            nexus_api_key_input=self._nexus_api_key_input,
+            browse_game_button=browse_game_button,
+            browse_mods_button=browse_mods_button,
+            browse_sandbox_button=browse_sandbox_button,
+            browse_sandbox_archive_button=browse_sandbox_archive_button,
+            browse_real_archive_button=browse_real_archive_button,
+            check_nexus_button=check_nexus_button,
+            save_button=save_button,
+            detect_environment_button=detect_environment_button,
+        )
+        self._setup_group = setup_scroll.setup_group
         self._setup_scroll = setup_scroll
 
         workspace_splitter = QSplitter()
