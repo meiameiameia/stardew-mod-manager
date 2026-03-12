@@ -106,6 +106,7 @@ from sdvmm.domain.smapi_log_codes import (
     SMAPI_LOG_WARNING,
 )
 from sdvmm.ui.background_task import BackgroundTask
+from sdvmm.ui.global_status_strip import GlobalStatusStrip
 
 _ROLE_MOD_UPDATE_STATUS = int(Qt.ItemDataRole.UserRole) + 1
 _ROLE_REMOTE_LINK = int(Qt.ItemDataRole.UserRole) + 2
@@ -309,12 +310,10 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
 
-        self._status_strip_label = QLabel("Waiting for action.")
-        self._status_strip_label.setObjectName("global_status_current_label")
-        self._blocking_issues_strip_label = QLabel("No blocking issues detected.")
-        self._blocking_issues_strip_label.setObjectName("global_status_blocking_label")
-        self._next_step_strip_label = QLabel("Run Scan to refresh installed inventory.")
-        self._next_step_strip_label.setObjectName("global_status_next_step_label")
+        self._status_strip_group = GlobalStatusStrip()
+        self._status_strip_label = self._status_strip_group.current_status_label
+        self._blocking_issues_strip_label = self._status_strip_group.blocking_issues_label
+        self._next_step_strip_label = self._status_strip_group.next_step_label
         self._scan_context_label = QLabel("Not set")
         self._install_context_label = QLabel("Not set")
         self._environment_status_label = QLabel("Not checked")
@@ -325,12 +324,6 @@ class MainWindow(QMainWindow):
         self._operation_state_label = QLabel("Idle")
         self._scan_context_label.setWordWrap(True)
         self._install_context_label.setWordWrap(True)
-        self._status_strip_label.setWordWrap(True)
-        self._blocking_issues_strip_label.setWordWrap(True)
-        self._next_step_strip_label.setWordWrap(True)
-        _set_status_value_label_style(self._status_strip_label)
-        _set_status_value_label_style(self._blocking_issues_strip_label, bold=True)
-        _set_status_value_label_style(self._next_step_strip_label, bold=True)
         self._details_toggle = QCheckBox("Show detailed output")
         self._watch_timer = QTimer(self)
         self._watch_timer.setInterval(2000)
@@ -846,27 +839,7 @@ class MainWindow(QMainWindow):
         workspace_splitter.setStretchFactor(1, 5)
         root_layout.addWidget(workspace_splitter, 1)
 
-        status_strip_group = QGroupBox("Global Status")
-        status_strip_group.setObjectName("global_status_strip_group")
-        status_strip_group.setFlat(True)
-        status_strip_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        status_strip_layout = QHBoxLayout(status_strip_group)
-        status_strip_layout.setContentsMargins(6, 4, 6, 4)
-        status_strip_layout.setSpacing(6)
-        status_strip_layout.addWidget(
-            _build_status_panel("Current status", self._status_strip_label),
-            1,
-        )
-        status_strip_layout.addWidget(
-            _build_status_panel("Blocking issues", self._blocking_issues_strip_label),
-            1,
-        )
-        status_strip_layout.addWidget(
-            _build_status_panel("Recommended next step", self._next_step_strip_label),
-            1,
-        )
-        self._status_strip_group = status_strip_group
-        root_layout.addWidget(status_strip_group)
+        root_layout.addWidget(self._status_strip_group)
 
         summary_tab = QWidget()
         summary_tab.setObjectName("bottom_summary_tab")
@@ -2699,11 +2672,6 @@ def _set_section_label_style(label: QLabel) -> None:
     _apply_label_palette_role(label, QPalette.ColorRole.WindowText)
 
 
-def _set_status_value_label_style(label: QLabel, *, bold: bool = False) -> None:
-    _set_label_font_weight(label, bold=bold)
-    _apply_label_palette_role(label, QPalette.ColorRole.WindowText)
-
-
 def _set_button_emphasis_style(button: QPushButton, *, bold: bool = False) -> None:
     font = QFont(button.font())
     font.setBold(bold)
@@ -2722,22 +2690,6 @@ def _section_label(text: str) -> QLabel:
     label = QLabel(text)
     _set_section_label_style(label)
     return label
-
-
-def _build_status_panel(title: str, value_label: QLabel) -> QWidget:
-    panel = QFrame()
-    panel.setFrameShape(QFrame.Shape.StyledPanel)
-    panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-    layout = QVBoxLayout(panel)
-    layout.setContentsMargins(5, 3, 5, 3)
-    layout.setSpacing(2)
-    title_label = QLabel(title)
-    _set_auxiliary_label_style(title_label, bold=True)
-    title_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-    value_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-    layout.addWidget(title_label)
-    layout.addWidget(value_label)
-    return panel
 
 
 def _set_primary_button_style(button: QPushButton) -> None:
