@@ -81,3 +81,32 @@ def test_main_window_status_strip_labels_do_not_use_hardcoded_color_stylesheets(
         stylesheet = label.styleSheet().strip().casefold()
         assert "color" not in stylesheet
         assert "#" not in stylesheet
+
+
+def test_main_window_top_context_surface_has_expected_panels(main_window: MainWindow) -> None:
+    top_context_group = main_window.findChild(QGroupBox, "top_context_surface_group")
+    status_strip_group = main_window.findChild(QGroupBox, "global_status_strip_group")
+    environment_panel = main_window.findChild(QWidget, "top_context_environment_panel")
+    runtime_panel = main_window.findChild(QWidget, "top_context_runtime_panel")
+    active_context_panel = main_window.findChild(QWidget, "top_context_active_context_panel")
+
+    assert top_context_group is not None
+    assert status_strip_group is not None
+    assert top_context_group is not status_strip_group
+    assert top_context_group.isVisible()
+    assert environment_panel is not None
+    assert runtime_panel is not None
+    assert active_context_panel is not None
+
+
+def test_main_window_top_context_value_labels_exist(main_window: MainWindow) -> None:
+    label_names = (
+        "top_context_environment_status_value",
+        "top_context_runtime_nexus_value",
+        "top_context_scan_source_value",
+        "top_context_install_destination_value",
+    )
+    for name in label_names:
+        label = main_window.findChild(QLabel, name)
+        assert label is not None
+        assert label.text().strip() != ""

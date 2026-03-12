@@ -316,11 +316,15 @@ class MainWindow(QMainWindow):
         self._blocking_issues_strip_label = self._status_strip_group.blocking_issues_label
         self._next_step_strip_label = self._status_strip_group.next_step_label
         self._scan_context_label = QLabel("Not set")
+        self._scan_context_label.setObjectName("top_context_scan_source_value")
         self._install_context_label = QLabel("Not set")
+        self._install_context_label.setObjectName("top_context_install_destination_value")
         self._environment_status_label = QLabel("Not checked")
+        self._environment_status_label.setObjectName("top_context_environment_status_value")
         self._smapi_update_status_label = QLabel("Not checked")
         self._smapi_log_status_label = QLabel("Not checked")
         self._nexus_status_label = QLabel("Not configured")
+        self._nexus_status_label.setObjectName("top_context_runtime_nexus_value")
         self._watch_status_label = QLabel("Stopped")
         self._operation_state_label = QLabel("Idle")
         self._scan_context_label.setWordWrap(True)
@@ -364,6 +368,7 @@ class MainWindow(QMainWindow):
         root_layout.setSpacing(4)
 
         context_group = QGroupBox("Context")
+        context_group.setObjectName("top_context_surface_group")
         context_group.setFlat(True)
         context_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self._context_group = context_group
@@ -373,6 +378,7 @@ class MainWindow(QMainWindow):
         context_layout.setVerticalSpacing(2)
 
         environment_group = QWidget()
+        environment_group.setObjectName("top_context_environment_panel")
         environment_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         environment_container_layout = QVBoxLayout(environment_group)
         environment_container_layout.setContentsMargins(4, 2, 4, 2)
@@ -392,6 +398,7 @@ class MainWindow(QMainWindow):
         environment_container_layout.addLayout(environment_layout)
 
         runtime_group = QWidget()
+        runtime_group.setObjectName("top_context_runtime_panel")
         runtime_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         runtime_container_layout = QVBoxLayout(runtime_group)
         runtime_container_layout.setContentsMargins(4, 2, 4, 2)
@@ -411,6 +418,7 @@ class MainWindow(QMainWindow):
         runtime_container_layout.addLayout(runtime_layout)
 
         paths_group = QWidget()
+        paths_group.setObjectName("top_context_active_context_panel")
         paths_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         paths_container_layout = QVBoxLayout(paths_group)
         paths_container_layout.setContentsMargins(4, 2, 4, 2)
