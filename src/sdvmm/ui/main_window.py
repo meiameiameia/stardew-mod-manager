@@ -106,6 +106,7 @@ from sdvmm.domain.smapi_log_codes import (
 from sdvmm.ui.background_task import BackgroundTask
 from sdvmm.ui.bottom_details_region import BottomDetailsRegion
 from sdvmm.ui.global_status_strip import GlobalStatusStrip
+from sdvmm.ui.plan_install_tab_surface import PlanInstallTabSurface
 from sdvmm.ui.setup_configuration_surface import SetupConfigurationSurface
 from sdvmm.ui.top_context_surface import TopContextSurface
 
@@ -716,56 +717,21 @@ class MainWindow(QMainWindow):
         self._archive_table.itemSelectionChanged.connect(self._on_archive_selection_changed)
         context_tabs.addTab(archive_tab, "Archive")
 
-        plan_tab = QWidget()
-        plan_tab.setObjectName("plan_install_tab")
-        plan_tab_layout = QVBoxLayout(plan_tab)
-        plan_tab_layout.setContentsMargins(6, 6, 6, 6)
-        plan_tab_layout.setSpacing(6)
-        destination_group = QGroupBox("Destination and Safety Context")
-        destination_group.setObjectName("plan_install_destination_group")
-        destination_group.setFlat(True)
-        destination_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
-        )
-        destination_layout = QGridLayout(destination_group)
-        destination_layout.setContentsMargins(8, 6, 8, 6)
-        destination_layout.setHorizontalSpacing(8)
-        destination_layout.setVerticalSpacing(4)
-        destination_layout.addWidget(QLabel("Install destination"), 0, 0)
-        destination_layout.addWidget(self._install_target_combo, 0, 1)
-        destination_layout.addWidget(self._overwrite_checkbox, 0, 2)
-        destination_layout.addWidget(self._install_archive_label, 1, 0, 1, 3)
-        plan_tab_layout.addWidget(destination_group)
-
-        execute_group = QGroupBox("Plan and Execute")
-        execute_group.setObjectName("plan_install_execute_group")
-        execute_group.setFlat(True)
-        execute_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-        execute_layout = QVBoxLayout(execute_group)
-        execute_layout.setContentsMargins(8, 6, 8, 6)
-        execute_layout.setSpacing(5)
-        plan_actions = QHBoxLayout()
-        plan_actions.setSpacing(6)
         plan_install_button = QPushButton("Plan install")
         plan_install_button.setObjectName("plan_install_plan_button")
         plan_install_button.clicked.connect(self._on_plan_install)
         _set_primary_button_style(plan_install_button)
-        plan_actions.addWidget(plan_install_button)
         run_install_button = QPushButton("Run install")
         run_install_button.setObjectName("plan_install_run_button")
         run_install_button.clicked.connect(self._on_run_install)
         _set_primary_button_style(run_install_button)
-        plan_actions.addWidget(run_install_button)
-        plan_actions.addStretch(1)
-        execute_layout.addLayout(plan_actions)
-        caution_label = QLabel(
-            "No automatic install: review plan details and warnings before running install."
+        plan_tab = PlanInstallTabSurface(
+            install_target_combo=self._install_target_combo,
+            overwrite_checkbox=self._overwrite_checkbox,
+            install_archive_label=self._install_archive_label,
+            plan_install_button=plan_install_button,
+            run_install_button=run_install_button,
         )
-        caution_label.setWordWrap(True)
-        _set_auxiliary_label_style(caution_label)
-        execute_layout.addWidget(caution_label)
-        plan_tab_layout.addWidget(execute_group)
-        plan_tab_layout.addStretch(1)
         context_tabs.addTab(plan_tab, "Plan & Install")
 
         workspace_splitter.addWidget(context_tabs)
