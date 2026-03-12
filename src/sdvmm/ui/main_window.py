@@ -165,6 +165,7 @@ class MainWindow(QMainWindow):
         self._watched_downloads_path_input = QLineEdit()
         self._watched_downloads_path_input.setPlaceholderText("/path/to/Downloads")
         self._discovery_query_input = QLineEdit()
+        self._discovery_query_input.setObjectName("discovery_query_input")
         self._discovery_query_input.setPlaceholderText(
             "Search by mod name, UniqueID, or author"
         )
@@ -173,6 +174,7 @@ class MainWindow(QMainWindow):
         self._mods_filter_input.setClearButtonEnabled(True)
         self._mods_filter_input.setMinimumWidth(180)
         self._discovery_filter_input = QLineEdit()
+        self._discovery_filter_input.setObjectName("discovery_filter_input")
         self._discovery_filter_input.setPlaceholderText("Filter discovery results")
         self._discovery_filter_input.setClearButtonEnabled(True)
         self._discovery_filter_input.setMinimumWidth(180)
@@ -262,6 +264,7 @@ class MainWindow(QMainWindow):
         mods_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
 
         self._discovery_table = QTableWidget(0, 8)
+        self._discovery_table.setObjectName("discovery_results_table")
         self._discovery_table.setHorizontalHeaderLabels(
             ["Name", "UniqueID", "Author", "Source", "Compatibility", "App context", "Provider relation", "Page"]
         )
@@ -556,10 +559,12 @@ class MainWindow(QMainWindow):
         self._context_tabs = context_tabs
 
         discovery_tab = QWidget()
+        discovery_tab.setObjectName("discovery_tab")
         discovery_layout = QVBoxLayout(discovery_tab)
         discovery_layout.setContentsMargins(6, 6, 6, 6)
         discovery_layout.setSpacing(6)
         discovery_search_group = QGroupBox("Search and Source")
+        discovery_search_group.setObjectName("discovery_search_group")
         discovery_search_group.setFlat(True)
         discovery_search_group.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
@@ -571,6 +576,7 @@ class MainWindow(QMainWindow):
         discovery_search_layout.addWidget(QLabel("Search query"), 0, 0)
         discovery_search_layout.addWidget(self._discovery_query_input, 0, 1, 1, 2)
         self._search_mods_button = QPushButton("Search mods")
+        self._search_mods_button.setObjectName("discovery_search_button")
         self._search_mods_button.clicked.connect(self._on_search_discovery)
         _set_primary_button_style(self._search_mods_button)
         discovery_search_layout.addWidget(self._search_mods_button, 0, 3)
@@ -581,6 +587,7 @@ class MainWindow(QMainWindow):
         discovery_search_layout.setColumnStretch(1, 1)
         discovery_layout.addWidget(discovery_search_group)
         discovery_results_group = QGroupBox("Results")
+        discovery_results_group.setObjectName("discovery_results_group")
         discovery_results_group.setFlat(True)
         discovery_results_layout = QVBoxLayout(discovery_results_group)
         discovery_results_layout.setContentsMargins(8, 6, 8, 6)
