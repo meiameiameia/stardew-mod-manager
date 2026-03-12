@@ -34,6 +34,8 @@ from PySide6.QtCore import QThreadPool
 from PySide6.QtCore import QUrl
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QFont
+from PySide6.QtGui import QPalette
 
 from sdvmm.app.inventory_presenter import (
     build_archive_listing_text,
@@ -184,7 +186,7 @@ class MainWindow(QMainWindow):
             self._intake_filter_stats_label,
             self._archive_filter_stats_label,
         ):
-            stats_label.setStyleSheet("color: #4b5563;")
+            _set_auxiliary_label_style(stats_label)
         self._nexus_api_key_input = QLineEdit()
         self._nexus_api_key_input.setPlaceholderText("Nexus API key")
         self._nexus_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -223,7 +225,7 @@ class MainWindow(QMainWindow):
             self._install_target_combo,
             self._intake_result_combo,
         ):
-            control.setMinimumHeight(28)
+            control.setMinimumHeight(26)
 
         self._mods_table = QTableWidget(0, 6)
         self._mods_table.setHorizontalHeaderLabels(
@@ -298,11 +300,11 @@ class MainWindow(QMainWindow):
 
         self._findings_box = QPlainTextEdit()
         self._findings_box.setReadOnly(True)
-        self._findings_box.setMinimumHeight(140)
+        self._findings_box.setMinimumHeight(120)
         self._findings_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._package_inspection_result_box = QPlainTextEdit()
         self._package_inspection_result_box.setReadOnly(True)
-        self._package_inspection_result_box.setMinimumHeight(110)
+        self._package_inspection_result_box.setMinimumHeight(92)
         self._package_inspection_result_box.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
@@ -323,9 +325,9 @@ class MainWindow(QMainWindow):
         self._status_strip_label.setWordWrap(True)
         self._blocking_issues_strip_label.setWordWrap(True)
         self._next_step_strip_label.setWordWrap(True)
-        self._status_strip_label.setStyleSheet("padding: 0px; color: #1f2937;")
-        self._blocking_issues_strip_label.setStyleSheet("padding: 0px; color: #7c5a00;")
-        self._next_step_strip_label.setStyleSheet("padding: 0px; color: #1d4f91; font-weight: 600;")
+        _set_status_value_label_style(self._status_strip_label)
+        _set_status_value_label_style(self._blocking_issues_strip_label, bold=True)
+        _set_status_value_label_style(self._next_step_strip_label, bold=True)
         self._details_toggle = QCheckBox("Show detailed output")
         self._watch_timer = QTimer(self)
         self._watch_timer.setInterval(2000)
@@ -361,15 +363,15 @@ class MainWindow(QMainWindow):
     def _build_layout(self) -> None:
         container = QWidget()
         root_layout = QVBoxLayout(container)
-        root_layout.setContentsMargins(8, 6, 8, 6)
-        root_layout.setSpacing(6)
+        root_layout.setContentsMargins(6, 4, 6, 4)
+        root_layout.setSpacing(4)
 
         context_group = QGroupBox("Context")
         context_group.setFlat(True)
         context_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self._context_group = context_group
         context_layout = QGridLayout(context_group)
-        context_layout.setContentsMargins(8, 4, 8, 4)
+        context_layout.setContentsMargins(6, 3, 6, 3)
         context_layout.setHorizontalSpacing(10)
         context_layout.setVerticalSpacing(2)
 
@@ -439,9 +441,9 @@ class MainWindow(QMainWindow):
         setup_group = QGroupBox("Setup and Configuration")
         setup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         setup_layout = QGridLayout(setup_group)
-        setup_layout.setContentsMargins(8, 6, 8, 6)
+        setup_layout.setContentsMargins(6, 4, 6, 4)
         setup_layout.setHorizontalSpacing(8)
-        setup_layout.setVerticalSpacing(4)
+        setup_layout.setVerticalSpacing(3)
         setup_layout.addWidget(QLabel("Game directory (real install)"), 0, 0)
         setup_layout.addWidget(self._game_path_input, 0, 1)
         browse_game_button = QPushButton("Browse game")
@@ -508,8 +510,8 @@ class MainWindow(QMainWindow):
         inventory_group.setMinimumWidth(460)
         inventory_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         inventory_layout = QVBoxLayout(inventory_group)
-        inventory_layout.setContentsMargins(8, 6, 8, 6)
-        inventory_layout.setSpacing(6)
+        inventory_layout.setContentsMargins(6, 4, 6, 4)
+        inventory_layout.setSpacing(4)
 
         inventory_controls_tabs = QTabWidget()
         inventory_controls_tabs.setDocumentMode(True)
@@ -603,7 +605,7 @@ class MainWindow(QMainWindow):
             "Flow: Scan -> Check updates -> Open remote page -> manual download -> watcher intake -> plan/install."
         )
         flow_hint_label.setWordWrap(True)
-        flow_hint_label.setStyleSheet("color: #4b5563;")
+        _set_auxiliary_label_style(flow_hint_label)
         flow_hint_label.setToolTip(
             "Workflow: Scan -> Check updates -> Open remote page -> manual download -> watcher intake -> plan/install."
         )
@@ -827,7 +829,7 @@ class MainWindow(QMainWindow):
             "No automatic install: review plan details and warnings before running install."
         )
         caution_label.setWordWrap(True)
-        caution_label.setStyleSheet("color: #4b5563;")
+        _set_auxiliary_label_style(caution_label)
         execute_layout.addWidget(caution_label)
         plan_tab_layout.addWidget(execute_group)
         plan_tab_layout.addStretch(1)
@@ -836,7 +838,7 @@ class MainWindow(QMainWindow):
         workspace_splitter.addWidget(context_tabs)
         workspace_splitter.setCollapsible(0, False)
         workspace_splitter.setCollapsible(1, False)
-        workspace_splitter.setSizes([760, 560])
+        workspace_splitter.setSizes([800, 540])
         workspace_splitter.setStretchFactor(0, 6)
         workspace_splitter.setStretchFactor(1, 5)
         root_layout.addWidget(workspace_splitter, 1)
@@ -845,8 +847,8 @@ class MainWindow(QMainWindow):
         status_strip_group.setFlat(True)
         status_strip_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         status_strip_layout = QHBoxLayout(status_strip_group)
-        status_strip_layout.setContentsMargins(8, 6, 8, 6)
-        status_strip_layout.setSpacing(8)
+        status_strip_layout.setContentsMargins(6, 4, 6, 4)
+        status_strip_layout.setSpacing(6)
         status_strip_layout.addWidget(
             _build_status_panel("Current status", self._status_strip_label),
             1,
@@ -864,23 +866,23 @@ class MainWindow(QMainWindow):
 
         summary_tab = QWidget()
         summary_tab_layout = QVBoxLayout(summary_tab)
-        summary_tab_layout.setContentsMargins(8, 6, 8, 6)
-        summary_tab_layout.setSpacing(6)
+        summary_tab_layout.setContentsMargins(6, 4, 6, 4)
+        summary_tab_layout.setSpacing(4)
         summary_header_label = QLabel("Operational Detail")
-        summary_header_label.setStyleSheet("font-weight: 600; color: #374151;")
+        _set_section_label_style(summary_header_label)
         summary_tab_layout.addWidget(summary_header_label)
         summary_help_label = QLabel(
             "Use this tab for the full narrative output of the last operation. The Global Status strip above stays visible for quick status reading."
         )
         summary_help_label.setWordWrap(True)
-        summary_help_label.setStyleSheet("color: #4b5563;")
+        _set_auxiliary_label_style(summary_help_label)
         summary_tab_layout.addWidget(summary_help_label)
         summary_tab_layout.addWidget(self._details_toggle)
         details_group = QGroupBox("Detailed output")
         details_group.setFlat(True)
         details_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         details_layout = QVBoxLayout(details_group)
-        details_layout.setContentsMargins(8, 6, 8, 6)
+        details_layout.setContentsMargins(6, 4, 6, 4)
         details_layout.addWidget(self._findings_box)
         details_group.setVisible(False)
         self._details_group = details_group
@@ -890,8 +892,8 @@ class MainWindow(QMainWindow):
         secondary_group.setFlat(True)
         secondary_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         secondary_layout = QVBoxLayout(secondary_group)
-        secondary_layout.setContentsMargins(8, 6, 8, 6)
-        secondary_layout.setSpacing(6)
+        secondary_layout.setContentsMargins(6, 4, 6, 4)
+        secondary_layout.setSpacing(4)
         self._guidance_group = secondary_group
         secondary_tabs = QTabWidget()
         secondary_tabs.setDocumentMode(True)
@@ -2603,15 +2605,15 @@ class MainWindow(QMainWindow):
     def _refresh_responsive_panel_bounds(self) -> None:
         window_height = max(self.height(), self.minimumHeight())
 
-        context_cap = max(120, min(156, int(window_height * 0.22)))
-        inventory_controls_cap = max(160, min(220, int(window_height * 0.30)))
-        flow_hint_cap = max(32, min(58, int(window_height * 0.08)))
-        intake_result_cap = max(120, min(190, int(window_height * 0.24)))
-        status_strip_cap = max(64, min(90, int(window_height * 0.12)))
-        setup_cap = max(150, min(190, int(window_height * 0.24)))
-        details_cap = max(140, min(240, int(window_height * 0.32)))
-        guidance_closed_cap = max(150, min(190, int(window_height * 0.24)))
-        guidance_open_cap = max(240, min(320, int(window_height * 0.40)))
+        context_cap = max(108, min(144, int(window_height * 0.19)))
+        inventory_controls_cap = max(132, min(192, int(window_height * 0.25)))
+        flow_hint_cap = max(24, min(44, int(window_height * 0.06)))
+        intake_result_cap = max(92, min(156, int(window_height * 0.20)))
+        status_strip_cap = max(56, min(78, int(window_height * 0.10)))
+        setup_cap = max(126, min(172, int(window_height * 0.22)))
+        details_cap = max(104, min(188, int(window_height * 0.25)))
+        guidance_closed_cap = max(118, min(162, int(window_height * 0.21)))
+        guidance_open_cap = max(182, min(252, int(window_height * 0.33)))
 
         if hasattr(self, "_context_group"):
             self._context_group.setMaximumHeight(context_cap)
@@ -2663,16 +2665,53 @@ def _discovery_source_label(provider: str) -> str:
     return labels.get(provider, provider)
 
 
+def _set_label_font_weight(label: QLabel, *, bold: bool = False) -> None:
+    font = QFont(label.font())
+    font.setBold(bold)
+    label.setFont(font)
+
+
+def _apply_label_palette_role(label: QLabel, role: QPalette.ColorRole) -> None:
+    palette = label.palette()
+    palette.setColor(
+        QPalette.ColorRole.WindowText,
+        palette.color(role),
+    )
+    label.setPalette(palette)
+
+
+def _set_auxiliary_label_style(label: QLabel, *, bold: bool = False) -> None:
+    _set_label_font_weight(label, bold=bold)
+    _apply_label_palette_role(label, QPalette.ColorRole.WindowText)
+
+
+def _set_section_label_style(label: QLabel) -> None:
+    _set_label_font_weight(label, bold=True)
+    _apply_label_palette_role(label, QPalette.ColorRole.WindowText)
+
+
+def _set_status_value_label_style(label: QLabel, *, bold: bool = False) -> None:
+    _set_label_font_weight(label, bold=bold)
+    _apply_label_palette_role(label, QPalette.ColorRole.WindowText)
+
+
+def _set_button_emphasis_style(button: QPushButton, *, bold: bool = False) -> None:
+    font = QFont(button.font())
+    font.setBold(bold)
+    button.setFont(font)
+    button.setStyleSheet("padding: 3px 9px;")
+
+
 def _context_caption(text: str) -> QLabel:
     label = QLabel(text)
     label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-    label.setStyleSheet("color: #4b5563;")
+    _set_auxiliary_label_style(label)
     return label
 
 
 def _section_label(text: str) -> QLabel:
     label = QLabel(text)
-    label.setStyleSheet("font-weight: 600; color: #374151;")
+    _set_section_label_style(label)
     return label
 
 
@@ -2681,10 +2720,10 @@ def _build_status_panel(title: str, value_label: QLabel) -> QWidget:
     panel.setFrameShape(QFrame.Shape.StyledPanel)
     panel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
     layout = QVBoxLayout(panel)
-    layout.setContentsMargins(6, 4, 6, 4)
+    layout.setContentsMargins(5, 3, 5, 3)
     layout.setSpacing(2)
     title_label = QLabel(title)
-    title_label.setStyleSheet("color: #4b5563; font-weight: 600;")
+    _set_auxiliary_label_style(title_label, bold=True)
     title_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
     value_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
     layout.addWidget(title_label)
@@ -2693,18 +2732,18 @@ def _build_status_panel(title: str, value_label: QLabel) -> QWidget:
 
 
 def _set_primary_button_style(button: QPushButton) -> None:
-    button.setMinimumHeight(28)
-    button.setStyleSheet("font-weight: 600; padding: 4px 10px;")
+    button.setMinimumHeight(26)
+    _set_button_emphasis_style(button, bold=True)
 
 
 def _set_secondary_button_style(button: QPushButton) -> None:
-    button.setMinimumHeight(28)
-    button.setStyleSheet("padding: 4px 10px;")
+    button.setMinimumHeight(26)
+    _set_button_emphasis_style(button)
 
 
 def _set_danger_button_style(button: QPushButton) -> None:
-    button.setMinimumHeight(28)
-    button.setStyleSheet("font-weight: 600; color: #8a1f1f; padding: 4px 10px;")
+    button.setMinimumHeight(26)
+    _set_button_emphasis_style(button, bold=True)
 
 
 def _smapi_update_summary_label(status: SmapiUpdateStatus) -> str:
