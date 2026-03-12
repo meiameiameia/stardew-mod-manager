@@ -79,6 +79,40 @@ def test_main_window_bottom_details_tabs_include_summary_and_setup(
     assert bottom_tabs.indexOf(setup_tab) >= 0
 
 
+def test_main_window_bottom_details_start_hidden_by_default(main_window: MainWindow) -> None:
+    details_group = main_window.findChild(QGroupBox, "bottom_summary_details_group")
+
+    assert details_group is not None
+    assert details_group.isVisible() is False
+    assert main_window._details_group is details_group
+    assert main_window._details_toggle.isChecked() is False
+    assert main_window._details_toggle.text() == "Show detailed output"
+
+
+def test_main_window_bottom_details_toggle_shows_and_hides_details_group(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    details_group = main_window.findChild(QGroupBox, "bottom_summary_details_group")
+
+    assert details_group is not None
+
+    main_window._secondary_tabs.setCurrentIndex(main_window._summary_tab_index)
+    qapp.processEvents()
+    main_window._details_toggle.setChecked(True)
+    qapp.processEvents()
+
+    assert details_group.isHidden() is False
+    assert details_group.isVisible() is True
+    assert main_window._details_toggle.text() == "Hide detailed output"
+
+    main_window._details_toggle.setChecked(False)
+    qapp.processEvents()
+
+    assert details_group.isVisible() is False
+    assert main_window._details_toggle.text() == "Show detailed output"
+
+
 def test_main_window_status_strip_labels_do_not_use_hardcoded_color_stylesheets(
     main_window: MainWindow,
 ) -> None:
@@ -276,3 +310,42 @@ def test_main_window_archive_surface_key_controls_exist(
     assert main_window._refresh_archives_button is refresh_button
     assert main_window._restore_archived_button is restore_button
     assert main_window._delete_archived_button is delete_button
+
+
+def test_main_window_package_inspection_result_text_controls_visibility(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inspection_group = main_window._package_inspection_result_group
+    inspection_box = main_window._package_inspection_result_box
+    package_tab_index = next(
+        index
+        for index in range(main_window._context_tabs.count())
+        if main_window._context_tabs.tabText(index) == "Packages & Intake"
+    )
+
+    assert inspection_group.isVisible() is False
+    assert inspection_box.toPlainText() == ""
+
+    main_window._context_tabs.setCurrentIndex(package_tab_index)
+    qapp.processEvents()
+    main_window._set_package_inspection_result_text("Detected package details")
+    qapp.processEvents()
+
+    assert inspection_group.isHidden() is False
+    assert inspection_group.isVisible() is True
+    assert inspection_box.toPlainText() == "Detected package details"
+
+    main_window._set_package_inspection_result_text("")
+    qapp.processEvents()
+
+    assert inspection_group.isVisible() is False
+    assert inspection_box.toPlainText() == ""
+
+    main_window._set_package_inspection_result_text("Detected package details")
+    qapp.processEvents()
+    main_window._set_package_inspection_result_text(None)
+    qapp.processEvents()
+
+    assert inspection_group.isVisible() is False
+    assert inspection_box.toPlainText() == ""
