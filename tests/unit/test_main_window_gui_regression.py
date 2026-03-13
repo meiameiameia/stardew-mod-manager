@@ -22,14 +22,17 @@ from sdvmm.app.shell_service import AppShellService
 from sdvmm.app.shell_service import DiscoveryContextCorrelation
 from sdvmm.app.shell_service import INSTALL_TARGET_CONFIGURED_REAL_MODS
 from sdvmm.app.shell_service import INSTALL_TARGET_SANDBOX_MODS
+from sdvmm.app.shell_service import IntakeUpdateCorrelation
 from sdvmm.app.shell_service import SCAN_TARGET_CONFIGURED_REAL_MODS
 from sdvmm.app.shell_service import SCAN_TARGET_SANDBOX_MODS
 from sdvmm.domain.discovery_codes import COMPATIBLE
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_NEXUS
 from sdvmm.domain.discovery_codes import SMAPI_COMPATIBILITY_LIST_PROVIDER
 from sdvmm.domain.models import ArchivedModEntry
+from sdvmm.domain.models import DownloadsIntakeResult
 from sdvmm.domain.models import ModDiscoveryEntry
 from sdvmm.domain.models import ModDiscoveryResult
+from sdvmm.domain.models import PackageModEntry
 from sdvmm.ui.main_window import MainWindow
 from sdvmm.ui.main_window import _ROLE_DISCOVERY_INDEX
 
@@ -660,6 +663,143 @@ def test_main_window_archive_filter_updates_stats_label(
     assert stats_label.text() == "3/3 shown"
 
 
+def test_main_window_intake_selector_empty_state_disables_combo_and_plan_button(
+    main_window: MainWindow,
+) -> None:
+    main_window._detected_intakes = tuple()
+    main_window._intake_correlations = tuple()
+    main_window._refresh_intake_selector()
+
+    assert main_window._intake_result_combo.count() == 1
+    assert main_window._intake_result_combo.itemText(0) == "<no detected packages>"
+    assert main_window._intake_result_combo.currentData() == -1
+    assert main_window._intake_result_combo.isEnabled() is False
+    assert main_window._plan_selected_intake_button.isEnabled() is False
+
+
+def test_main_window_rendering_intakes_updates_filter_stats_label(
+    main_window: MainWindow,
+) -> None:
+    intakes = (
+        _intake_result("AlphaPack.zip", "new_install_candidate", "Alpha Mod", "Sample.Alpha"),
+        _intake_result("BetaPack.zip", "new_install_candidate", "Beta Mod", "Sample.Beta"),
+        _intake_result("GammaPack.zip", "new_install_candidate", "Gamma Mod", "Sample.Gamma"),
+    )
+    main_window._detected_intakes = intakes
+    main_window._intake_correlations = tuple(
+        _intake_correlation(intake, next_step=f"Review {intake.package_path.name}") for intake in intakes
+    )
+
+    main_window._refresh_intake_selector()
+
+    assert main_window._intake_filter_stats_label.text() == "3/3 shown"
+
+
+def test_main_window_intake_filter_updates_visible_entries_and_stats(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    intakes = (
+        _intake_result("AlphaPack.zip", "new_install_candidate", "Alpha Mod", "Sample.Alpha"),
+        _intake_result("BetaPack.zip", "new_install_candidate", "Beta Mod", "Sample.Beta"),
+        _intake_result("GammaPack.zip", "new_install_candidate", "Gamma Mod", "Sample.Gamma"),
+    )
+    main_window._detected_intakes = intakes
+    main_window._intake_correlations = tuple(
+        _intake_correlation(intake, next_step=f"Review {intake.package_path.name}") for intake in intakes
+    )
+    main_window._refresh_intake_selector()
+    qapp.processEvents()
+
+    main_window._intake_filter_input.setText("BetaPack")
+    qapp.processEvents()
+    assert main_window._intake_filter_stats_label.text() == "1/3 shown"
+    assert main_window._intake_result_combo.count() == 1
+    assert "BetaPack.zip" in main_window._intake_result_combo.itemText(0)
+
+    main_window._intake_filter_input.setText("NoSuchPackage")
+    qapp.processEvents()
+    assert main_window._intake_filter_stats_label.text() == "0/3 shown"
+    assert main_window._intake_result_combo.count() == 1
+    assert main_window._intake_result_combo.itemText(0) == "<no detected packages match filter>"
+    assert main_window._intake_result_combo.currentData() == -1
+    assert main_window._intake_result_combo.isEnabled() is False
+
+    main_window._intake_filter_input.clear()
+    qapp.processEvents()
+    assert main_window._intake_filter_stats_label.text() == "3/3 shown"
+    assert main_window._intake_result_combo.count() == 3
+    assert main_window._intake_result_combo.isEnabled() is True
+
+
+def test_main_window_selecting_valid_intake_enables_plan_selected_button(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    intakes = (
+        _intake_result("AlphaPack.zip", "new_install_candidate", "Alpha Mod", "Sample.Alpha"),
+        _intake_result("BetaPack.zip", "new_install_candidate", "Beta Mod", "Sample.Beta"),
+    )
+    main_window._detected_intakes = intakes
+    main_window._intake_correlations = tuple(
+        _intake_correlation(intake, next_step=f"Review {intake.package_path.name}") for intake in intakes
+    )
+    main_window._refresh_intake_selector()
+    qapp.processEvents()
+
+    main_window._intake_result_combo.setCurrentIndex(-1)
+    main_window._on_intake_selection_changed()
+    qapp.processEvents()
+    assert main_window._plan_selected_intake_button.isEnabled() is False
+
+    main_window._intake_result_combo.setCurrentIndex(0)
+    qapp.processEvents()
+    assert main_window._selected_intake_index() >= 0
+    assert main_window._plan_selected_intake_button.isEnabled() is True
+
+
+def test_main_window_watched_path_change_clears_intakes_and_stops_active_watcher(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    intakes = (
+        _intake_result("AlphaPack.zip", "new_install_candidate", "Alpha Mod", "Sample.Alpha"),
+        _intake_result("BetaPack.zip", "new_install_candidate", "Beta Mod", "Sample.Beta"),
+    )
+    main_window._detected_intakes = intakes
+    main_window._intake_correlations = tuple(
+        _intake_correlation(intake, next_step=f"Review {intake.package_path.name}") for intake in intakes
+    )
+    main_window._refresh_intake_selector()
+    main_window._watch_status_label.setText("Running")
+    main_window._watch_timer.start()
+    assert main_window._watch_timer.isActive() is True
+
+    main_window._watched_downloads_path_input.setText(r"C:\Downloads\Observed")
+    qapp.processEvents()
+
+    assert main_window._detected_intakes == tuple()
+    assert main_window._intake_correlations == tuple()
+    assert main_window._intake_result_combo.count() == 1
+    assert main_window._intake_result_combo.itemText(0) == "<no detected packages>"
+    assert main_window._intake_result_combo.currentData() == -1
+    assert main_window._intake_result_combo.isEnabled() is False
+    assert main_window._plan_selected_intake_button.isEnabled() is False
+    assert main_window._watch_timer.isActive() is False
+    assert main_window._watch_status_label.text() == "Stopped (path changed)"
+
+
+def test_main_window_watched_path_change_sets_expected_status_when_active_watcher_stops(
+    main_window: MainWindow,
+) -> None:
+    main_window._watch_timer.start()
+    assert main_window._watch_timer.isActive() is True
+
+    main_window._on_watched_path_changed()
+
+    assert main_window._status_strip_label.text() == "Watcher stopped because watched path changed."
+
+
 def test_main_window_package_inspection_result_text_controls_visibility(
     main_window: MainWindow,
     qapp: QApplication,
@@ -709,6 +849,44 @@ def _archived_entry(folder_name: str, target_folder_name: str) -> ArchivedModEnt
         mod_name=folder_name,
         unique_id=f"Sample.{folder_name}",
         version="1.0.0",
+    )
+
+
+def _intake_result(
+    package_name: str,
+    classification: str,
+    mod_name: str,
+    unique_id: str,
+) -> DownloadsIntakeResult:
+    mod_entry = PackageModEntry(
+        name=mod_name,
+        unique_id=unique_id,
+        version="1.0.0",
+        manifest_path=f"/{mod_name}/manifest.json",
+    )
+    return DownloadsIntakeResult(
+        package_path=Path(r"C:\Downloads") / package_name,
+        classification=classification,
+        message=f"Detected {package_name}",
+        mods=(mod_entry,),
+        matched_installed_unique_ids=tuple(),
+        warnings=tuple(),
+        findings=tuple(),
+    )
+
+
+def _intake_correlation(
+    intake: DownloadsIntakeResult,
+    *,
+    next_step: str,
+) -> IntakeUpdateCorrelation:
+    return IntakeUpdateCorrelation(
+        intake=intake,
+        actionable=True,
+        matched_update_available_unique_ids=tuple(),
+        matched_guided_update_unique_ids=tuple(),
+        summary=f"Intake summary for {intake.package_path.name}",
+        next_step=next_step,
     )
 
 
