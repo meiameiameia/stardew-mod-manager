@@ -230,9 +230,9 @@ class MainWindow(QMainWindow):
         self._plan_selected_intake_button = QPushButton("Stage for Plan & Install")
         self._install_archive_label = QLabel("Archive path for selected install destination")
         self._install_archive_label.setObjectName("plan_install_archive_label")
-        self._staged_package_label = QLabel("No package staged for planning.")
+        self._staged_package_label = QLineEdit()
         self._staged_package_label.setObjectName("plan_install_staged_package_value")
-        self._staged_package_label.setWordWrap(True)
+        self._staged_package_label.setReadOnly(True)
         self._install_history_combo = QComboBox()
         self._install_history_combo.setObjectName("recovery_inspection_operation_combo")
         self._inspect_recovery_button = QPushButton("Inspect recovery readiness")
@@ -342,6 +342,13 @@ class MainWindow(QMainWindow):
         self._package_inspection_result_box.setReadOnly(True)
         self._package_inspection_result_box.setMinimumHeight(92)
         self._package_inspection_result_box.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self._plan_install_output_box = QPlainTextEdit()
+        self._plan_install_output_box.setObjectName("plan_install_output_box")
+        self._plan_install_output_box.setReadOnly(True)
+        self._plan_install_output_box.setMinimumHeight(92)
+        self._plan_install_output_box.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self._recovery_output_box = QPlainTextEdit()
@@ -734,15 +741,26 @@ class MainWindow(QMainWindow):
             staged_package_layout = QVBoxLayout(staged_package_group)
             staged_package_layout.setContentsMargins(8, 6, 8, 6)
             staged_package_layout.setSpacing(4)
+            staged_package_layout.addWidget(QLabel("Current package ready for planning"))
             staged_package_layout.addWidget(self._staged_package_label)
             plan_tab_layout.insertWidget(1, staged_package_group)
+
+            plan_install_output_group = QGroupBox("Plan & Install Output")
+            plan_install_output_group.setObjectName("plan_install_output_group")
+            plan_install_output_group.setFlat(True)
+            plan_install_output_group.setSizePolicy(
+                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+            )
+            plan_install_output_layout = QVBoxLayout(plan_install_output_group)
+            plan_install_output_layout.setContentsMargins(8, 6, 8, 6)
+            plan_install_output_layout.setSpacing(6)
+            plan_install_output_layout.addWidget(self._plan_install_output_box)
+            plan_tab_layout.insertWidget(3, plan_install_output_group)
 
             recovery_group = QGroupBox("Recovery")
             recovery_group.setObjectName("recovery_inspection_group")
             recovery_group.setFlat(True)
-            recovery_group.setSizePolicy(
-                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
-            )
+            recovery_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
             recovery_layout = QVBoxLayout(recovery_group)
             recovery_layout.setContentsMargins(8, 6, 8, 6)
             recovery_layout.setSpacing(6)
@@ -761,8 +779,19 @@ class MainWindow(QMainWindow):
             self._run_recovery_button.setEnabled(False)
             recovery_controls.addWidget(self._run_recovery_button)
             recovery_layout.addLayout(recovery_controls)
-            recovery_layout.addWidget(self._recovery_output_box)
-            plan_tab_layout.insertWidget(2, recovery_group)
+            plan_tab_layout.insertWidget(4, recovery_group)
+
+            recovery_output_group = QGroupBox("Recovery Output")
+            recovery_output_group.setObjectName("recovery_output_group")
+            recovery_output_group.setFlat(True)
+            recovery_output_group.setSizePolicy(
+                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+            )
+            recovery_output_layout = QVBoxLayout(recovery_output_group)
+            recovery_output_layout.setContentsMargins(8, 6, 8, 6)
+            recovery_output_layout.setSpacing(6)
+            recovery_output_layout.addWidget(self._recovery_output_box)
+            plan_tab_layout.insertWidget(5, recovery_output_group)
         context_tabs.addTab(plan_tab, "Plan & Install")
         self._plan_install_tab = plan_tab
 
@@ -1071,6 +1100,7 @@ class MainWindow(QMainWindow):
         except AppShellError as exc:
             self._pending_install_plan = None
             QMessageBox.critical(self, "Install plan failed", str(exc))
+            self._set_plan_install_output_text(str(exc))
             self._set_status(str(exc))
             return
 
@@ -1104,12 +1134,13 @@ class MainWindow(QMainWindow):
             )
         except AppShellError as exc:
             QMessageBox.critical(self, "Install failed", str(exc))
+            self._set_plan_install_output_text(str(exc))
             self._set_status(str(exc))
             return
 
         self._refresh_install_operation_selector()
         self._render_inventory(result.inventory)
-        self._set_details_text(build_sandbox_install_result_text(result))
+        self._set_plan_install_output_text(build_sandbox_install_result_text(result))
         self._set_current_scan_target(result.destination_kind)
         self._set_scan_context(result.scan_context_path, self._scan_target_label(result.destination_kind))
         if is_real_destination:
@@ -1120,7 +1151,7 @@ class MainWindow(QMainWindow):
     def _apply_install_plan_review(self, plan: SandboxInstallPlan) -> None:
         review = self._shell_service.review_install_execution(plan)
         self._pending_install_plan = plan if review.allowed else None
-        self._set_details_text(
+        self._set_plan_install_output_text(
             "\n\n".join(
                 (
                     review.message,
@@ -2329,6 +2360,14 @@ class MainWindow(QMainWindow):
         self._blocking_issues_strip_label.setToolTip(blocking_issue)
         self._next_step_strip_label.setToolTip(next_step)
 
+    def _set_plan_install_output_text(self, text: str) -> None:
+        self._plan_install_output_box.setPlainText(text)
+        blocking_issue, next_step = _summarize_details_text(text)
+        self._blocking_issues_strip_label.setText(blocking_issue)
+        self._next_step_strip_label.setText(next_step)
+        self._blocking_issues_strip_label.setToolTip(blocking_issue)
+        self._next_step_strip_label.setToolTip(next_step)
+
     def _set_package_inspection_result_text(self, text: str | None) -> None:
         has_text = bool(text and text.strip())
         self._package_inspection_result_box.setPlainText(text or "")
@@ -2662,7 +2701,7 @@ class MainWindow(QMainWindow):
             self._staged_package_label.setText("No package staged for planning.")
             self._staged_package_label.setToolTip("")
             return
-        self._staged_package_label.setText(_compact_path_text(package_path))
+        self._staged_package_label.setText(package_path)
         self._staged_package_label.setToolTip(package_path)
 
     def _stage_package_for_plan_install(self, package_path: str, *, status_message: str) -> None:

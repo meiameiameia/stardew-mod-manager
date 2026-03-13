@@ -430,17 +430,33 @@ def test_main_window_plan_install_surface_has_expected_structure(
     context_tabs = main_window._context_tabs
     plan_tab = main_window.findChild(QWidget, "plan_install_tab")
     destination_group = main_window.findChild(QGroupBox, "plan_install_destination_group")
+    staged_package_group = main_window.findChild(QGroupBox, "plan_install_staged_package_group")
     execute_group = main_window.findChild(QGroupBox, "plan_install_execute_group")
+    plan_output_group = main_window.findChild(QGroupBox, "plan_install_output_group")
+    recovery_group = main_window.findChild(QGroupBox, "recovery_inspection_group")
+    recovery_output_group = main_window.findChild(QGroupBox, "recovery_output_group")
 
     assert context_tabs is not None
     assert isinstance(context_tabs, QTabWidget)
     assert plan_tab is not None
     assert destination_group is not None
+    assert staged_package_group is not None
     assert execute_group is not None
+    assert plan_output_group is not None
+    assert recovery_group is not None
+    assert recovery_output_group is not None
 
     tab_labels = {context_tabs.tabText(index) for index in range(context_tabs.count())}
     assert "Plan & Install" in tab_labels
     assert context_tabs.indexOf(plan_tab) >= 0
+
+    plan_layout = plan_tab.layout()
+    assert plan_layout is not None
+    assert plan_layout.indexOf(destination_group) < plan_layout.indexOf(staged_package_group)
+    assert plan_layout.indexOf(staged_package_group) < plan_layout.indexOf(execute_group)
+    assert plan_layout.indexOf(execute_group) < plan_layout.indexOf(plan_output_group)
+    assert plan_layout.indexOf(plan_output_group) < plan_layout.indexOf(recovery_group)
+    assert plan_layout.indexOf(recovery_group) < plan_layout.indexOf(recovery_output_group)
 
 
 def test_main_window_plan_install_surface_key_controls_exist(
@@ -450,7 +466,8 @@ def test_main_window_plan_install_surface_key_controls_exist(
     overwrite_checkbox = main_window.findChild(QCheckBox, "plan_install_overwrite_checkbox")
     install_archive_label = main_window.findChild(QLabel, "plan_install_archive_label")
     staged_package_group = main_window.findChild(QGroupBox, "plan_install_staged_package_group")
-    staged_package_label = main_window.findChild(QLabel, "plan_install_staged_package_value")
+    staged_package_label = main_window.findChild(QLineEdit, "plan_install_staged_package_value")
+    plan_output_box = main_window.findChild(QPlainTextEdit, "plan_install_output_box")
     plan_button = main_window.findChild(QPushButton, "plan_install_plan_button")
     run_button = main_window.findChild(QPushButton, "plan_install_run_button")
 
@@ -459,6 +476,7 @@ def test_main_window_plan_install_surface_key_controls_exist(
     assert install_archive_label is not None
     assert staged_package_group is not None
     assert staged_package_label is not None
+    assert plan_output_box is not None
     assert plan_button is not None
     assert run_button is not None
 
@@ -466,6 +484,8 @@ def test_main_window_plan_install_surface_key_controls_exist(
     assert main_window._overwrite_checkbox is overwrite_checkbox
     assert main_window._install_archive_label is install_archive_label
     assert main_window._staged_package_label is staged_package_label
+    assert main_window._plan_install_output_box is plan_output_box
+    assert staged_package_label.isReadOnly() is True
 
 
 def test_main_window_staging_valid_intake_switches_to_plan_install_and_updates_display(
@@ -505,7 +525,7 @@ def test_main_window_staging_valid_intake_switches_to_plan_install_and_updates_d
     assert main_window._context_tabs.currentWidget() is plan_tab
     assert main_window._zip_path_input.text() == str(intake.package_path)
     assert main_window._staged_package_label.toolTip() == str(intake.package_path)
-    assert "AlphaPack.zip" in main_window._staged_package_label.text()
+    assert main_window._staged_package_label.text() == str(intake.package_path)
     assert main_window._status_strip_label.text() == "Staged package for planning: AlphaPack.zip"
     assert main_window._pending_install_plan is None
 
@@ -625,7 +645,7 @@ def test_main_window_plan_install_stores_sandbox_plan_and_sets_status(
     assert build_calls["count"] == 1
     assert main_window._pending_install_plan is sandbox_plan
     assert main_window._status_strip_label.text() == review.message
-    assert main_window._findings_box.toPlainText().startswith(review.message)
+    assert main_window._plan_install_output_box.toPlainText().startswith(review.message)
 
 
 def test_main_window_plan_install_stores_real_destination_plan_and_sets_status(
@@ -648,7 +668,7 @@ def test_main_window_plan_install_stores_real_destination_plan_and_sets_status(
     assert main_window._pending_install_plan is real_plan
     assert review.requires_explicit_approval is True
     assert main_window._status_strip_label.text() == review.message
-    assert main_window._findings_box.toPlainText().startswith(review.message)
+    assert main_window._plan_install_output_box.toPlainText().startswith(review.message)
 
 
 def test_main_window_plan_install_blocked_review_clears_pending_plan_and_sets_status(
@@ -671,7 +691,7 @@ def test_main_window_plan_install_blocked_review_clears_pending_plan_and_sets_st
     assert review.allowed is False
     assert main_window._pending_install_plan is None
     assert main_window._status_strip_label.text() == review.message
-    assert main_window._findings_box.toPlainText().startswith(review.message)
+    assert main_window._plan_install_output_box.toPlainText().startswith(review.message)
 
 
 def test_main_window_run_install_uses_confirmation_flow_and_service_gate(
@@ -705,6 +725,7 @@ def test_main_window_run_install_uses_confirmation_flow_and_service_gate(
     assert question_calls["count"] == 1
     assert execute_calls == [True]
     assert main_window._status_strip_label.text() == "Execution blocked by review gate."
+    assert main_window._plan_install_output_box.toPlainText() == "Execution blocked by review gate."
 
 
 def test_main_window_real_install_confirmation_dialog_includes_review_and_summary(
@@ -799,6 +820,7 @@ def test_main_window_run_install_confirm_flow_executes_successfully(
 
     assert execute_calls == [False]
     assert main_window._status_strip_label.text() == "Sandbox install complete: 1 target(s)"
+    assert main_window._plan_install_output_box.toPlainText() == "install ok"
 
 
 def test_main_window_recovery_inspection_renders_composed_info_and_linked_history(
