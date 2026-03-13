@@ -42,13 +42,33 @@ It does not replace the thread-specific role prompt for the ARCHITECT or the EXE
 
 ## Product constraints
 
-- Preserve the sandbox-first workflow semantics.
-- No automatic downloads.
+- Preserve safe-by-default and reversible workflow semantics.
+- Sandbox remains the recommended path until managed live-install flows are fully validated.
+- No premium-bypass behavior.
 - No scraping or browser automation for downloads.
-- No install-from-search behavior.
-- No profile switching.
-- No SQLite or database introduction.
-- Preserve safe/manual workflow semantics unless a stage explicitly changes them.
+- Automatic downloads are allowed only when they use official provider mechanisms, valid user credentials, and provider-compliant flows.
+- No one-click install-from-search until provider/legal/UX rules are explicitly designed and approved.
+- No profile or instance work unless an approved roadmap stage explicitly authorizes it.
+- No database introduction without explicit architectural approval and a concrete product need.
+- Preserve user-controlled and explainable workflow semantics unless a stage explicitly changes them.
+
+---
+
+## Product roadmap discipline
+
+- Prefer product-facing workflow completion and trust features over further UI decomposition.
+- Treat destructive or real-Mods operations as requiring backup/archive and a recovery path.
+- Optimize for public-user clarity, not only power-user personal workflow speed.
+- Do not reopen paused extraction tracks without a concrete product reason.
+
+---
+
+## Provider / compliance rules
+
+- Respect provider terms and rate limits.
+- Use official APIs where available.
+- Keep authentication explicit and user-owned.
+- Do not design around paid-feature circumvention.
 
 ---
 
@@ -61,10 +81,13 @@ Default validation expectations:
 - run targeted tests for the touched seam or feature when applicable
 - run the full test suite when the stage touches shared UI composition, workflow wiring, or behavior
 - run a basic startup smoke check when UI composition or startup paths are touched
+- expect CI for changes that affect shared workflow behavior before public-release readiness work is considered complete
 
 Do not claim validation that was not actually performed.
 
 If validation could not be performed, state that clearly.
+
+Always distinguish clearly between validated and assumed behavior in the handoff.
 
 ---
 
@@ -122,6 +145,7 @@ For UI decomposition work:
 - preserve existing object names used by tests unless a stage explicitly changes the test contract
 - add structural regression guards before extracting a seam when the seam is non-trivial
 - do not treat file-size reduction as success by itself
+- prefer product-facing workflow completion over continued decomposition when both compete for the same capacity
 - pause a refactor phase when diminishing returns begin
 
 ---
@@ -152,6 +176,6 @@ A paused extraction/refactor track should be reopened only if:
 - a new seam becomes clearer and safer after other changes
 - a maintenance burden repeatedly points to one remaining mixed block
 - a testing or ownership problem creates a concrete reason to separate a surface
-- the next step has a clear boundary and acceptable rebinding risk
+- the next step has a clear boundary, acceptable rebinding risk, and a concrete product reason
 
 Do not resume extraction just because a file is still large.
