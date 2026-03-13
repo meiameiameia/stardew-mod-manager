@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTableWidget,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from sdvmm.app.shell_service import AppShellError
 from sdvmm.app.shell_service import AppShellService
 from sdvmm.app.shell_service import DiscoveryContextCorrelation
 from sdvmm.app.shell_service import INSTALL_TARGET_CONFIGURED_REAL_MODS
@@ -25,6 +27,7 @@ from sdvmm.app.shell_service import INSTALL_TARGET_SANDBOX_MODS
 from sdvmm.app.shell_service import IntakeUpdateCorrelation
 from sdvmm.app.shell_service import SCAN_TARGET_CONFIGURED_REAL_MODS
 from sdvmm.app.shell_service import SCAN_TARGET_SANDBOX_MODS
+from sdvmm.domain.install_codes import BLOCKED
 from sdvmm.domain.discovery_codes import COMPATIBLE
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_NEXUS
 from sdvmm.domain.discovery_codes import SMAPI_COMPATIBILITY_LIST_PROVIDER
@@ -429,6 +432,7 @@ def test_main_window_plan_install_stores_sandbox_plan_and_sets_status(
 ) -> None:
     sandbox_plan = _sandbox_install_plan(destination_kind=INSTALL_TARGET_SANDBOX_MODS)
     build_calls = {"count": 0}
+    review = main_window._shell_service.review_install_execution(sandbox_plan)
 
     def fake_build_install_plan(**_: object) -> SandboxInstallPlan:
         build_calls["count"] += 1
@@ -440,7 +444,8 @@ def test_main_window_plan_install_stores_sandbox_plan_and_sets_status(
 
     assert build_calls["count"] == 1
     assert main_window._pending_install_plan is sandbox_plan
-    assert main_window._status_strip_label.text() == "Install plan ready for sandbox: 1 entry(ies)"
+    assert main_window._status_strip_label.text() == review.message
+    assert main_window._findings_box.toPlainText().startswith(review.message)
 
 
 def test_main_window_plan_install_stores_real_destination_plan_and_sets_status(
@@ -449,6 +454,7 @@ def test_main_window_plan_install_stores_real_destination_plan_and_sets_status(
 ) -> None:
     real_plan = _sandbox_install_plan(destination_kind=INSTALL_TARGET_CONFIGURED_REAL_MODS)
     build_calls = {"count": 0}
+    review = main_window._shell_service.review_install_execution(real_plan)
 
     def fake_build_install_plan(**_: object) -> SandboxInstallPlan:
         build_calls["count"] += 1
@@ -460,7 +466,65 @@ def test_main_window_plan_install_stores_real_destination_plan_and_sets_status(
 
     assert build_calls["count"] == 1
     assert main_window._pending_install_plan is real_plan
-    assert main_window._status_strip_label.text() == "Install plan ready for real Mods: 1 entry(ies)"
+    assert review.requires_explicit_approval is True
+    assert main_window._status_strip_label.text() == review.message
+    assert main_window._findings_box.toPlainText().startswith(review.message)
+
+
+def test_main_window_plan_install_blocked_review_clears_pending_plan_and_sets_status(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blocked_plan = _sandbox_install_plan(
+        destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+        action=BLOCKED,
+        can_install=False,
+        warnings=("Dependency missing.",),
+    )
+    review = main_window._shell_service.review_install_execution(blocked_plan)
+
+    monkeypatch.setattr(main_window._shell_service, "build_install_plan", lambda **_: blocked_plan)
+
+    main_window._pending_install_plan = _sandbox_install_plan()
+    main_window._on_plan_install()
+
+    assert review.allowed is False
+    assert main_window._pending_install_plan is None
+    assert main_window._status_strip_label.text() == review.message
+    assert main_window._findings_box.toPlainText().startswith(review.message)
+
+
+def test_main_window_run_install_uses_confirmation_flow_and_service_gate(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_plan = _sandbox_install_plan(destination_kind=INSTALL_TARGET_CONFIGURED_REAL_MODS)
+    question_calls = {"count": 0}
+    execute_calls: list[bool] = []
+
+    def fake_question(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+        question_calls["count"] += 1
+        return QMessageBox.StandardButton.Yes
+
+    def fake_execute(
+        plan: SandboxInstallPlan,
+        *,
+        confirm_real_destination: bool = False,
+    ) -> object:
+        assert plan is real_plan
+        execute_calls.append(confirm_real_destination)
+        raise AppShellError("Execution blocked by review gate.")
+
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.critical", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
+    main_window._pending_install_plan = real_plan
+
+    main_window._on_run_install()
+
+    assert question_calls["count"] == 1
+    assert execute_calls == [True]
+    assert main_window._status_strip_label.text() == "Execution blocked by review gate."
 
 
 def test_main_window_discovery_surface_has_expected_structure(
@@ -933,6 +997,11 @@ def _archived_entry(folder_name: str, target_folder_name: str) -> ArchivedModEnt
 def _sandbox_install_plan(
     *,
     destination_kind: str = INSTALL_TARGET_SANDBOX_MODS,
+    action: str = INSTALL_NEW,
+    target_exists: bool = False,
+    archive_path: Path | None = None,
+    can_install: bool = True,
+    warnings: tuple[str, ...] = tuple(),
 ) -> SandboxInstallPlan:
     destination_mods_path = (
         Path(r"C:\Game\Mods")
@@ -951,11 +1020,11 @@ def _sandbox_install_plan(
         source_manifest_path=r"C:\Packages\Sample\manifest.json",
         source_root_path=r"C:\Packages\Sample",
         target_path=destination_mods_path / "SampleMod",
-        action=INSTALL_NEW,
-        target_exists=False,
-        archive_path=None,
-        can_install=True,
-        warnings=tuple(),
+        action=action,
+        target_exists=target_exists,
+        archive_path=archive_path,
+        can_install=can_install,
+        warnings=warnings,
     )
     return SandboxInstallPlan(
         package_path=Path(r"C:\Packages\SamplePack.zip"),
