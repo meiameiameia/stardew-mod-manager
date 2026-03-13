@@ -28,11 +28,14 @@ from sdvmm.app.shell_service import SCAN_TARGET_SANDBOX_MODS
 from sdvmm.domain.discovery_codes import COMPATIBLE
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_NEXUS
 from sdvmm.domain.discovery_codes import SMAPI_COMPATIBILITY_LIST_PROVIDER
+from sdvmm.domain.install_codes import INSTALL_NEW
 from sdvmm.domain.models import ArchivedModEntry
 from sdvmm.domain.models import DownloadsIntakeResult
 from sdvmm.domain.models import ModDiscoveryEntry
 from sdvmm.domain.models import ModDiscoveryResult
 from sdvmm.domain.models import PackageModEntry
+from sdvmm.domain.models import SandboxInstallPlan
+from sdvmm.domain.models import SandboxInstallPlanEntry
 from sdvmm.ui.main_window import MainWindow
 from sdvmm.ui.main_window import _ROLE_DISCOVERY_INDEX
 
@@ -383,6 +386,81 @@ def test_main_window_plan_install_surface_key_controls_exist(
     assert main_window._install_target_combo is install_target_combo
     assert main_window._overwrite_checkbox is overwrite_checkbox
     assert main_window._install_archive_label is install_archive_label
+
+
+def test_main_window_run_install_without_pending_plan_sets_expected_status(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.warning", lambda *args, **kwargs: None)
+    main_window._pending_install_plan = None
+
+    main_window._on_run_install()
+
+    assert main_window._status_strip_label.text() == "Create an install plan before executing install."
+
+
+def test_main_window_install_related_inputs_invalidate_pending_plan(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    install_target_combo = main_window._install_target_combo
+    install_target_next_index = 1 if install_target_combo.currentIndex() == 0 else 0
+
+    invalidation_actions = (
+        lambda: install_target_combo.setCurrentIndex(install_target_next_index),
+        lambda: main_window._zip_path_input.setText(r"C:\Packages\PlanA.zip"),
+        lambda: main_window._sandbox_mods_path_input.setText(r"C:\Sandbox\ModsA"),
+        lambda: main_window._sandbox_archive_path_input.setText(r"C:\Sandbox\ArchiveA"),
+        lambda: main_window._real_archive_path_input.setText(r"C:\Game\ArchiveA"),
+        lambda: main_window._overwrite_checkbox.setChecked(not main_window._overwrite_checkbox.isChecked()),
+    )
+
+    for action in invalidation_actions:
+        main_window._pending_install_plan = _sandbox_install_plan()
+        action()
+        qapp.processEvents()
+        assert main_window._pending_install_plan is None
+
+
+def test_main_window_plan_install_stores_sandbox_plan_and_sets_status(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sandbox_plan = _sandbox_install_plan(destination_kind=INSTALL_TARGET_SANDBOX_MODS)
+    build_calls = {"count": 0}
+
+    def fake_build_install_plan(**_: object) -> SandboxInstallPlan:
+        build_calls["count"] += 1
+        return sandbox_plan
+
+    monkeypatch.setattr(main_window._shell_service, "build_install_plan", fake_build_install_plan)
+
+    main_window._on_plan_install()
+
+    assert build_calls["count"] == 1
+    assert main_window._pending_install_plan is sandbox_plan
+    assert main_window._status_strip_label.text() == "Install plan ready for sandbox: 1 entry(ies)"
+
+
+def test_main_window_plan_install_stores_real_destination_plan_and_sets_status(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_plan = _sandbox_install_plan(destination_kind=INSTALL_TARGET_CONFIGURED_REAL_MODS)
+    build_calls = {"count": 0}
+
+    def fake_build_install_plan(**_: object) -> SandboxInstallPlan:
+        build_calls["count"] += 1
+        return real_plan
+
+    monkeypatch.setattr(main_window._shell_service, "build_install_plan", fake_build_install_plan)
+
+    main_window._on_plan_install()
+
+    assert build_calls["count"] == 1
+    assert main_window._pending_install_plan is real_plan
+    assert main_window._status_strip_label.text() == "Install plan ready for real Mods: 1 entry(ies)"
 
 
 def test_main_window_discovery_surface_has_expected_structure(
@@ -849,6 +927,45 @@ def _archived_entry(folder_name: str, target_folder_name: str) -> ArchivedModEnt
         mod_name=folder_name,
         unique_id=f"Sample.{folder_name}",
         version="1.0.0",
+    )
+
+
+def _sandbox_install_plan(
+    *,
+    destination_kind: str = INSTALL_TARGET_SANDBOX_MODS,
+) -> SandboxInstallPlan:
+    destination_mods_path = (
+        Path(r"C:\Game\Mods")
+        if destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+        else Path(r"C:\Sandbox\Mods")
+    )
+    destination_archive_path = (
+        Path(r"C:\Game\.sdvmm-real-archive")
+        if destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+        else Path(r"C:\Sandbox\.sdvmm-sandbox-archive")
+    )
+    entry = SandboxInstallPlanEntry(
+        name="Sample Mod",
+        unique_id="Sample.Mod",
+        version="1.0.0",
+        source_manifest_path=r"C:\Packages\Sample\manifest.json",
+        source_root_path=r"C:\Packages\Sample",
+        target_path=destination_mods_path / "SampleMod",
+        action=INSTALL_NEW,
+        target_exists=False,
+        archive_path=None,
+        can_install=True,
+        warnings=tuple(),
+    )
+    return SandboxInstallPlan(
+        package_path=Path(r"C:\Packages\SamplePack.zip"),
+        sandbox_mods_path=destination_mods_path,
+        sandbox_archive_path=destination_archive_path,
+        entries=(entry,),
+        package_findings=tuple(),
+        package_warnings=tuple(),
+        plan_warnings=tuple(),
+        destination_kind=destination_kind,
     )
 
 
