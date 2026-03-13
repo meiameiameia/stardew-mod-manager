@@ -227,9 +227,12 @@ class MainWindow(QMainWindow):
         self._scan_target_combo.addItem("Real Mods path (scan only)", SCAN_TARGET_CONFIGURED_REAL_MODS)
         self._scan_target_combo.addItem("Sandbox Mods path (scan only)", SCAN_TARGET_SANDBOX_MODS)
         self._intake_result_combo = QComboBox()
-        self._plan_selected_intake_button = QPushButton("Plan selected intake")
+        self._plan_selected_intake_button = QPushButton("Stage for Plan & Install")
         self._install_archive_label = QLabel("Archive path for selected install destination")
         self._install_archive_label.setObjectName("plan_install_archive_label")
+        self._staged_package_label = QLabel("No package staged for planning.")
+        self._staged_package_label.setObjectName("plan_install_staged_package_value")
+        self._staged_package_label.setWordWrap(True)
         self._install_history_combo = QComboBox()
         self._install_history_combo.setObjectName("recovery_inspection_operation_combo")
         self._inspect_recovery_button = QPushButton("Inspect recovery readiness")
@@ -722,6 +725,18 @@ class MainWindow(QMainWindow):
         )
         plan_tab_layout = plan_tab.layout()
         if isinstance(plan_tab_layout, QVBoxLayout):
+            staged_package_group = QGroupBox("Staged Package")
+            staged_package_group.setObjectName("plan_install_staged_package_group")
+            staged_package_group.setFlat(True)
+            staged_package_group.setSizePolicy(
+                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+            )
+            staged_package_layout = QVBoxLayout(staged_package_group)
+            staged_package_layout.setContentsMargins(8, 6, 8, 6)
+            staged_package_layout.setSpacing(4)
+            staged_package_layout.addWidget(self._staged_package_label)
+            plan_tab_layout.insertWidget(1, staged_package_group)
+
             recovery_group = QGroupBox("Recovery")
             recovery_group.setObjectName("recovery_inspection_group")
             recovery_group.setFlat(True)
@@ -749,6 +764,7 @@ class MainWindow(QMainWindow):
             recovery_layout.addWidget(self._recovery_output_box)
             plan_tab_layout.insertWidget(2, recovery_group)
         context_tabs.addTab(plan_tab, "Plan & Install")
+        self._plan_install_tab = plan_tab
 
         workspace_splitter.addWidget(context_tabs)
         workspace_splitter.setCollapsible(0, False)
@@ -792,6 +808,7 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(container)
         self._refresh_responsive_panel_bounds()
+        self._refresh_staged_package_preview()
         self._refresh_install_operation_selector()
 
     def _load_startup_state(self) -> None:
@@ -872,6 +889,8 @@ class MainWindow(QMainWindow):
 
     def _on_zip_path_changed(self, _: str) -> None:
         self._set_package_inspection_result_text(None)
+        self._refresh_staged_package_preview()
+        self._refresh_stage_package_action_state()
 
     def _on_browse_sandbox_mods(self) -> None:
         selected = QFileDialog.getExistingDirectory(
@@ -2314,6 +2333,7 @@ class MainWindow(QMainWindow):
         has_text = bool(text and text.strip())
         self._package_inspection_result_box.setPlainText(text or "")
         self._package_inspection_result_group.setVisible(has_text)
+        self._refresh_stage_package_action_state()
         self._refresh_responsive_panel_bounds()
 
     def _set_scan_context(self, path: Path, label: str) -> None:
@@ -2355,50 +2375,46 @@ class MainWindow(QMainWindow):
 
     def _on_plan_selected_intake(self) -> None:
         selected_index = self._selected_intake_index()
-        try:
-            intake = self._shell_service.select_intake_result(
-                intakes=self._detected_intakes,
-                selected_index=selected_index,
+        if selected_index >= 0:
+            try:
+                intake = self._shell_service.select_intake_result(
+                    intakes=self._detected_intakes,
+                    selected_index=selected_index,
+                )
+            except AppShellError as exc:
+                QMessageBox.warning(self, "No package selected", str(exc))
+                self._set_status(str(exc))
+                return
+
+            if not self._shell_service.is_actionable_intake_result(intake):
+                message = (
+                    "Selected package cannot be staged for install "
+                    f"({intake.classification})."
+                )
+                QMessageBox.information(self, "Package not actionable", message)
+                self._set_status(message)
+                return
+
+            self._stage_package_for_plan_install(
+                str(intake.package_path),
+                status_message=f"Staged package for planning: {intake.package_path.name}",
             )
-        except AppShellError as exc:
-            QMessageBox.warning(self, "No package selected", str(exc))
-            self._set_status(str(exc))
             return
 
-        self._zip_path_input.setText(str(intake.package_path))
-        if not self._shell_service.is_actionable_intake_result(intake):
-            message = (
-                "Selected package cannot be planned for install "
-                f"({intake.classification})."
+        if self._has_stageable_inspected_package():
+            package_path = self._zip_path_input.text().strip()
+            self._stage_package_for_plan_install(
+                package_path,
+                status_message=f"Staged package for planning: {Path(package_path).name}",
             )
-            self._pending_install_plan = None
-            QMessageBox.information(self, "Package not actionable", message)
-            self._set_status(message)
             return
 
-        try:
-            plan = self._shell_service.build_install_plan_from_intake(
-                intake=intake,
-                install_target=self._current_install_target(),
-                configured_mods_path_text=self._mods_path_input.text(),
-                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
-                real_archive_path_text=self._real_archive_path_input.text(),
-                sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
-                allow_overwrite=self._overwrite_checkbox.isChecked(),
-                configured_real_mods_path=None,
-                nexus_api_key_text=self._nexus_api_key_input.text(),
-                existing_config=self._config,
-            )
-        except AppShellError as exc:
-            self._pending_install_plan = None
-            QMessageBox.critical(self, "Install plan failed", str(exc))
-            self._set_status(str(exc))
-            return
-
-        self._apply_install_plan_review(plan)
+        message = "Select a detected package or inspect a zip package before staging for install."
+        QMessageBox.warning(self, "No package to stage", message)
+        self._set_status(message)
 
     def _on_intake_selection_changed(self, *_: object) -> None:
-        self._plan_selected_intake_button.setEnabled(self._selected_intake_index() >= 0)
+        self._refresh_stage_package_action_state()
         correlation = self._selected_intake_correlation()
         if correlation is not None:
             self._set_status(correlation.next_step)
@@ -2554,7 +2570,7 @@ class MainWindow(QMainWindow):
         if not self._detected_intakes:
             self._intake_result_combo.addItem("<no detected packages>", -1)
             self._intake_result_combo.setEnabled(False)
-            self._plan_selected_intake_button.setEnabled(False)
+            self._refresh_stage_package_action_state()
             self._set_filter_stats(
                 self._intake_filter_stats_label,
                 shown_count=0,
@@ -2597,7 +2613,7 @@ class MainWindow(QMainWindow):
             self._intake_result_combo.clear()
             self._intake_result_combo.addItem("<no detected packages match filter>", -1)
             self._intake_result_combo.setEnabled(False)
-            self._plan_selected_intake_button.setEnabled(False)
+            self._refresh_stage_package_action_state()
             self._set_filter_stats(
                 self._intake_filter_stats_label,
                 shown_count=0,
@@ -2610,7 +2626,7 @@ class MainWindow(QMainWindow):
             self._intake_result_combo.setCurrentIndex(selected_after)
         else:
             self._intake_result_combo.setCurrentIndex(self._intake_result_combo.count() - 1)
-        self._plan_selected_intake_button.setEnabled(self._selected_intake_index() >= 0)
+        self._refresh_stage_package_action_state()
         self._set_filter_stats(
             self._intake_filter_stats_label,
             shown_count=visible_count,
@@ -2628,6 +2644,33 @@ class MainWindow(QMainWindow):
         if idx < 0 or idx >= len(self._intake_correlations):
             return None
         return self._intake_correlations[idx]
+
+    def _has_stageable_inspected_package(self) -> bool:
+        return bool(
+            self._zip_path_input.text().strip()
+            and self._package_inspection_result_group.isVisible()
+        )
+
+    def _refresh_stage_package_action_state(self) -> None:
+        self._plan_selected_intake_button.setEnabled(
+            self._selected_intake_index() >= 0 or self._has_stageable_inspected_package()
+        )
+
+    def _refresh_staged_package_preview(self) -> None:
+        package_path = self._zip_path_input.text().strip()
+        if not package_path:
+            self._staged_package_label.setText("No package staged for planning.")
+            self._staged_package_label.setToolTip("")
+            return
+        self._staged_package_label.setText(_compact_path_text(package_path))
+        self._staged_package_label.setToolTip(package_path)
+
+    def _stage_package_for_plan_install(self, package_path: str, *, status_message: str) -> None:
+        self._zip_path_input.setText(package_path)
+        self._refresh_staged_package_preview()
+        self._refresh_stage_package_action_state()
+        self._context_tabs.setCurrentWidget(self._plan_install_tab)
+        self._set_status(status_message)
 
     def _selected_discovery_correlation(self) -> DiscoveryContextCorrelation | None:
         row = self._discovery_table.currentRow()

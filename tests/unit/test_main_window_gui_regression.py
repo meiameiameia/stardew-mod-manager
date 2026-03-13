@@ -449,18 +449,126 @@ def test_main_window_plan_install_surface_key_controls_exist(
     install_target_combo = main_window.findChild(QComboBox, "plan_install_target_combo")
     overwrite_checkbox = main_window.findChild(QCheckBox, "plan_install_overwrite_checkbox")
     install_archive_label = main_window.findChild(QLabel, "plan_install_archive_label")
+    staged_package_group = main_window.findChild(QGroupBox, "plan_install_staged_package_group")
+    staged_package_label = main_window.findChild(QLabel, "plan_install_staged_package_value")
     plan_button = main_window.findChild(QPushButton, "plan_install_plan_button")
     run_button = main_window.findChild(QPushButton, "plan_install_run_button")
 
     assert install_target_combo is not None
     assert overwrite_checkbox is not None
     assert install_archive_label is not None
+    assert staged_package_group is not None
+    assert staged_package_label is not None
     assert plan_button is not None
     assert run_button is not None
 
     assert main_window._install_target_combo is install_target_combo
     assert main_window._overwrite_checkbox is overwrite_checkbox
     assert main_window._install_archive_label is install_archive_label
+    assert main_window._staged_package_label is staged_package_label
+
+
+def test_main_window_staging_valid_intake_switches_to_plan_install_and_updates_display(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    intake = _intake_result("AlphaPack.zip", "new_install_candidate", "Alpha Mod", "Sample.Alpha")
+    packages_tab = next(
+        index
+        for index in range(main_window._context_tabs.count())
+        if main_window._context_tabs.tabText(index) == "Packages & Intake"
+    )
+    plan_tab = main_window.findChild(QWidget, "plan_install_tab")
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "build_install_plan_from_intake",
+        lambda **_: pytest.fail("Staging must not build an install plan in Packages & Intake."),
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "execute_sandbox_install_plan",
+        lambda *args, **kwargs: pytest.fail("Staging must not execute install."),
+    )
+
+    main_window._detected_intakes = (intake,)
+    main_window._intake_correlations = (_intake_correlation(intake, next_step="Review AlphaPack.zip"),)
+    main_window._refresh_intake_selector()
+    main_window._context_tabs.setCurrentIndex(packages_tab)
+    qapp.processEvents()
+
+    main_window._on_plan_selected_intake()
+    qapp.processEvents()
+
+    assert plan_tab is not None
+    assert main_window._context_tabs.currentWidget() is plan_tab
+    assert main_window._zip_path_input.text() == str(intake.package_path)
+    assert main_window._staged_package_label.toolTip() == str(intake.package_path)
+    assert "AlphaPack.zip" in main_window._staged_package_label.text()
+    assert main_window._status_strip_label.text() == "Staged package for planning: AlphaPack.zip"
+    assert main_window._pending_install_plan is None
+
+
+def test_main_window_staging_preserves_install_target_and_overwrite_settings_and_clears_stale_plan(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    intake = _intake_result("BetaPack.zip", "new_install_candidate", "Beta Mod", "Sample.Beta")
+
+    main_window._detected_intakes = (intake,)
+    main_window._intake_correlations = (_intake_correlation(intake, next_step="Review BetaPack.zip"),)
+    main_window._refresh_intake_selector()
+    main_window._set_current_install_target(INSTALL_TARGET_CONFIGURED_REAL_MODS)
+    main_window._overwrite_checkbox.setChecked(True)
+    main_window._pending_install_plan = _sandbox_install_plan()
+    qapp.processEvents()
+
+    main_window._on_plan_selected_intake()
+    qapp.processEvents()
+
+    assert main_window._current_install_target() == INSTALL_TARGET_CONFIGURED_REAL_MODS
+    assert main_window._overwrite_checkbox.isChecked() is True
+    assert main_window._zip_path_input.text() == str(intake.package_path)
+    assert main_window._pending_install_plan is None
+
+
+def test_main_window_staging_without_valid_package_surfaces_message_and_keeps_state(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warnings: list[str] = []
+    existing_plan = _sandbox_install_plan()
+    packages_tab = next(
+        index
+        for index in range(main_window._context_tabs.count())
+        if main_window._context_tabs.tabText(index) == "Packages & Intake"
+    )
+
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+
+    main_window._detected_intakes = tuple()
+    main_window._intake_correlations = tuple()
+    main_window._refresh_intake_selector()
+    main_window._zip_path_input.setText(r"C:\Packages\Existing.zip")
+    main_window._set_package_inspection_result_text(None)
+    main_window._pending_install_plan = existing_plan
+    main_window._context_tabs.setCurrentIndex(packages_tab)
+    qapp.processEvents()
+
+    main_window._on_plan_selected_intake()
+    qapp.processEvents()
+
+    expected_message = "Select a detected package or inspect a zip package before staging for install."
+    assert warnings == [expected_message]
+    assert main_window._status_strip_label.text() == expected_message
+    assert main_window._zip_path_input.text() == r"C:\Packages\Existing.zip"
+    assert main_window._pending_install_plan is existing_plan
+    assert main_window._context_tabs.tabText(main_window._context_tabs.currentIndex()) == "Packages & Intake"
 
 
 def test_main_window_run_install_without_pending_plan_sets_expected_status(
