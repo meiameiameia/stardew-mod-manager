@@ -19,12 +19,19 @@ from PySide6.QtWidgets import (
 )
 
 from sdvmm.app.shell_service import AppShellService
+from sdvmm.app.shell_service import DiscoveryContextCorrelation
 from sdvmm.app.shell_service import INSTALL_TARGET_CONFIGURED_REAL_MODS
 from sdvmm.app.shell_service import INSTALL_TARGET_SANDBOX_MODS
 from sdvmm.app.shell_service import SCAN_TARGET_CONFIGURED_REAL_MODS
 from sdvmm.app.shell_service import SCAN_TARGET_SANDBOX_MODS
+from sdvmm.domain.discovery_codes import COMPATIBLE
+from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_NEXUS
+from sdvmm.domain.discovery_codes import SMAPI_COMPATIBILITY_LIST_PROVIDER
 from sdvmm.domain.models import ArchivedModEntry
+from sdvmm.domain.models import ModDiscoveryEntry
+from sdvmm.domain.models import ModDiscoveryResult
 from sdvmm.ui.main_window import MainWindow
+from sdvmm.ui.main_window import _ROLE_DISCOVERY_INDEX
 
 
 @pytest.fixture
@@ -413,6 +420,145 @@ def test_main_window_discovery_surface_key_controls_exist(
     assert main_window._search_mods_button is discovery_search_button
 
 
+def test_main_window_discovery_render_updates_filter_stats_label(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    entries = (
+        _discovery_entry("Alpha Mod", "Sample.Alpha"),
+        _discovery_entry("Beta Mod", "Sample.Beta"),
+        _discovery_entry("Gamma Mod", "Sample.Gamma"),
+    )
+    discovery_result = ModDiscoveryResult(
+        query="sample",
+        provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+        results=entries,
+    )
+    correlations = tuple(
+        _discovery_correlation(entry, context_summary=f"Context {index + 1}")
+        for index, entry in enumerate(entries)
+    )
+
+    main_window._render_discovery_results(discovery_result, correlations)
+    qapp.processEvents()
+
+    assert main_window._discovery_filter_stats_label.text() == "3/3 shown"
+
+
+def test_main_window_discovery_filter_text_updates_visible_row_counts(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    entries = (
+        _discovery_entry("Alpha Mod", "Sample.Alpha"),
+        _discovery_entry("Beta Mod", "Sample.Beta"),
+        _discovery_entry("Gamma Mod", "Sample.Gamma"),
+    )
+    discovery_result = ModDiscoveryResult(
+        query="sample",
+        provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+        results=entries,
+    )
+    correlations = tuple(
+        _discovery_correlation(entry, context_summary=f"Context {index + 1}")
+        for index, entry in enumerate(entries)
+    )
+    main_window._render_discovery_results(discovery_result, correlations)
+    qapp.processEvents()
+
+    main_window._discovery_filter_input.setText("Beta")
+    qapp.processEvents()
+    assert main_window._discovery_filter_stats_label.text() == "1/3 shown"
+    assert _visible_row_count(main_window._discovery_table) == 1
+
+    main_window._discovery_filter_input.setText("NoSuchMod")
+    qapp.processEvents()
+    assert main_window._discovery_filter_stats_label.text() == "0/3 shown"
+    assert _visible_row_count(main_window._discovery_table) == 0
+
+    main_window._discovery_filter_input.clear()
+    qapp.processEvents()
+    assert main_window._discovery_filter_stats_label.text() == "3/3 shown"
+    assert _visible_row_count(main_window._discovery_table) == 3
+
+
+def test_main_window_selected_discovery_correlation_resolves_selected_row(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    entries = (
+        _discovery_entry("Alpha Mod", "Sample.Alpha"),
+        _discovery_entry("Beta Mod", "Sample.Beta"),
+    )
+    discovery_result = ModDiscoveryResult(
+        query="sample",
+        provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+        results=entries,
+    )
+    correlations = (
+        _discovery_correlation(entries[0], context_summary="Context Alpha"),
+        _discovery_correlation(entries[1], context_summary="Context Beta"),
+    )
+    main_window._discovery_correlations = correlations
+    main_window._render_discovery_results(discovery_result, correlations)
+    qapp.processEvents()
+
+    main_window._discovery_table.selectRow(1)
+    qapp.processEvents()
+
+    selected_row = main_window._discovery_table.currentRow()
+    selected_item = main_window._discovery_table.item(selected_row, 0)
+    assert selected_item is not None
+    selected_index = selected_item.data(_ROLE_DISCOVERY_INDEX)
+    assert isinstance(selected_index, int)
+    assert 0 <= selected_index < len(correlations)
+    assert main_window._selected_discovery_correlation() is correlations[selected_index]
+
+
+def test_main_window_open_discovered_page_no_results_sets_expected_status(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.warning", lambda *args, **kwargs: None)
+    main_window._current_discovery_result = None
+
+    main_window._on_open_discovered_page()
+
+    assert main_window._status_strip_label.text() == "Run Search mods first."
+
+
+def test_main_window_open_discovered_page_no_selection_sets_expected_status(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.warning", lambda *args, **kwargs: None)
+    entries = (
+        _discovery_entry("Alpha Mod", "Sample.Alpha"),
+        _discovery_entry("Beta Mod", "Sample.Beta"),
+    )
+    discovery_result = ModDiscoveryResult(
+        query="sample",
+        provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+        results=entries,
+    )
+    correlations = (
+        _discovery_correlation(entries[0], context_summary="Context Alpha"),
+        _discovery_correlation(entries[1], context_summary="Context Beta"),
+    )
+    main_window._current_discovery_result = discovery_result
+    main_window._discovery_correlations = correlations
+    main_window._render_discovery_results(discovery_result, correlations)
+    qapp.processEvents()
+    main_window._discovery_table.clearSelection()
+    main_window._discovery_table.setCurrentCell(-1, -1)
+    qapp.processEvents()
+
+    main_window._on_open_discovered_page()
+
+    assert main_window._status_strip_label.text() == "Select a discovery result row first."
+
+
 def test_main_window_archive_surface_has_expected_structure(
     main_window: MainWindow,
 ) -> None:
@@ -563,4 +709,42 @@ def _archived_entry(folder_name: str, target_folder_name: str) -> ArchivedModEnt
         mod_name=folder_name,
         unique_id=f"Sample.{folder_name}",
         version="1.0.0",
+    )
+
+
+def _discovery_entry(name: str, unique_id: str) -> ModDiscoveryEntry:
+    return ModDiscoveryEntry(
+        name=name,
+        unique_id=unique_id,
+        author="Sample Author",
+        provider=SMAPI_COMPATIBILITY_LIST_PROVIDER,
+        source_provider=DISCOVERY_SOURCE_NEXUS,
+        source_page_url=f"https://example.invalid/{unique_id}",
+        compatibility_state=COMPATIBLE,
+        compatibility_status="Compatible",
+        compatibility_summary="Works with current SMAPI.",
+    )
+
+
+def _discovery_correlation(
+    entry: ModDiscoveryEntry,
+    *,
+    context_summary: str,
+) -> DiscoveryContextCorrelation:
+    return DiscoveryContextCorrelation(
+        entry=entry,
+        installed_match_unique_id=None,
+        update_state=None,
+        provider_relation="linked",
+        provider_relation_note="Discovery provider relation",
+        context_summary=context_summary,
+        next_step="Review and decide",
+    )
+
+
+def _visible_row_count(table: QTableWidget) -> int:
+    return sum(
+        1
+        for row in range(table.rowCount())
+        if not table.isRowHidden(row)
     )
