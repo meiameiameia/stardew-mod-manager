@@ -1005,10 +1005,7 @@ class MainWindow(QMainWindow):
             self._set_status(str(exc))
             return
 
-        self._pending_install_plan = plan
-        self._set_details_text(build_sandbox_install_plan_text(plan))
-        destination = "real Mods" if plan.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS else "sandbox"
-        self._set_status(f"Install plan ready for {destination}: {len(plan.entries)} entry(ies)")
+        self._apply_install_plan_review(plan)
 
     def _on_run_install(self) -> None:
         if self._pending_install_plan is None:
@@ -1056,6 +1053,19 @@ class MainWindow(QMainWindow):
             self._set_status(f"Real Mods install complete: {len(result.installed_targets)} target(s)")
         else:
             self._set_status(f"Sandbox install complete: {len(result.installed_targets)} target(s)")
+
+    def _apply_install_plan_review(self, plan: SandboxInstallPlan) -> None:
+        review = self._shell_service.review_install_execution(plan)
+        self._pending_install_plan = plan if review.allowed else None
+        self._set_details_text(
+            "\n\n".join(
+                (
+                    review.message,
+                    build_sandbox_install_plan_text(plan),
+                )
+            )
+        )
+        self._set_status(review.message)
 
     def _on_check_updates(self) -> None:
         if self._current_inventory is None:
@@ -2159,19 +2169,7 @@ class MainWindow(QMainWindow):
             self._set_status(str(exc))
             return
 
-        self._pending_install_plan = plan
-        self._set_details_text(build_sandbox_install_plan_text(plan))
-        correlation = self._selected_intake_correlation()
-        if correlation is not None and correlation.matched_update_available_unique_ids:
-            self._set_status(
-                "Install plan ready for detected update package. "
-                "Review overwrite/archive actions before execution."
-            )
-            return
-        destination = "real Mods" if plan.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS else "sandbox"
-        self._set_status(
-            f"Install plan ready for {destination} from intake package: {plan.package_path.name}"
-        )
+        self._apply_install_plan_review(plan)
 
     def _on_intake_selection_changed(self, *_: object) -> None:
         self._plan_selected_intake_button.setEnabled(self._selected_intake_index() >= 0)
