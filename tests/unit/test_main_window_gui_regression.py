@@ -19,6 +19,10 @@ from PySide6.QtWidgets import (
 )
 
 from sdvmm.app.shell_service import AppShellService
+from sdvmm.app.shell_service import INSTALL_TARGET_CONFIGURED_REAL_MODS
+from sdvmm.app.shell_service import INSTALL_TARGET_SANDBOX_MODS
+from sdvmm.app.shell_service import SCAN_TARGET_CONFIGURED_REAL_MODS
+from sdvmm.app.shell_service import SCAN_TARGET_SANDBOX_MODS
 from sdvmm.ui.main_window import MainWindow
 
 
@@ -156,6 +160,143 @@ def test_main_window_top_context_value_labels_exist(main_window: MainWindow) -> 
         label = main_window.findChild(QLabel, name)
         assert label is not None
         assert label.text().strip() != ""
+
+
+def test_main_window_scan_target_updates_top_context_scan_source_label(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    scan_target_combo = main_window._scan_target_combo
+    scan_source_label = main_window.findChild(QLabel, "top_context_scan_source_value")
+
+    assert scan_source_label is not None
+
+    real_index = scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    sandbox_index = scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert real_index >= 0
+    assert sandbox_index >= 0
+
+    main_window._mods_path_input.setText(r"C:\SDV\Mods")
+    main_window._sandbox_mods_path_input.setText(r"C:\SDV\SandboxMods")
+    qapp.processEvents()
+
+    scan_target_combo.setCurrentIndex(real_index)
+    qapp.processEvents()
+    assert scan_source_label.text().startswith("REAL Mods:")
+    assert scan_source_label.toolTip() == r"C:\SDV\Mods"
+
+    scan_target_combo.setCurrentIndex(sandbox_index)
+    qapp.processEvents()
+    assert scan_source_label.text().startswith("Sandbox Mods:")
+    assert scan_source_label.toolTip() == r"C:\SDV\SandboxMods"
+
+
+def test_main_window_scan_source_preview_updates_for_active_target_path_changes(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    scan_target_combo = main_window._scan_target_combo
+    scan_source_label = main_window.findChild(QLabel, "top_context_scan_source_value")
+
+    assert scan_source_label is not None
+
+    real_index = scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    sandbox_index = scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert real_index >= 0
+    assert sandbox_index >= 0
+
+    scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(r"C:\RealModsA")
+    qapp.processEvents()
+    assert scan_source_label.text().startswith("REAL Mods:")
+    assert scan_source_label.toolTip() == r"C:\RealModsA"
+
+    scan_target_combo.setCurrentIndex(sandbox_index)
+    main_window._sandbox_mods_path_input.setText(r"C:\SandboxModsA")
+    qapp.processEvents()
+    assert scan_source_label.text().startswith("Sandbox Mods:")
+    assert scan_source_label.toolTip() == r"C:\SandboxModsA"
+
+
+def test_main_window_install_target_updates_context_archive_label_and_status(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    install_target_combo = main_window._install_target_combo
+    install_context_label = main_window.findChild(QLabel, "top_context_install_destination_value")
+    install_archive_label = main_window.findChild(QLabel, "plan_install_archive_label")
+    status_label = main_window.findChild(QLabel, "global_status_current_label")
+
+    assert install_context_label is not None
+    assert install_archive_label is not None
+    assert status_label is not None
+
+    real_index = install_target_combo.findData(INSTALL_TARGET_CONFIGURED_REAL_MODS)
+    sandbox_index = install_target_combo.findData(INSTALL_TARGET_SANDBOX_MODS)
+    assert real_index >= 0
+    assert sandbox_index >= 0
+
+    main_window._mods_path_input.setText(r"C:\Game\Mods")
+    main_window._sandbox_mods_path_input.setText(r"C:\Game\SandboxMods")
+    qapp.processEvents()
+
+    install_target_combo.setCurrentIndex(real_index)
+    qapp.processEvents()
+    install_target_combo.setCurrentIndex(sandbox_index)
+    qapp.processEvents()
+    assert install_context_label.text().startswith("Sandbox Mods:")
+    assert install_archive_label.text() == "Archive path for sandbox destination"
+    assert "sandbox Mods path" in status_label.text()
+
+    install_target_combo.setCurrentIndex(real_index)
+    qapp.processEvents()
+    assert install_context_label.text().startswith("REAL game Mods:")
+    assert install_archive_label.text() == "Archive path for real Game Mods destination"
+    assert "REAL game Mods path" in status_label.text()
+
+
+def test_main_window_sandbox_archive_autofill_only_when_empty(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    install_target_combo = main_window._install_target_combo
+    sandbox_index = install_target_combo.findData(INSTALL_TARGET_SANDBOX_MODS)
+    assert sandbox_index >= 0
+
+    install_target_combo.setCurrentIndex(sandbox_index)
+    main_window._sandbox_archive_path_input.clear()
+    main_window._sandbox_mods_path_input.setText(r"C:\Game\SandboxMods")
+    qapp.processEvents()
+
+    assert main_window._sandbox_archive_path_input.text() == r"C:\Game\.sdvmm-sandbox-archive"
+
+    main_window._sandbox_archive_path_input.setText(r"C:\Custom\SandboxArchive")
+    main_window._sandbox_mods_path_input.setText(r"D:\Other\SandboxMods")
+    qapp.processEvents()
+
+    assert main_window._sandbox_archive_path_input.text() == r"C:\Custom\SandboxArchive"
+
+
+def test_main_window_real_archive_autofill_only_when_empty(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    install_target_combo = main_window._install_target_combo
+    real_index = install_target_combo.findData(INSTALL_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+
+    install_target_combo.setCurrentIndex(real_index)
+    main_window._real_archive_path_input.clear()
+    main_window._mods_path_input.setText(r"C:\Game\Mods")
+    qapp.processEvents()
+
+    assert main_window._real_archive_path_input.text() == r"C:\Game\.sdvmm-real-archive"
+
+    main_window._real_archive_path_input.setText(r"C:\Custom\RealArchive")
+    main_window._mods_path_input.setText(r"D:\Other\Mods")
+    qapp.processEvents()
+
+    assert main_window._real_archive_path_input.text() == r"C:\Custom\RealArchive"
 
 
 def test_main_window_setup_surface_group_and_scroll_exist(main_window: MainWindow) -> None:
