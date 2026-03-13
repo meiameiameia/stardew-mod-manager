@@ -1159,7 +1159,9 @@ class MainWindow(QMainWindow):
             self._set_status(str(exc))
             return
 
+        history_before_install = self._install_operation_history
         self._refresh_install_operation_selector()
+        self._select_new_install_operation_for_recovery(history_before_install)
         self._render_inventory(result.inventory)
         self._set_plan_install_output_text(build_sandbox_install_result_text(result))
         self._set_current_scan_target(result.destination_kind)
@@ -1210,6 +1212,31 @@ class MainWindow(QMainWindow):
         self._install_history_combo.setEnabled(True)
         self._inspect_recovery_button.setEnabled(True)
         self._run_recovery_button.setEnabled(False)
+
+    def _select_new_install_operation_for_recovery(
+        self,
+        previous_operations: tuple[InstallOperationRecord, ...],
+    ) -> None:
+        previous_operation_ids = {
+            operation.operation_id
+            for operation in previous_operations
+            if operation.operation_id is not None
+        }
+        new_operation_indexes = [
+            index
+            for index, operation in enumerate(self._install_operation_history)
+            if (
+                operation.operation_id is not None
+                and operation.operation_id not in previous_operation_ids
+            )
+        ]
+        if len(new_operation_indexes) != 1:
+            return
+
+        combo_index = self._install_history_combo.findData(new_operation_indexes[0])
+        if combo_index < 0:
+            return
+        self._install_history_combo.setCurrentIndex(combo_index)
 
     def _selected_install_operation(self) -> InstallOperationRecord | None:
         index = self._install_history_combo.currentData()

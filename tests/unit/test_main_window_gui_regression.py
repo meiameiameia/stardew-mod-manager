@@ -858,6 +858,114 @@ def test_main_window_run_install_confirm_flow_executes_successfully(
     assert main_window._plan_install_output_box.toPlainText() == "install ok"
 
 
+def test_main_window_successful_install_selects_new_recorded_install_for_recovery(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sandbox_plan = _sandbox_install_plan(destination_kind=INSTALL_TARGET_SANDBOX_MODS)
+    old_operation = _install_operation_record_for_ui(operation_id="install_old")
+    new_operation = _install_operation_record_for_ui(operation_id="install_new")
+    execute_calls: list[bool] = []
+    history_call_count = {"count": 0}
+
+    def fake_question(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+        return QMessageBox.StandardButton.Yes
+
+    def fake_execute(
+        plan: SandboxInstallPlan,
+        *,
+        confirm_real_destination: bool = False,
+    ) -> object:
+        assert plan is sandbox_plan
+        execute_calls.append(confirm_real_destination)
+        return SimpleNamespace(
+            inventory=object(),
+            destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+            installed_targets=(Path(r"C:\Sandbox\Mods\SampleMod"),),
+            archived_targets=tuple(),
+            scan_context_path=Path(r"C:\Sandbox\Mods"),
+        )
+
+    def fake_load_history() -> object:
+        history_call_count["count"] += 1
+        if history_call_count["count"] == 1:
+            return SimpleNamespace(operations=(old_operation,))
+        return SimpleNamespace(operations=(old_operation, new_operation))
+
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
+    monkeypatch.setattr("sdvmm.ui.main_window.build_sandbox_install_result_text", lambda result: "install ok")
+    monkeypatch.setattr(main_window, "_render_inventory", lambda inventory: None)
+    monkeypatch.setattr(main_window, "_set_current_scan_target", lambda destination_kind: None)
+    monkeypatch.setattr(main_window, "_set_scan_context", lambda path, label: None)
+    monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
+    monkeypatch.setattr(main_window._shell_service, "load_install_operation_history", fake_load_history)
+
+    main_window._refresh_install_operation_selector()
+    main_window._pending_install_plan = sandbox_plan
+
+    main_window._on_run_install()
+
+    assert execute_calls == [False]
+    assert history_call_count["count"] == 2
+    assert main_window._status_strip_label.text() == "Sandbox install complete: 1 target(s)"
+    assert main_window._plan_install_output_box.toPlainText() == "install ok"
+    assert main_window._selected_install_operation() is new_operation
+    assert main_window._install_history_combo.currentData() == 1
+    assert main_window._inspect_recovery_button.isEnabled() is True
+    assert main_window._run_recovery_button.isEnabled() is False
+    assert main_window._current_recovery_inspection is None
+
+
+def test_main_window_successful_install_does_not_guess_when_new_record_is_ambiguous(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sandbox_plan = _sandbox_install_plan(destination_kind=INSTALL_TARGET_SANDBOX_MODS)
+    old_operation = _install_operation_record_for_ui(operation_id="install_old")
+    new_operation_a = _install_operation_record_for_ui(operation_id="install_new_a")
+    new_operation_b = _install_operation_record_for_ui(operation_id="install_new_b")
+    history_call_count = {"count": 0}
+
+    def fake_load_history() -> object:
+        history_call_count["count"] += 1
+        if history_call_count["count"] == 1:
+            return SimpleNamespace(operations=(old_operation,))
+        return SimpleNamespace(operations=(old_operation, new_operation_a, new_operation_b))
+
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.build_sandbox_install_result_text", lambda result: "install ok")
+    monkeypatch.setattr(main_window, "_render_inventory", lambda inventory: None)
+    monkeypatch.setattr(main_window, "_set_current_scan_target", lambda destination_kind: None)
+    monkeypatch.setattr(main_window, "_set_scan_context", lambda path, label: None)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "execute_sandbox_install_plan",
+        lambda plan, *, confirm_real_destination=False: SimpleNamespace(
+            inventory=object(),
+            destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+            installed_targets=(Path(r"C:\Sandbox\Mods\SampleMod"),),
+            archived_targets=tuple(),
+            scan_context_path=Path(r"C:\Sandbox\Mods"),
+        ),
+    )
+    monkeypatch.setattr(main_window._shell_service, "load_install_operation_history", fake_load_history)
+
+    main_window._refresh_install_operation_selector()
+    main_window._pending_install_plan = sandbox_plan
+
+    main_window._on_run_install()
+
+    assert history_call_count["count"] == 2
+    assert main_window._selected_install_operation() is old_operation
+    assert main_window._install_history_combo.currentData() == 0
+    assert main_window._status_strip_label.text() == "Sandbox install complete: 1 target(s)"
+    assert main_window._plan_install_output_box.toPlainText() == "install ok"
+    assert main_window._run_recovery_button.isEnabled() is False
+
+
 def test_main_window_recovery_inspection_renders_composed_info_and_linked_history(
     main_window: MainWindow,
     qapp: QApplication,
