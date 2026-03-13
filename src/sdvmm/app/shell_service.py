@@ -26,6 +26,9 @@ from sdvmm.domain.models import (
     InstallOperationEntryRecord,
     InstallOperationHistory,
     InstallOperationRecord,
+    InstallRecoveryExecutionReview,
+    InstallRecoveryExecutionReviewEntry,
+    InstallRecoveryExecutionReviewSummary,
     InstallRecoveryPlan,
     InstallRecoveryPlanEntry,
     InstallRecoveryPlanSummary,
@@ -245,6 +248,50 @@ class AppShellService:
                 involves_archive_restore=any(
                     entry.action == "restore_from_archive" and entry.recoverable
                     for entry in entries
+                ),
+                warnings=warnings,
+            ),
+        )
+
+    def review_install_recovery_execution(
+        self,
+        plan: InstallRecoveryPlan,
+    ) -> InstallRecoveryExecutionReview:
+        entries = tuple(_review_install_recovery_entry(entry) for entry in plan.entries)
+        executable_entry_count = sum(1 for entry in entries if entry.executable)
+        non_executable_entry_count = len(entries) - executable_entry_count
+        stale_entry_count = sum(
+            1
+            for entry in entries
+            if entry.decision_code in {"removal_target_missing", "restore_archive_missing"}
+        )
+        warnings = tuple(entry.message for entry in entries if not entry.executable)
+        allowed = non_executable_entry_count == 0
+        if allowed:
+            message = (
+                f"Recovery plan is ready: {executable_entry_count} "
+                f"{_entry_count_label(executable_entry_count)} can be executed."
+            )
+        else:
+            message = (
+                f"Recovery plan is blocked: {non_executable_entry_count} "
+                f"{_entry_count_label(non_executable_entry_count)} cannot be executed safely."
+            )
+        return InstallRecoveryExecutionReview(
+            plan=plan,
+            allowed=allowed,
+            decision_code=("recovery_ready" if allowed else "recovery_blocked"),
+            message=message,
+            entries=entries,
+            summary=InstallRecoveryExecutionReviewSummary(
+                total_entry_count=len(entries),
+                executable_entry_count=executable_entry_count,
+                non_executable_entry_count=non_executable_entry_count,
+                stale_entry_count=stale_entry_count,
+                involves_archive_restore=any(
+                    review_entry.plan_entry.action == "restore_from_archive"
+                    and review_entry.executable
+                    for review_entry in entries
                 ),
                 warnings=warnings,
             ),
@@ -2448,6 +2495,47 @@ def _derive_install_operation_recovery_entry(
 
 def _operation_record_contains_path(paths: tuple[Path, ...], expected: Path) -> bool:
     return any(_paths_deterministically_match(path, expected) for path in paths)
+
+
+def _review_install_recovery_entry(
+    entry: InstallRecoveryPlanEntry,
+) -> InstallRecoveryExecutionReviewEntry:
+    if entry.action == "remove_installed_target":
+        if entry.target_path.exists():
+            return InstallRecoveryExecutionReviewEntry(
+                plan_entry=entry,
+                executable=True,
+                decision_code="removal_ready",
+                message=f"Removal target exists for {entry.name}.",
+            )
+        return InstallRecoveryExecutionReviewEntry(
+            plan_entry=entry,
+            executable=False,
+            decision_code="removal_target_missing",
+            message=f"Removal target is missing for {entry.name}.",
+        )
+
+    if entry.action == "restore_from_archive":
+        if entry.archive_path is not None and entry.archive_path.exists():
+            return InstallRecoveryExecutionReviewEntry(
+                plan_entry=entry,
+                executable=True,
+                decision_code="restore_ready",
+                message=f"Archive source exists for restoring {entry.name}.",
+            )
+        return InstallRecoveryExecutionReviewEntry(
+            plan_entry=entry,
+            executable=False,
+            decision_code="restore_archive_missing",
+            message=f"Archive source is missing for restoring {entry.name}.",
+        )
+
+    return InstallRecoveryExecutionReviewEntry(
+        plan_entry=entry,
+        executable=False,
+        decision_code="entry_not_recoverable",
+        message=entry.message,
+    )
 
 
 def _build_intake_flow_messages(

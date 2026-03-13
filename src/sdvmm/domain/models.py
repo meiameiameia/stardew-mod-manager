@@ -300,6 +300,14 @@ InstallRecoveryActionCode = Literal[
     "not_recoverable",
 ]
 
+InstallRecoveryReviewDecisionCode = Literal[
+    "removal_ready",
+    "removal_target_missing",
+    "restore_ready",
+    "restore_archive_missing",
+    "entry_not_recoverable",
+]
+
 
 @dataclass(frozen=True, slots=True)
 class DownloadsIntakeResult:
@@ -447,6 +455,34 @@ class InstallRecoveryPlan:
     operation: InstallOperationRecord
     entries: tuple[InstallRecoveryPlanEntry, ...]
     summary: InstallRecoveryPlanSummary
+
+
+@dataclass(frozen=True, slots=True)
+class InstallRecoveryExecutionReviewEntry:
+    plan_entry: InstallRecoveryPlanEntry
+    executable: bool
+    decision_code: InstallRecoveryReviewDecisionCode
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class InstallRecoveryExecutionReviewSummary:
+    total_entry_count: int
+    executable_entry_count: int
+    non_executable_entry_count: int
+    stale_entry_count: int
+    involves_archive_restore: bool
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class InstallRecoveryExecutionReview:
+    plan: InstallRecoveryPlan
+    allowed: bool
+    decision_code: Literal["recovery_ready", "recovery_blocked"]
+    message: str
+    entries: tuple[InstallRecoveryExecutionReviewEntry, ...]
+    summary: InstallRecoveryExecutionReviewSummary
 
 
 @dataclass(frozen=True, slots=True)

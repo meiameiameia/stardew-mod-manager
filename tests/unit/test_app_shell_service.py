@@ -2097,6 +2097,175 @@ def test_derive_install_operation_recovery_plan_marks_unsupported_cases_non_reco
     assert "cannot be matched for restoration" in plan.entries[0].message
 
 
+def test_review_install_recovery_execution_allows_existing_remove_target(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    operation = _install_operation_record(
+        tmp_path,
+        entries=(
+            _install_operation_entry(
+                tmp_path,
+                name="New Mod",
+                unique_id="Sample.New",
+                action=INSTALL_NEW,
+            ),
+        ),
+    )
+    recovery_plan = service.derive_install_operation_recovery_plan(operation)
+    recovery_plan.entries[0].target_path.mkdir(parents=True, exist_ok=True)
+
+    review = service.review_install_recovery_execution(recovery_plan)
+
+    assert review.allowed is True
+    assert review.decision_code == "recovery_ready"
+    assert review.summary.total_entry_count == 1
+    assert review.summary.executable_entry_count == 1
+    assert review.summary.non_executable_entry_count == 0
+    assert review.summary.stale_entry_count == 0
+    assert review.entries[0].decision_code == "removal_ready"
+    assert review.entries[0].executable is True
+
+
+def test_review_install_recovery_execution_marks_missing_remove_target_stale(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    operation = _install_operation_record(
+        tmp_path,
+        entries=(
+            _install_operation_entry(
+                tmp_path,
+                name="Missing Mod",
+                unique_id="Sample.Missing",
+                action=INSTALL_NEW,
+            ),
+        ),
+    )
+    recovery_plan = service.derive_install_operation_recovery_plan(operation)
+
+    review = service.review_install_recovery_execution(recovery_plan)
+
+    assert review.allowed is False
+    assert review.decision_code == "recovery_blocked"
+    assert review.summary.executable_entry_count == 0
+    assert review.summary.non_executable_entry_count == 1
+    assert review.summary.stale_entry_count == 1
+    assert review.entries[0].decision_code == "removal_target_missing"
+    assert "Removal target is missing" in review.entries[0].message
+
+
+def test_review_install_recovery_execution_allows_existing_archive_restore_source(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    archive_path = tmp_path / "Archive" / "Existing Mod-old"
+    operation = _install_operation_record(
+        tmp_path,
+        entries=(
+            _install_operation_entry(
+                tmp_path,
+                name="Existing Mod",
+                unique_id="Sample.Exists",
+                action=OVERWRITE_WITH_ARCHIVE,
+                archive_path=archive_path,
+            ),
+        ),
+        archived_targets=(archive_path,),
+    )
+    recovery_plan = service.derive_install_operation_recovery_plan(operation)
+    archive_path.mkdir(parents=True, exist_ok=True)
+
+    review = service.review_install_recovery_execution(recovery_plan)
+
+    assert review.allowed is True
+    assert review.summary.executable_entry_count == 1
+    assert review.summary.non_executable_entry_count == 0
+    assert review.summary.stale_entry_count == 0
+    assert review.summary.involves_archive_restore is True
+    assert review.entries[0].decision_code == "restore_ready"
+    assert review.entries[0].executable is True
+
+
+def test_review_install_recovery_execution_marks_missing_archive_restore_source_stale(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    archive_path = tmp_path / "Archive" / "Missing-old"
+    operation = _install_operation_record(
+        tmp_path,
+        entries=(
+            _install_operation_entry(
+                tmp_path,
+                name="Existing Mod",
+                unique_id="Sample.Exists",
+                action=OVERWRITE_WITH_ARCHIVE,
+                archive_path=archive_path,
+            ),
+        ),
+        archived_targets=(archive_path,),
+    )
+    recovery_plan = service.derive_install_operation_recovery_plan(operation)
+
+    review = service.review_install_recovery_execution(recovery_plan)
+
+    assert review.allowed is False
+    assert review.summary.executable_entry_count == 0
+    assert review.summary.non_executable_entry_count == 1
+    assert review.summary.stale_entry_count == 1
+    assert review.entries[0].decision_code == "restore_archive_missing"
+    assert "Archive source is missing" in review.entries[0].message
+
+
+def test_review_install_recovery_execution_reports_mixed_counts_and_blocked_state(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    archive_path = tmp_path / "Archive" / "Existing Mod-old"
+    operation = _install_operation_record(
+        tmp_path,
+        entries=(
+            _install_operation_entry(
+                tmp_path,
+                name="New Mod",
+                unique_id="Sample.New",
+                action=INSTALL_NEW,
+            ),
+            _install_operation_entry(
+                tmp_path,
+                name="Existing Mod",
+                unique_id="Sample.Exists",
+                action=OVERWRITE_WITH_ARCHIVE,
+                archive_path=archive_path,
+            ),
+            _install_operation_entry(
+                tmp_path,
+                name="Unsupported Mod",
+                unique_id="Sample.Unsupported",
+                action=BLOCKED,
+                can_install=False,
+                warnings=("Dependency missing.",),
+            ),
+        ),
+        archived_targets=(archive_path,),
+    )
+    recovery_plan = service.derive_install_operation_recovery_plan(operation)
+    recovery_plan.entries[0].target_path.mkdir(parents=True, exist_ok=True)
+
+    review = service.review_install_recovery_execution(recovery_plan)
+
+    assert review.allowed is False
+    assert review.decision_code == "recovery_blocked"
+    assert review.summary.total_entry_count == 3
+    assert review.summary.executable_entry_count == 1
+    assert review.summary.non_executable_entry_count == 2
+    assert review.summary.stale_entry_count == 1
+    assert review.summary.involves_archive_restore is False
+    assert len(review.summary.warnings) == 2
+    assert any("Archive source is missing" in warning for warning in review.summary.warnings)
+    assert any("not safely recoverable" in warning for warning in review.summary.warnings)
+
+
 def test_build_sandbox_plan_defaults_archive_path_when_empty(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
     sandbox = tmp_path / "SandboxMods"
