@@ -140,6 +140,7 @@ class MainWindow(QMainWindow):
         self._intake_correlations: tuple[IntakeUpdateCorrelation, ...] = tuple()
         self._archived_entries: tuple[ArchivedModEntry, ...] = tuple()
         self._install_operation_history: tuple[InstallOperationRecord, ...] = tuple()
+        self._install_operation_display_indexes: tuple[int, ...] = tuple()
         self._current_recovery_inspection: InstallRecoveryInspectionResult | None = None
         self._guided_update_unique_ids: tuple[str, ...] = tuple()
         self._last_environment_status: GameEnvironmentStatus | None = None
@@ -235,6 +236,14 @@ class MainWindow(QMainWindow):
         self._staged_package_label.setReadOnly(True)
         self._install_history_combo = QComboBox()
         self._install_history_combo.setObjectName("recovery_inspection_operation_combo")
+        self._recovery_selection_summary_label = QLabel(
+            "Select a recorded install to inspect recovery readiness."
+        )
+        self._recovery_selection_summary_label.setObjectName(
+            "recovery_selection_summary_label"
+        )
+        self._recovery_selection_summary_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._recovery_selection_summary_label)
         self._inspect_recovery_button = QPushButton("Inspect recovery readiness")
         self._inspect_recovery_button.setObjectName("recovery_inspection_button")
         self._run_recovery_button = QPushButton("Run recovery")
@@ -818,6 +827,7 @@ class MainWindow(QMainWindow):
             self._run_recovery_button.setEnabled(False)
             recovery_controls.addWidget(self._run_recovery_button)
             recovery_layout.addLayout(recovery_controls)
+            recovery_layout.addWidget(self._recovery_selection_summary_label)
             plan_tab_layout.insertWidget(5, recovery_group)
 
             recovery_output_group = QGroupBox("Recovery Output")
@@ -1208,15 +1218,24 @@ class MainWindow(QMainWindow):
             history = self._shell_service.load_install_operation_history()
         except AppShellError:
             self._install_operation_history = tuple()
+            self._install_operation_display_indexes = tuple()
             self._current_recovery_inspection = None
             self._install_history_combo.clear()
             self._install_history_combo.addItem("<install history unavailable>")
             self._install_history_combo.setEnabled(False)
             self._inspect_recovery_button.setEnabled(False)
             self._run_recovery_button.setEnabled(False)
+            self._refresh_recovery_selection_summary()
             return
 
         self._install_operation_history = history.operations
+        self._install_operation_display_indexes = tuple(
+            sorted(
+                range(len(history.operations)),
+                key=lambda index: history.operations[index].timestamp,
+                reverse=True,
+            )
+        )
         self._current_recovery_inspection = None
         self._install_history_combo.clear()
         if not history.operations:
@@ -1224,13 +1243,16 @@ class MainWindow(QMainWindow):
             self._install_history_combo.setEnabled(False)
             self._inspect_recovery_button.setEnabled(False)
             self._run_recovery_button.setEnabled(False)
+            self._refresh_recovery_selection_summary()
             return
 
-        for index, operation in enumerate(history.operations):
+        for index in self._install_operation_display_indexes:
+            operation = history.operations[index]
             self._install_history_combo.addItem(_install_operation_selector_text(operation), index)
         self._install_history_combo.setEnabled(True)
         self._inspect_recovery_button.setEnabled(True)
         self._run_recovery_button.setEnabled(False)
+        self._refresh_recovery_selection_summary()
 
     def _select_new_install_operation_for_recovery(
         self,
@@ -1268,6 +1290,7 @@ class MainWindow(QMainWindow):
     def _on_selected_install_operation_changed(self, *_: object) -> None:
         self._current_recovery_inspection = None
         self._run_recovery_button.setEnabled(False)
+        self._refresh_recovery_selection_summary()
 
     def _on_inspect_selected_install_recovery(self) -> None:
         operation = self._selected_install_operation()
@@ -1296,6 +1319,7 @@ class MainWindow(QMainWindow):
 
         self._current_recovery_inspection = inspection
         self._run_recovery_button.setEnabled(inspection.recovery_review.allowed)
+        self._refresh_recovery_selection_summary()
         self._show_recovery_inspection_text(
             _build_install_recovery_inspection_text(inspection),
             status_message=inspection.recovery_review.message,
@@ -1371,6 +1395,48 @@ class MainWindow(QMainWindow):
         )
         self._refresh_install_operation_selector()
         self._current_recovery_inspection = None
+
+    def _refresh_recovery_selection_summary(self) -> None:
+        operation = self._selected_install_operation()
+        if operation is None:
+            if self._install_operation_history:
+                message = "Select a recorded install to inspect recovery readiness."
+            else:
+                message = "No recorded install history is available for recovery inspection."
+            self._recovery_selection_summary_label.setText(message)
+            self._recovery_selection_summary_label.setToolTip(message)
+            return
+
+        base_text = _build_install_operation_summary_text(operation)
+        if operation.operation_id is None:
+            summary = (
+                f"{base_text}\n"
+                "Legacy record: recovery inspection is unavailable because this entry has no operation ID."
+            )
+            self._recovery_selection_summary_label.setText(summary)
+            self._recovery_selection_summary_label.setToolTip(summary)
+            return
+
+        inspection = self._current_recovery_inspection
+        if inspection is None or inspection.operation.operation_id != operation.operation_id:
+            summary = (
+                f"{base_text}\n"
+                "Recovery status: not inspected yet.\n"
+                f"{_latest_recovery_outcome_summary(None)}"
+            )
+            self._recovery_selection_summary_label.setText(summary)
+            self._recovery_selection_summary_label.setToolTip(summary)
+            return
+
+        state_text = "ready to run" if inspection.recovery_review.allowed else "blocked"
+        summary = (
+            f"{base_text}\n"
+            f"Recovery status: {state_text}.\n"
+            f"{inspection.recovery_review.message}\n"
+            f"{_latest_recovery_outcome_summary(inspection.linked_recovery_history)}"
+        )
+        self._recovery_selection_summary_label.setText(summary)
+        self._recovery_selection_summary_label.setToolTip(summary)
 
     def _build_install_confirmation_message(
         self,
@@ -3036,12 +3102,35 @@ def _install_operation_selector_text(operation: InstallOperationRecord) -> str:
     destination_label = (
         "REAL Mods" if operation.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS else "Sandbox"
     )
+    package_name = operation.package_path.name
     if operation.operation_id is None:
-        return (
-            f"{operation.timestamp} | {operation.package_path.name} | "
-            f"{destination_label} | legacy record"
-        )
-    return f"{operation.timestamp} | {operation.package_path.name} | {destination_label}"
+        return f"{package_name} | {operation.timestamp} | {destination_label} | legacy record"
+    return f"{package_name} | {operation.timestamp} | {destination_label}"
+
+
+def _build_install_operation_summary_text(operation: InstallOperationRecord) -> str:
+    destination_label = (
+        "REAL Mods" if operation.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS else "Sandbox"
+    )
+    return (
+        f"Selected install: {operation.package_path.name}\n"
+        f"Recorded at: {operation.timestamp}\n"
+        f"Destination: {destination_label}"
+    )
+
+
+def _latest_recovery_outcome_summary(
+    linked_history: tuple[RecoveryExecutionRecord, ...] | None,
+) -> str:
+    if not linked_history:
+        return "Latest recovery outcome: none recorded yet."
+
+    latest_record = max(linked_history, key=lambda record: record.timestamp)
+    return (
+        "Latest recovery outcome: "
+        f"{latest_record.outcome_status} at {latest_record.timestamp} "
+        f"(executed={latest_record.executed_entry_count})."
+    )
 
 
 def _build_install_recovery_inspection_text(
