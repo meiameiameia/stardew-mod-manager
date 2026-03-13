@@ -112,6 +112,7 @@ def test_main_window_recovery_inspection_controls_exist(main_window: MainWindow)
     recovery_group = main_window.findChild(QGroupBox, "recovery_inspection_group")
     recovery_output_box = main_window.findChild(QPlainTextEdit, "recovery_local_output_box")
     recovery_combo = main_window.findChild(QComboBox, "recovery_inspection_operation_combo")
+    recovery_summary_label = main_window.findChild(QLabel, "recovery_selection_summary_label")
     recovery_button = main_window.findChild(QPushButton, "recovery_inspection_button")
     run_recovery_button = main_window.findChild(QPushButton, "recovery_execute_button")
 
@@ -121,12 +122,14 @@ def test_main_window_recovery_inspection_controls_exist(main_window: MainWindow)
     assert recovery_group is not None
     assert recovery_output_box is not None
     assert recovery_combo is not None
+    assert recovery_summary_label is not None
     assert recovery_button is not None
     assert run_recovery_button is not None
     assert recovery_group.parentWidget() is plan_content
     assert summary_tab.findChild(QGroupBox, "recovery_inspection_group") is None
     assert main_window._recovery_output_box is recovery_output_box
     assert main_window._install_history_combo is recovery_combo
+    assert main_window._recovery_selection_summary_label is recovery_summary_label
     assert main_window._inspect_recovery_button is recovery_button
     assert main_window._run_recovery_button is run_recovery_button
     assert recovery_combo.isEnabled() is False
@@ -1319,6 +1322,103 @@ def test_main_window_successful_install_does_not_guess_when_new_record_is_ambigu
     assert main_window._run_recovery_button.isEnabled() is False
 
 
+def test_main_window_recovery_selector_labels_are_human_readable_and_newest_first(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    older_operation = _install_operation_record_for_ui(
+        operation_id="install_old",
+        package_name="OlderPack.zip",
+        timestamp="2026-03-12T09:00:00Z",
+        destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+    )
+    newer_operation = _install_operation_record_for_ui(
+        operation_id="install_new",
+        package_name="NewerPack.zip",
+        timestamp="2026-03-13T11:30:00Z",
+        destination_kind=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+    )
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_install_operation_history",
+        lambda: SimpleNamespace(operations=(older_operation, newer_operation)),
+    )
+
+    main_window._refresh_install_operation_selector()
+
+    assert main_window._install_history_combo.itemText(0) == (
+        "NewerPack.zip | 2026-03-13T11:30:00Z | REAL Mods"
+    )
+    assert main_window._install_history_combo.itemText(1) == (
+        "OlderPack.zip | 2026-03-12T09:00:00Z | Sandbox"
+    )
+    assert main_window._selected_install_operation() is newer_operation
+
+
+def test_main_window_recovery_selector_labels_mark_legacy_records_clearly(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    legacy_operation = _install_operation_record_for_ui(
+        operation_id=None,
+        package_name="LegacyPack.zip",
+        timestamp="2026-03-11T08:00:00Z",
+    )
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_install_operation_history",
+        lambda: SimpleNamespace(operations=(legacy_operation,)),
+    )
+
+    main_window._refresh_install_operation_selector()
+
+    assert main_window._install_history_combo.itemText(0) == (
+        "LegacyPack.zip | 2026-03-11T08:00:00Z | Sandbox | legacy record"
+    )
+
+
+def test_main_window_recovery_summary_updates_for_selection_and_legacy_state(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    newest_operation = _install_operation_record_for_ui(
+        operation_id="install_new",
+        package_name="NewestPack.zip",
+        timestamp="2026-03-13T13:00:00Z",
+        destination_kind=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+    )
+    legacy_operation = _install_operation_record_for_ui(
+        operation_id=None,
+        package_name="LegacyPack.zip",
+        timestamp="2026-03-12T10:00:00Z",
+    )
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_install_operation_history",
+        lambda: SimpleNamespace(operations=(legacy_operation, newest_operation)),
+    )
+
+    main_window._refresh_install_operation_selector()
+    qapp.processEvents()
+
+    summary_text = main_window._recovery_selection_summary_label.text()
+    assert "Selected install: NewestPack.zip" in summary_text
+    assert "Recorded at: 2026-03-13T13:00:00Z" in summary_text
+    assert "Destination: REAL Mods" in summary_text
+    assert "Recovery status: not inspected yet." in summary_text
+
+    main_window._install_history_combo.setCurrentIndex(1)
+    qapp.processEvents()
+
+    legacy_summary = main_window._recovery_selection_summary_label.text()
+    assert "Selected install: LegacyPack.zip" in legacy_summary
+    assert "Legacy record: recovery inspection is unavailable because this entry has no operation ID." in legacy_summary
+
+
 def test_main_window_recovery_inspection_renders_composed_info_and_linked_history(
     main_window: MainWindow,
     qapp: QApplication,
@@ -1356,6 +1456,10 @@ def test_main_window_recovery_inspection_renders_composed_info_and_linked_histor
     assert "Archive restoration involved: yes" in details_text
     assert "- 2026-03-13T15:00:00Z | completed | executed=1 | removed=1 | restored=0" in details_text
     assert "- 2026-03-13T16:00:00Z | failed_partial | executed=1 | removed=1 | restored=0 | failure=Restore target already exists" in details_text
+    summary_text = main_window._recovery_selection_summary_label.text()
+    assert "Recovery status: blocked." in summary_text
+    assert inspection.recovery_review.message in summary_text
+    assert "Latest recovery outcome: failed_partial at 2026-03-13T16:00:00Z (executed=1)." in summary_text
 
 
 def test_main_window_recovery_inspection_legacy_record_shows_expected_message(
@@ -2070,23 +2174,39 @@ def _archived_entry(folder_name: str, target_folder_name: str) -> ArchivedModEnt
     )
 
 
-def _install_operation_record_for_ui(*, operation_id: str | None) -> InstallOperationRecord:
+def _install_operation_record_for_ui(
+    *,
+    operation_id: str | None,
+    package_name: str = "SamplePack.zip",
+    timestamp: str = "2026-03-13T12:00:00Z",
+    destination_kind: str = INSTALL_TARGET_SANDBOX_MODS,
+) -> InstallOperationRecord:
+    destination_mods_path = (
+        Path(r"C:\Game\Mods")
+        if destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+        else Path(r"C:\Sandbox\Mods")
+    )
+    archive_path = (
+        Path(r"C:\Game\.sdvmm-real-archive")
+        if destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+        else Path(r"C:\Sandbox\.sdvmm-sandbox-archive")
+    )
     return InstallOperationRecord(
         operation_id=operation_id,
-        timestamp="2026-03-13T12:00:00Z",
-        package_path=Path(r"C:\Packages\SamplePack.zip"),
-        destination_kind=INSTALL_TARGET_SANDBOX_MODS,
-        destination_mods_path=Path(r"C:\Sandbox\Mods"),
-        archive_path=Path(r"C:\Sandbox\.sdvmm-sandbox-archive"),
-        installed_targets=(Path(r"C:\Sandbox\Mods\SampleMod"),),
-        archived_targets=(Path(r"C:\Sandbox\.sdvmm-sandbox-archive\SampleMod-old"),),
+        timestamp=timestamp,
+        package_path=Path(r"C:\Packages") / package_name,
+        destination_kind=destination_kind,
+        destination_mods_path=destination_mods_path,
+        archive_path=archive_path,
+        installed_targets=(destination_mods_path / "SampleMod",),
+        archived_targets=(archive_path / "SampleMod-old",),
         entries=(
             InstallOperationEntryRecord(
                 name="Sample Mod",
                 unique_id="Sample.Mod",
                 version="1.0.0",
                 action=INSTALL_NEW,
-                target_path=Path(r"C:\Sandbox\Mods\SampleMod"),
+                target_path=destination_mods_path / "SampleMod",
                 archive_path=None,
                 source_manifest_path=r"C:\Packages\Sample\manifest.json",
                 source_root_path=r"C:\Packages\Sample",
