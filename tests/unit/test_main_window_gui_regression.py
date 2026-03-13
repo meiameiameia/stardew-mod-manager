@@ -564,6 +564,252 @@ def test_main_window_staging_valid_intake_switches_to_plan_install_and_updates_d
     assert main_window._pending_install_plan is None
 
 
+def test_main_window_single_guided_match_auto_selects_detected_package_and_surfaces_message(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    matched = _intake_result(
+        "MatchedPack.zip",
+        "new_install_candidate",
+        "Matched Mod",
+        "Sample.Matched",
+    )
+    other = _intake_result(
+        "OtherPack.zip",
+        "new_install_candidate",
+        "Other Mod",
+        "Sample.Other",
+    )
+
+    def fake_poll_downloads_watch(**_: object) -> object:
+        return SimpleNamespace(
+            known_zip_paths=(matched.package_path, other.package_path),
+            intakes=(matched, other),
+        )
+
+    def fake_correlate_intakes_with_updates(**_: object) -> tuple[IntakeUpdateCorrelation, ...]:
+        return (
+            _intake_correlation(
+                matched,
+                next_step="Matched package ready",
+                matched_guided_update_unique_ids=("Sample.Matched",),
+            ),
+            _intake_correlation(other, next_step="Review OtherPack.zip"),
+        )
+
+    main_window._guided_update_unique_ids = ("Sample.Matched",)
+    monkeypatch.setattr(main_window._shell_service, "poll_downloads_watch", fake_poll_downloads_watch)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "correlate_intakes_with_updates",
+        fake_correlate_intakes_with_updates,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.build_downloads_intake_text", lambda result: "watch intake")
+    monkeypatch.setattr("sdvmm.ui.main_window.build_intake_correlation_text", lambda correlations: "watch correlations")
+
+    main_window._on_watch_tick()
+
+    expected_message = "Matched update package ready to stage: MatchedPack.zip"
+    assert main_window._selected_intake_index() == 0
+    assert main_window._intake_result_combo.currentData() == 0
+    assert main_window._intake_output_box.toPlainText() == expected_message
+    assert main_window._status_strip_label.text() == expected_message
+
+
+def test_main_window_multiple_guided_matches_do_not_guess_and_surface_message(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = _intake_result(
+        "ExistingPack.zip",
+        "new_install_candidate",
+        "Existing Mod",
+        "Sample.Existing",
+    )
+    match_a = _intake_result(
+        "MatchA.zip",
+        "new_install_candidate",
+        "Match A",
+        "Sample.MatchA",
+    )
+    match_b = _intake_result(
+        "MatchB.zip",
+        "new_install_candidate",
+        "Match B",
+        "Sample.MatchB",
+    )
+
+    main_window._detected_intakes = (existing,)
+    main_window._intake_correlations = (_intake_correlation(existing, next_step="Keep ExistingPack.zip"),)
+    main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(0)
+    main_window._guided_update_unique_ids = ("Sample.MatchA", "Sample.MatchB")
+
+    def fake_poll_downloads_watch(**_: object) -> object:
+        return SimpleNamespace(
+            known_zip_paths=(existing.package_path, match_a.package_path, match_b.package_path),
+            intakes=(match_a, match_b),
+        )
+
+    def fake_correlate_intakes_with_updates(**_: object) -> tuple[IntakeUpdateCorrelation, ...]:
+        return (
+            _intake_correlation(existing, next_step="Keep ExistingPack.zip"),
+            _intake_correlation(
+                match_a,
+                next_step="Review MatchA.zip",
+                matched_guided_update_unique_ids=("Sample.MatchA",),
+            ),
+            _intake_correlation(
+                match_b,
+                next_step="Review MatchB.zip",
+                matched_guided_update_unique_ids=("Sample.MatchB",),
+            ),
+        )
+
+    monkeypatch.setattr(main_window._shell_service, "poll_downloads_watch", fake_poll_downloads_watch)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "correlate_intakes_with_updates",
+        fake_correlate_intakes_with_updates,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.build_downloads_intake_text", lambda result: "watch intake")
+    monkeypatch.setattr("sdvmm.ui.main_window.build_intake_correlation_text", lambda correlations: "watch correlations")
+
+    main_window._on_watch_tick()
+
+    expected_message = (
+        "Multiple matched update packages are ready. Choose which package to stage in Packages & Intake."
+    )
+    assert main_window._selected_intake_index() == 0
+    assert main_window._intake_result_combo.currentData() == 0
+    assert main_window._intake_output_box.toPlainText() == expected_message
+    assert main_window._status_strip_label.text() == expected_message
+
+
+def test_main_window_no_actionable_guided_match_leaves_selection_and_output_unchanged(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = _intake_result(
+        "FirstPack.zip",
+        "new_install_candidate",
+        "First Mod",
+        "Sample.First",
+    )
+    second = _intake_result(
+        "SecondPack.zip",
+        "new_install_candidate",
+        "Second Mod",
+        "Sample.Second",
+    )
+
+    main_window._detected_intakes = (first, second)
+    main_window._intake_correlations = (
+        _intake_correlation(first, next_step="Review FirstPack.zip"),
+        _intake_correlation(second, next_step="Review SecondPack.zip"),
+    )
+    main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(1)
+    main_window._set_intake_output_text("Existing intake output")
+
+    def fake_correlate_intakes_with_updates(**_: object) -> tuple[IntakeUpdateCorrelation, ...]:
+        return (
+            _intake_correlation(first, next_step="Review FirstPack.zip"),
+            _intake_correlation(
+                second,
+                next_step="Review SecondPack.zip",
+                actionable=False,
+                matched_guided_update_unique_ids=("Sample.Second",),
+            ),
+        )
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "correlate_intakes_with_updates",
+        fake_correlate_intakes_with_updates,
+    )
+
+    main_window._recompute_intake_correlations()
+
+    assert main_window._selected_intake_index() == 1
+    assert main_window._intake_result_combo.currentData() == 1
+    assert main_window._intake_output_box.toPlainText() == "Existing intake output"
+
+
+def test_main_window_staging_auto_selected_guided_match_switches_to_plan_install(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    matched = _intake_result(
+        "GuidedPack.zip",
+        "new_install_candidate",
+        "Guided Mod",
+        "Sample.Guided",
+    )
+    other = _intake_result(
+        "OtherPack.zip",
+        "new_install_candidate",
+        "Other Mod",
+        "Sample.Other",
+    )
+    packages_tab = next(
+        index
+        for index in range(main_window._context_tabs.count())
+        if main_window._context_tabs.tabText(index) == "Packages & Intake"
+    )
+    plan_tab = main_window.findChild(QWidget, "plan_install_tab")
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "build_install_plan_from_intake",
+        lambda **_: pytest.fail("Staging must not plan or execute inside Packages & Intake."),
+    )
+
+    def fake_poll_downloads_watch(**_: object) -> object:
+        return SimpleNamespace(
+            known_zip_paths=(matched.package_path, other.package_path),
+            intakes=(matched, other),
+        )
+
+    def fake_correlate_intakes_with_updates(**_: object) -> tuple[IntakeUpdateCorrelation, ...]:
+        return (
+            _intake_correlation(
+                matched,
+                next_step="Matched package ready",
+                matched_guided_update_unique_ids=("Sample.Guided",),
+            ),
+            _intake_correlation(other, next_step="Review OtherPack.zip"),
+        )
+
+    main_window._context_tabs.setCurrentIndex(packages_tab)
+    main_window._guided_update_unique_ids = ("Sample.Guided",)
+    main_window._set_current_install_target(INSTALL_TARGET_CONFIGURED_REAL_MODS)
+    main_window._overwrite_checkbox.setChecked(True)
+    main_window._pending_install_plan = _sandbox_install_plan()
+    monkeypatch.setattr(main_window._shell_service, "poll_downloads_watch", fake_poll_downloads_watch)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "correlate_intakes_with_updates",
+        fake_correlate_intakes_with_updates,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.build_downloads_intake_text", lambda result: "watch intake")
+    monkeypatch.setattr("sdvmm.ui.main_window.build_intake_correlation_text", lambda correlations: "watch correlations")
+
+    main_window._on_watch_tick()
+    main_window._on_plan_selected_intake()
+    qapp.processEvents()
+
+    assert plan_tab is not None
+    assert main_window._context_tabs.currentWidget() is plan_tab
+    assert main_window._zip_path_input.text() == str(matched.package_path)
+    assert main_window._staged_package_label.text() == str(matched.package_path)
+    assert main_window._staged_package_label.toolTip() == str(matched.package_path)
+    assert main_window._current_install_target() == INSTALL_TARGET_CONFIGURED_REAL_MODS
+    assert main_window._overwrite_checkbox.isChecked() is True
+    assert main_window._pending_install_plan is None
+
+
 def test_main_window_staging_preserves_install_target_and_overwrite_settings_and_clears_stale_plan(
     main_window: MainWindow,
     qapp: QApplication,
@@ -1886,12 +2132,15 @@ def _intake_correlation(
     intake: DownloadsIntakeResult,
     *,
     next_step: str,
+    actionable: bool = True,
+    matched_guided_update_unique_ids: tuple[str, ...] = tuple(),
+    matched_update_available_unique_ids: tuple[str, ...] = tuple(),
 ) -> IntakeUpdateCorrelation:
     return IntakeUpdateCorrelation(
         intake=intake,
-        actionable=True,
-        matched_update_available_unique_ids=tuple(),
-        matched_guided_update_unique_ids=tuple(),
+        actionable=actionable,
+        matched_update_available_unique_ids=matched_update_available_unique_ids,
+        matched_guided_update_unique_ids=matched_guided_update_unique_ids,
         summary=f"Intake summary for {intake.package_path.name}",
         next_step=next_step,
     )

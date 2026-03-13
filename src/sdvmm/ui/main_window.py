@@ -1413,6 +1413,11 @@ class MainWindow(QMainWindow):
         self._recompute_intake_correlations()
         self._refresh_discovery_correlations()
         self._set_status(f"Update check complete: {len(report.statuses)} mod(s)")
+        self._sync_guided_update_intake_handoff(
+            allow_auto_select=False,
+            update_output=False,
+            update_status=True,
+        )
 
     def _on_check_smapi_update(self) -> None:
         self._run_background_operation(
@@ -1590,6 +1595,11 @@ class MainWindow(QMainWindow):
             self._set_status(
                 f"Opened discovered page for {correlation.entry.unique_id}. Follow manual flow guidance."
             )
+            self._sync_guided_update_intake_handoff(
+                allow_auto_select=False,
+                update_output=False,
+                update_status=True,
+            )
             return
 
         self._set_status(f"Opened discovered page: {url}")
@@ -1660,6 +1670,11 @@ class MainWindow(QMainWindow):
             self._set_details_text(hint)
             self._set_status(
                 f"Opened remote page for update target {status.unique_id}. Follow guided steps."
+            )
+            self._sync_guided_update_intake_handoff(
+                allow_auto_select=False,
+                update_output=False,
+                update_status=True,
             )
             return
 
@@ -2132,6 +2147,11 @@ class MainWindow(QMainWindow):
         self._set_status(
             f"Downloads watcher started. Detected {len(initial_result.intakes)} package(s) in watched downloads."
         )
+        self._sync_guided_update_intake_handoff(
+            allow_auto_select=False,
+            update_output=False,
+            update_status=True,
+        )
 
     def _on_stop_watch(self) -> None:
         self._watch_timer.stop()
@@ -2177,6 +2197,11 @@ class MainWindow(QMainWindow):
             )
         )
         self._set_status(f"Detected {len(result.intakes)} new package(s) in watched downloads.")
+        self._sync_guided_update_intake_handoff(
+            allow_auto_select=False,
+            update_output=False,
+            update_status=True,
+        )
 
     def _render_inventory(self, inventory: ModsInventory) -> None:
         self._current_inventory = inventory
@@ -2792,6 +2817,11 @@ class MainWindow(QMainWindow):
             guided_update_unique_ids=self._guided_update_unique_ids,
         )
         self._refresh_intake_selector()
+        self._sync_guided_update_intake_handoff(
+            allow_auto_select=True,
+            update_output=True,
+            update_status=False,
+        )
 
     def _refresh_discovery_correlations(self) -> None:
         if self._current_discovery_result is None:
@@ -2811,6 +2841,48 @@ class MainWindow(QMainWindow):
         items = {canonicalize_unique_id(value): value for value in existing}
         items[canonicalize_unique_id(new_unique_id)] = new_unique_id
         return tuple(sorted(items.values(), key=str.casefold))
+
+    def _sync_guided_update_intake_handoff(
+        self,
+        *,
+        allow_auto_select: bool,
+        update_output: bool,
+        update_status: bool,
+    ) -> None:
+        actionable_matches = self._guided_actionable_intake_indexes()
+        if not actionable_matches:
+            return
+
+        message: str
+        if len(actionable_matches) == 1:
+            match_index = actionable_matches[0]
+            combo_index = self._intake_result_combo.findData(match_index)
+            if combo_index >= 0:
+                if allow_auto_select:
+                    self._intake_result_combo.setCurrentIndex(combo_index)
+                package_name = self._detected_intakes[match_index].package_path.name
+                message = f"Matched update package ready to stage: {package_name}"
+            else:
+                message = (
+                    "Matched update package found in detected packages, but the current filter hides it. "
+                    "Clear the filter or choose it manually in Packages & Intake."
+                )
+        else:
+            message = (
+                "Multiple matched update packages are ready. Choose which package to stage in Packages & Intake."
+            )
+
+        if update_output:
+            self._set_intake_output_text(message)
+        if update_status:
+            self._set_status(message)
+
+    def _guided_actionable_intake_indexes(self) -> list[int]:
+        return [
+            index
+            for index, correlation in enumerate(self._intake_correlations)
+            if correlation.actionable and correlation.matched_guided_update_unique_ids
+        ]
 
     @staticmethod
     def _scan_target_label(target: str) -> str:
