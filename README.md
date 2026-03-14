@@ -1,80 +1,147 @@
 # Stardew Mod Manager
 
-Minimal local-first foundation for scanning a Stardew Valley `Mods` directory.
+Local-first Stardew Valley mod workflow manager with a sandbox-first safety model.
 
-## Current implemented scope
+## Project status
 
-- Python 3.12 project bootstrap (`pyproject.toml`)
-- Core domain models for:
-  - app configuration
-  - manifests and dependencies
-  - scan inventory and findings
-- Services for:
-  - path validation
-  - manifest parsing
-  - deterministic Mods directory scanning (top-level + up to two nested levels)
-  - relaxed manifest compatibility for BOM and JSON-with-comments/trailing commas
-  - `UniqueId` alias support for `UniqueID`
-  - local zip package inspection (no installation/extraction into Mods)
-  - sandbox-only install preflight and explicit install execution
-  - sandbox overwrite preflight/actions with archive-first replacement
-  - initial best-effort overwrite recovery semantics (not full transactional rollback)
-  - explicit scan-target semantics (configured Mods vs sandbox Mods)
-  - explicit sandbox scan context after sandbox install actions
-  - conservative destination safety guard that blocks sandbox installs to configured real Mods path
-  - metadata/update awareness checks for installed mods (no auto download/install)
-  - discovery/search using SMAPI compatibility index data (provider/index-based, no auto download/install)
-  - provider-aware remote requirement guidance (Nexus first) kept separate from manifest dependency blocking
-  - configurable local Downloads watcher for new zip intake (no auto install)
-  - dependency preflight awareness for installed mods, inspected packages, intake results, and sandbox plans
-  - local game environment detection for game path, Mods path, and SMAPI presence
-  - persisted operational UI paths (mods/sandbox/archive/downloads/scan target)
-  - duplicate `UniqueID` and missing required dependency visibility
-  - explicit scan-entry findings (direct, nested container, multi-container, missing/invalid manifest)
-  - file-based local app-state config (`JSON`)
-- Minimal PySide6 shell for local config and scan inspection
-- Fixture-based pytest coverage for Stage 1 scan scenarios
-- Minimal dev CLI for local scan runs (`sdvmm-scan`)
+This app is currently a **working local desktop tool** with meaningful workflow coverage, but it is **not release-hardened consumer software yet**.
 
-## UniqueID comparison policy
+In this repo, **semi-automatic** means:
+- the app automates local scan, update awareness, intake detection, install planning, install execution, and recovery planning/execution
+- the user still controls critical steps like opening provider pages, downloading files manually, choosing destinations, and confirming live (real Mods) writes
 
-- Scanner preserves manifest `UniqueID` exactly as written for display.
-- Duplicate detection and dependency matching use canonical comparison keys:
-  - `strip()`
-  - `casefold()`
-- This keeps behavior deterministic when mod IDs differ only by case.
+Current maturity is best described as:
+- useful for technically literate early users and close-friend sharing
+- safety-oriented and increasingly test-covered
+- still evolving, with some UX and product-completion gaps called out below
 
-## Out of scope (not implemented)
+## Current supported workflow
 
-- SQLite or any persistence layer
-- full installer/update/rollback pipeline for real game Mods
-- profile switching implementation
-- automatic metadata/download actions
-- install directly from discovery search results
-- SMAPI diagnostics flows
-- unrestricted deep recursive scan
-- automatic install into real game Mods directory
-- full rollback/archive/history systems
+1. Scan installed mods (`configured real Mods` or `sandbox Mods` target).
+2. Check updates for installed mods.
+3. Open remote provider page for actionable rows.
+4. Download mod archives manually.
+5. Let watcher/package intake detect new zip files.
+6. Stage selected package into Plan & Install.
+7. Build plan, review safety/summary/facts, then run install.
+8. Inspect recovery readiness and run recovery from recorded install history when allowed.
 
-## Metadata notes
+Recommended path:
+- use **Sandbox Mods** as the default destination for testing
+- move to **real Mods** only when the plan is understood and explicit confirmation is accepted
 
-- Metadata checks are awareness-only; they do not download or install mods.
-- Nexus API key can be configured in the app and persisted in local app-state.
-- `SDVMM_NEXUS_API_KEY` remains supported as fallback.
-- Manifest dependency preflight is local/package truth for blocking decisions.
-- Remote/source-declared requirements are complementary guidance and are non-blocking by default.
+Live Mods safety expectations:
+- real destination requires explicit confirmation before execution
+- archive/recovery data is recorded for reversibility workflows
+- destructive operations are intentionally constrained and surfaced
 
-## Local development
+## Feature summary (current)
 
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest -q
+- **Inventory + update awareness**
+  - installed mod scan/inventory view
+  - update checks across supported providers
+  - actionable vs blocked update status, with typed diagnostics
+- **Discovery/search**
+  - discovery tab with provider/context correlation signals
+- **Packages & Intake**
+  - zip inspection
+  - watcher-based downloads intake
+  - staging handoff to Plan & Install
+- **Plan & Install**
+  - destination selection (sandbox vs real)
+  - plan review summary/explanation/facts
+  - controlled execution flow
+- **Recovery**
+  - install operation history
+  - derived recovery plan + execution review
+  - constrained recovery execution and recording
+- **Update-source intent overlay**
+  - persisted app-level intent per mod (`local/private`, `no-tracking`, `manual source association`)
+  - intent-aware diagnostics in Inventory
+  - manual association now participates in update resolution
+
+## Manual source guidance
+
+`Manual source association` is an app-level override used when a mod’s manifest update keys are missing/wrong/unhelpful.
+
+### Terms
+
+- **Provider**: which metadata source adapter to use.
+- **Source key**: provider-specific identifier used to resolve metadata.
+- **Page URL (optional)**: user-facing reference URL for context; not required for lookup.
+
+### Supported provider/source-key formats
+
+- `github`
+  - source key: `owner/repo`
+  - example: `Pathoschild/SMAPI`
+- `nexus`
+  - source key: `12345`
+  - source key: `stardewvalley:12345`
+  - source key: full Nexus mod URL
+    - example: `https://www.nexusmods.com/stardewvalley/mods/12345`
+- `json`
+  - source key: direct metadata URL
+  - example: `https://example.com/mod/update.json`
+
+### What manual source does now
+
+- persisted as a local app-state overlay record
+- used during update check as an override for lookup resolution when supported and valid
+- does **not** edit `manifest.json`
+
+## Safety and non-goals
+
+- no scraping
+- no browser automation for downloads
+- no premium-bypass behavior
+- no one-click install-from-search
+- sandbox remains the recommended testing path
+
+## Practical local usage (Windows)
+
+### 1) Create environment and install
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -U pip
+.\.venv\Scripts\python.exe -m pip install -e .[dev]
 ```
 
-## Dev entry points
+### 2) Launch UI
 
-```bash
-.venv/bin/python -m sdvmm /path/to/Mods
-.venv/bin/sdvmm-ui
+```powershell
+.\.venv\Scripts\sdvmm-ui.exe
 ```
+
+Alternative:
+
+```powershell
+.\.venv\Scripts\python.exe -m sdvmm.app.main
+```
+
+### 3) Run tests
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\unit -q
+```
+
+You can still run focused suites when iterating:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\unit\test_main_window_gui_regression.py -q
+```
+
+## Known limitations (current)
+
+- no automated provider-compliant download pipeline yet (manual download remains required)
+- no broad history browser UX; recovery is available through focused inspection/execution paths
+- no profiles/instances workflow
+- no packaging/installer/release hardening yet
+- no cross-platform polish emphasis yet (Windows workflow is the primary dev path)
+
+## Data and persistence notes
+
+- local file-based app state (JSON), no database
+- install and recovery history are recorded for audit/recovery workflows
+- update-source intent overlay is persisted separately and merged at app-layer update check time
