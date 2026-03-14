@@ -196,17 +196,15 @@ Already completed within this phase:
 
 Current recommendation:
 
-- finish the selected-row update-source diagnostics track
-- then reassess whether remaining pain is:
-  - dependency/conflict clarity
-  - update-source repair
-  - or broader UI overload
+- finish the typed update-source diagnostics contract
+- then rebind Inventory UI to typed diagnostics
+- then move persistence durability and honest history-recording behavior ahead of broader UX cleanup
 
 ### Next likely phase
 
-#### 6. Update Source Diagnostics and Repair UX
+#### 6. Update Source Diagnostics Contract
 
-This phase should distinguish:
+This phase should promote diagnostics below the UI and distinguish:
 
 - local/private mod
 - missing update key
@@ -215,23 +213,37 @@ This phase should distinguish:
 - no provider mapping
 - generic unknown source issue
 
-And then later determine whether a repair flow is needed for:
+#### 7. Persistence and Release-Safety Foundations
+
+This phase should harden:
+
+- atomic app-state and history writes
+- honest handling of history-recording failure
+- platform-correct app-state storage behavior
+
+#### 8. Update Source Association and Repair UX
+
+Only after diagnostics are reliable, this phase should determine whether users need:
 
 - manual source association
+- explicit local/private or no-tracking state
 - update-key correction
 - unsupported provider mapping explanation
 
 ### Later planned phase
 
-#### 7. UI/UX Consolidation and Release Readiness
+#### 9. Information Architecture Simplification
 
-This should happen only after the current workflow surfaces are stable enough to audit meaningfully.
+This should happen only after the current workflow surfaces are stable enough to audit meaningfully and update diagnostics no longer depend on UI heuristics.
 
 Planned audits:
 
 1. information architecture / duplicate-information audit
 2. interaction-model / redesign-necessity audit
-3. visual feedback / polish audit
+
+#### 10. Visual Feedback and Polish
+
+This phase should happen after the IA simplification decisions are made, not before.
 
 ## Current UX/Product Concerns Worth Challenging
 
@@ -308,4 +320,5 @@ A useful audit response should include:
 - whether update-source diagnostics should stay UI-level or move below the UI
 - concrete suggestions for simplifying the current UI without breaking workflow clarity
 - criteria for when the app is ready for the later UI/UX consolidation phase
+- whether persistence hardening is correctly placed early enough in the roadmap
 - the next 3-5 smallest safe increments, ordered by product value

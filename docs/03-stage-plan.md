@@ -60,28 +60,29 @@ Completed inside this phase so far:
 
 ### Current priority inside this phase
 
-Promote update-source diagnostics below the UI so the Inventory diagnostics surface stops inferring structured meaning from user-facing strings.
+Promote update-source diagnostics below the UI and bind the Inventory surface to that typed contract.
 
 That means:
 
 - add typed update-source diagnostics in the domain/app/service layer
 - bind the Inventory UI to that typed contract
 - explicitly distinguish unsupported key format, missing key, missing remote link, provider-mapping failure, and metadata lookup failure
+- eliminate UI-side reconstruction of source diagnostics from user-facing strings
 
 ## Next phase
 
-### 6A. Update Source Diagnostics Contract
+### 6. Update Source Diagnostics Contract
 
 Scope:
 
 - promote update-source diagnostics into a typed contract
-- remove UI-side string reconstruction for diagnostics
-- keep this phase read-only from the user's perspective
+- keep user-facing update-check behavior read-only
+- preserve current status/message behavior unless a small wording fix is required for correctness
 
 Validation gate:
 
 - update-source failure categories are testable below the UI
-- Inventory diagnostics are driven by structured state, not message parsing
+- Inventory diagnostics can stop being driven by message parsing in the following increment
 
 Explicitly out of scope:
 
@@ -89,11 +90,50 @@ Explicitly out of scope:
 - manual source association
 - provider automation
 
-### 6B. Update Source Repair UX
+### 7. Persistence and Release-Safety Foundations
 
 Scope:
 
-- only after diagnostics are reliable, design whether users need repair actions for unsupported or missing update sources
+- atomic app-state and history writes
+- honest handling of install/recovery history write failure
+- platform-correct app-state storage behavior
+- stronger persistence durability for the app's safety/reversibility promise
+
+Validation gate:
+
+- install and recovery history writes are crash-safer than direct overwrite
+- critical history-recording failure is not silently swallowed in paths that claim reversibility
+- state-file path behavior is appropriate for the supported desktop platform targets
+
+Explicitly out of scope:
+
+- database introduction
+- installer/signing work
+- broad release packaging
+
+### 8A. Update Source Association and Local-Private State
+
+Scope:
+
+- add a durable app-level way to distinguish:
+  - local/private mods
+  - intentionally untracked mods
+  - repairable remote-source problems
+
+Validation gate:
+
+- a repeated update check can preserve source-association intent without re-guessing from manifest metadata alone
+
+Explicitly out of scope:
+
+- automatic repair
+- automatic downloads
+
+### 8B. Update Source Repair UX
+
+Scope:
+
+- only after diagnostics and source-association state are reliable, add a narrow row-local repair flow for missing or broken update sources
 
 Validation gate:
 
@@ -106,13 +146,12 @@ Explicitly out of scope:
 
 ## Later planned phases
 
-### 7. UI/UX Consolidation and Release Readiness
+### 9. Information Architecture Simplification
 
 Planned audits:
 
 1. duplicate-information / ownership audit
-2. redesign-necessity / interaction audit
-3. visual feedback / polish audit
+2. interaction-model / redesign-necessity audit
 
 Entry criteria:
 
@@ -120,7 +159,16 @@ Entry criteria:
 - current workflow surfaces are no longer changing every few days
 - `Plan & Install` information ownership is stable enough to audit
 
-### 8. Public Release Hardening
+### 10. Visual Polish and Release UX
+
+Planned scope:
+
+- visual hierarchy cleanup
+- warning/disabled-state clarity
+- progressive disclosure where the app still feels overly dense
+- first-run and advanced-mode UX clarity
+
+### 11. Public Release Hardening
 
 Planned scope:
 
@@ -131,7 +179,7 @@ Planned scope:
 - persistence migration discipline
 - first-run/onboarding clarity
 
-### 9. Provider-Compliant Automation
+### 12. Provider-Compliant Automation
 
 Planned scope:
 
@@ -140,3 +188,4 @@ Planned scope:
 - no scraping
 - no premium bypass
 - no one-click install-from-search until explicitly designed and approved
+- not a first-release requirement
