@@ -2932,9 +2932,6 @@ class MainWindow(QMainWindow):
 
     def _on_intake_selection_changed(self, *_: object) -> None:
         self._refresh_stage_package_action_state()
-        correlation = self._selected_intake_correlation()
-        if correlation is not None:
-            self._set_status(correlation.next_step)
 
     def _apply_mods_filter(self, *_: object) -> None:
         filter_text = self._mods_filter_input.text()
