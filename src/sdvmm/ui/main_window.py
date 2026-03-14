@@ -582,6 +582,38 @@ class MainWindow(QMainWindow):
         self._refresh_intake_selector()
         self._load_startup_state()
 
+    def _build_detail_access_group(
+        self,
+        *,
+        group_object_name: str,
+        label_object_name: str,
+        guidance_text: str,
+        view_details_button: QPushButton,
+        output_toggles: tuple[QCheckBox, ...],
+    ) -> QGroupBox:
+        detail_access_group = QGroupBox("Detail Access")
+        detail_access_group.setObjectName(group_object_name)
+        detail_access_group.setFlat(True)
+        detail_access_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
+        detail_access_layout = QVBoxLayout(detail_access_group)
+        detail_access_layout.setContentsMargins(8, 6, 8, 6)
+        detail_access_layout.setSpacing(4)
+        detail_access_label = QLabel(guidance_text)
+        detail_access_label.setObjectName(label_object_name)
+        detail_access_label.setWordWrap(True)
+        _set_auxiliary_label_style(detail_access_label)
+        detail_access_layout.addWidget(detail_access_label)
+        detail_access_actions = QHBoxLayout()
+        detail_access_actions.setSpacing(6)
+        detail_access_actions.addWidget(view_details_button)
+        for toggle in output_toggles:
+            detail_access_actions.addWidget(toggle)
+        detail_access_actions.addStretch(1)
+        detail_access_layout.addLayout(detail_access_actions)
+        return detail_access_group
+
     def _build_layout(self) -> None:
         container = QWidget()
         root_layout = QVBoxLayout(container)
@@ -865,29 +897,16 @@ class MainWindow(QMainWindow):
         detected_layout.addWidget(self._plan_selected_intake_button, 1, 3)
         intake_layout.addWidget(detected_group)
 
-        intake_detail_access_group = QGroupBox("Detail Access")
-        intake_detail_access_group.setObjectName("packages_intake_detail_access_group")
-        intake_detail_access_group.setFlat(True)
-        intake_detail_access_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        intake_detail_access_group = self._build_detail_access_group(
+            group_object_name="packages_intake_detail_access_group",
+            label_object_name="packages_intake_detail_access_label",
+            guidance_text=(
+                "Use inspection and detected-package controls for primary decisions. "
+                "Open Operational Detail below for full intake narrative output."
+            ),
+            view_details_button=self._view_intake_operational_detail_button,
+            output_toggles=(self._show_local_intake_output_toggle,),
         )
-        intake_detail_access_layout = QVBoxLayout(intake_detail_access_group)
-        intake_detail_access_layout.setContentsMargins(8, 6, 8, 6)
-        intake_detail_access_layout.setSpacing(4)
-        intake_detail_access_label = QLabel(
-            "Use inspection and detected-package controls for primary decisions. "
-            "Open Operational Detail below for full intake narrative output."
-        )
-        intake_detail_access_label.setObjectName("packages_intake_detail_access_label")
-        intake_detail_access_label.setWordWrap(True)
-        _set_auxiliary_label_style(intake_detail_access_label)
-        intake_detail_access_layout.addWidget(intake_detail_access_label)
-        intake_detail_access_actions = QHBoxLayout()
-        intake_detail_access_actions.setSpacing(6)
-        intake_detail_access_actions.addWidget(self._view_intake_operational_detail_button)
-        intake_detail_access_actions.addWidget(self._show_local_intake_output_toggle)
-        intake_detail_access_actions.addStretch(1)
-        intake_detail_access_layout.addLayout(intake_detail_access_actions)
         intake_layout.addWidget(intake_detail_access_group)
 
         intake_output_group = QGroupBox("Secondary Local Intake Output")
@@ -1004,30 +1023,19 @@ class MainWindow(QMainWindow):
             plan_facts_layout.addWidget(self._plan_facts_label)
             plan_tab_layout.insertWidget(5, plan_facts_group)
 
-            detail_access_group = QGroupBox("Detail Access")
-            detail_access_group.setObjectName("plan_install_detail_access_group")
-            detail_access_group.setFlat(True)
-            detail_access_group.setSizePolicy(
-                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+            detail_access_group = self._build_detail_access_group(
+                group_object_name="plan_install_detail_access_group",
+                label_object_name="plan_install_detail_access_label",
+                guidance_text=(
+                    "Use the summary, explanation, facts, and status strip for primary decisions. "
+                    "Open Operational Detail below when you need the full narrative output."
+                ),
+                view_details_button=self._view_shared_operational_detail_button,
+                output_toggles=(
+                    self._show_local_plan_output_toggle,
+                    self._show_local_recovery_output_toggle,
+                ),
             )
-            detail_access_layout = QVBoxLayout(detail_access_group)
-            detail_access_layout.setContentsMargins(8, 6, 8, 6)
-            detail_access_layout.setSpacing(4)
-            detail_access_label = QLabel(
-                "Use the summary, explanation, facts, and status strip for primary decisions. "
-                "Open Operational Detail below when you need the full narrative output."
-            )
-            detail_access_label.setObjectName("plan_install_detail_access_label")
-            detail_access_label.setWordWrap(True)
-            _set_auxiliary_label_style(detail_access_label)
-            detail_access_layout.addWidget(detail_access_label)
-            detail_access_actions = QHBoxLayout()
-            detail_access_actions.setSpacing(6)
-            detail_access_actions.addWidget(self._view_shared_operational_detail_button)
-            detail_access_actions.addWidget(self._show_local_plan_output_toggle)
-            detail_access_actions.addWidget(self._show_local_recovery_output_toggle)
-            detail_access_actions.addStretch(1)
-            detail_access_layout.addLayout(detail_access_actions)
             plan_tab_layout.insertWidget(6, detail_access_group)
 
             plan_install_output_group = QGroupBox("Secondary Local Plan Output")
