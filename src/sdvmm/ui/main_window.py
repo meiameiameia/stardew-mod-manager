@@ -2885,6 +2885,7 @@ class MainWindow(QMainWindow):
             return
 
         name_item = self._mods_table.item(row, 0)
+        unique_id_item = self._mods_table.item(row, 1)
         status_item = self._mods_table.item(row, 4)
         if name_item is None:
             message = "Select an installed mod row to see update guidance."
@@ -2898,11 +2899,13 @@ class MainWindow(QMainWindow):
             return
 
         mod_name = name_item.text().strip() or "Selected mod"
+        selected_unique_id = unique_id_item.text().strip() if unique_id_item is not None else ""
         status_text = status_item.text().strip() if status_item is not None else ""
         status_data = name_item.data(_ROLE_MOD_UPDATE_STATUS)
         status = status_data if isinstance(status_data, ModUpdateStatus) else None
         is_actionable = name_item.data(_ROLE_UPDATE_ACTIONABLE) is True
         blocked_reason = name_item.data(_ROLE_UPDATE_BLOCK_REASON)
+        overlay_intent = self._resolve_inventory_update_source_intent(selected_unique_id)
 
         if status is None and status_text == "not_checked":
             message = (
@@ -2923,6 +2926,17 @@ class MainWindow(QMainWindow):
             self._set_open_remote_page_state(
                 enabled=True,
                 tooltip=f"Open remote page for selected mod: {mod_name}.",
+            )
+        elif overlay_intent is not None:
+            message, detail_text, tooltip = _inventory_guidance_for_update_source_intent(
+                mod_name=mod_name,
+                intent_state=overlay_intent.intent_state,
+                manual_provider=overlay_intent.manual_provider,
+            )
+            self._set_inventory_blocked_detail_text(detail_text)
+            self._set_open_remote_page_state(
+                enabled=False,
+                tooltip=tooltip,
             )
         elif isinstance(blocked_reason, str) and blocked_reason.strip():
             message = (
@@ -2948,6 +2962,14 @@ class MainWindow(QMainWindow):
 
         self._inventory_update_guidance_label.setText(message)
         self._inventory_update_guidance_label.setToolTip(message)
+
+    def _resolve_inventory_update_source_intent(self, unique_id: str):
+        if not unique_id.strip():
+            return None
+        try:
+            return self._shell_service.get_update_source_intent(unique_id)
+        except AppShellError:
+            return None
 
     def _set_inventory_blocked_detail_text(self, text: str | None) -> None:
         has_text = bool(text and text.strip())
@@ -3474,6 +3496,36 @@ def _diagnostics_text_for_update_source_code(code: str | None) -> str | None:
     if code == METADATA_SOURCE_ISSUE:
         return "Update source diagnostics: metadata source issue."
     return None
+
+
+def _inventory_guidance_for_update_source_intent(
+    *,
+    mod_name: str,
+    intent_state: str,
+    manual_provider: str | None,
+) -> tuple[str, str, str]:
+    if intent_state == "local_private_mod":
+        return (
+            f"{mod_name}: marked as local/private in saved update-source intent. "
+            "Open remote page is unavailable for this row.",
+            "Update source intent: local/private mod is recorded in app state.",
+            "Remote-page action unavailable: mod is marked local/private in saved update-source intent.",
+        )
+    if intent_state == "no_tracking":
+        return (
+            f"{mod_name}: update tracking is intentionally disabled in saved update-source intent. "
+            "Open remote page is unavailable for this row.",
+            "Update source intent: no-tracking is recorded in app state.",
+            "Remote-page action unavailable: update tracking is intentionally disabled in saved update-source intent.",
+        )
+
+    provider_text = f" (provider: {manual_provider})" if manual_provider else ""
+    return (
+        f"{mod_name}: manual source association is recorded in saved update-source intent. "
+        "Open remote page is unavailable for this row.",
+        f"Update source intent: manual source association is recorded in app state{provider_text}.",
+        "Remote-page action unavailable: manual source association is recorded in saved update-source intent.",
+    )
 
 
 def _build_plan_review_summary_text(
