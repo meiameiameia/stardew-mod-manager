@@ -97,22 +97,42 @@ def test_main_window_has_separate_status_strip_and_bottom_details_region(
     assert bottom_details_group.isVisible()
 
 
-def test_main_window_bottom_details_tabs_include_summary_and_setup(
+def test_main_window_bottom_details_tabs_include_narrative_output_and_setup(
     main_window: MainWindow,
 ) -> None:
+    bottom_details_group = main_window.findChild(QGroupBox, "bottom_details_group")
     bottom_tabs = main_window.findChild(QTabWidget, "bottom_details_tabs")
     summary_tab = main_window.findChild(QWidget, "bottom_summary_tab")
     setup_tab = main_window.findChild(QScrollArea, "bottom_setup_tab")
 
+    assert bottom_details_group is not None
     assert bottom_tabs is not None
     assert summary_tab is not None
     assert setup_tab is not None
 
     tab_labels = {bottom_tabs.tabText(index) for index in range(bottom_tabs.count())}
-    assert "Summary" in tab_labels
+    assert bottom_details_group.title() == "Operational Detail"
+    assert "Narrative Output" in tab_labels
     assert "Setup" in tab_labels
     assert bottom_tabs.indexOf(summary_tab) >= 0
     assert bottom_tabs.indexOf(setup_tab) >= 0
+
+
+def test_main_window_bottom_details_surface_explains_shared_detail_ownership(
+    main_window: MainWindow,
+) -> None:
+    summary_tab = main_window.findChild(QWidget, "bottom_summary_tab")
+    identity_label = main_window.findChild(QLabel, "bottom_detail_identity_label")
+    help_label = main_window.findChild(QLabel, "bottom_detail_help_label")
+
+    assert summary_tab is not None
+    assert identity_label is not None
+    assert help_label is not None
+    assert identity_label.parentWidget() is summary_tab
+    assert identity_label.text() == "Shared narrative output"
+    assert "full narrative output" in help_label.text()
+    assert "tab-local summaries and guidance" in help_label.text()
+    assert "deeper inspection" in help_label.text()
 
 
 def test_main_window_recovery_inspection_controls_exist(main_window: MainWindow) -> None:

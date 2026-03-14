@@ -22,7 +22,7 @@ class BottomDetailsRegion(QGroupBox):
         findings_box: QPlainTextEdit,
         setup_scroll: QScrollArea,
     ) -> None:
-        super().__init__("Details")
+        super().__init__("Operational Detail")
         self.setObjectName("bottom_details_group")
         self.setFlat(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
@@ -33,13 +33,15 @@ class BottomDetailsRegion(QGroupBox):
         summary_tab_layout.setContentsMargins(6, 4, 6, 4)
         summary_tab_layout.setSpacing(4)
 
-        summary_header_label = QLabel("Operational Detail")
+        summary_header_label = QLabel("Shared narrative output")
+        summary_header_label.setObjectName("bottom_detail_identity_label")
         _set_section_label_style(summary_header_label)
         summary_tab_layout.addWidget(summary_header_label)
 
         summary_help_label = QLabel(
-            "Use this tab for the full narrative output of the last operation. The Global Status strip above stays visible for quick status reading."
+            "Use this shared area for the full narrative output of recent workflow actions. Make primary decisions in tab-local summaries and guidance above, then open detailed output here when you need deeper inspection."
         )
+        summary_help_label.setObjectName("bottom_detail_help_label")
         summary_help_label.setWordWrap(True)
         _set_auxiliary_label_style(summary_help_label)
         summary_tab_layout.addWidget(summary_help_label)
@@ -60,7 +62,7 @@ class BottomDetailsRegion(QGroupBox):
         tabs.setDocumentMode(True)
         tabs.setUsesScrollButtons(True)
         tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        summary_tab_index = tabs.addTab(summary_tab, "Summary")
+        summary_tab_index = tabs.addTab(summary_tab, "Narrative Output")
         setup_scroll.setObjectName("bottom_setup_tab")
         setup_tab_index = tabs.addTab(setup_scroll, "Setup")
 
