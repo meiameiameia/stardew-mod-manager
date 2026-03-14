@@ -126,6 +126,9 @@ _ROLE_ARCHIVE_INDEX = int(Qt.ItemDataRole.UserRole) + 6
 _ROLE_UPDATE_ACTIONABLE = int(Qt.ItemDataRole.UserRole) + 7
 _ROLE_UPDATE_BLOCK_REASON = int(Qt.ItemDataRole.UserRole) + 8
 
+_NO_PLAN_REVIEW_SUMMARY_TEXT = "Plan review: no plan yet. Click Plan install to review."
+_NO_PLAN_REVIEW_EXPLANATION_TEXT = "Plan detail: no plan selected."
+
 
 class MainWindow(QMainWindow):
     def __init__(self, shell_service: AppShellService) -> None:
@@ -276,6 +279,12 @@ class MainWindow(QMainWindow):
         self._plan_review_summary_label.setObjectName("plan_install_review_summary_label")
         self._plan_review_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._plan_review_summary_label)
+        self._plan_review_explanation_label = QLabel(_NO_PLAN_REVIEW_EXPLANATION_TEXT)
+        self._plan_review_explanation_label.setObjectName(
+            "plan_install_review_explanation_label"
+        )
+        self._plan_review_explanation_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._plan_review_explanation_label)
 
         for control in (
             self._game_path_input,
@@ -842,6 +851,7 @@ class MainWindow(QMainWindow):
             plan_review_summary_layout.setContentsMargins(8, 6, 8, 6)
             plan_review_summary_layout.setSpacing(4)
             plan_review_summary_layout.addWidget(self._plan_review_summary_label)
+            plan_review_summary_layout.addWidget(self._plan_review_explanation_label)
             plan_tab_layout.insertWidget(4, plan_review_summary_group)
 
             plan_install_output_group = QGroupBox("Plan & Install Output")
@@ -1018,7 +1028,7 @@ class MainWindow(QMainWindow):
             "Zip packages (*.zip)",
         )
         if selected:
-            self._pending_install_plan = None
+            self._invalidate_pending_plan()
             self._zip_path_input.setText(selected)
 
     def _on_zip_path_changed(self, _: str) -> None:
@@ -1033,7 +1043,7 @@ class MainWindow(QMainWindow):
             self._sandbox_mods_path_input.text() or "",
         )
         if selected:
-            self._pending_install_plan = None
+            self._invalidate_pending_plan()
             self._sandbox_mods_path_input.setText(selected)
             if not self._sandbox_archive_path_input.text().strip():
                 self._sandbox_archive_path_input.setText(
@@ -1047,7 +1057,7 @@ class MainWindow(QMainWindow):
             self._sandbox_archive_path_input.text() or "",
         )
         if selected:
-            self._pending_install_plan = None
+            self._invalidate_pending_plan()
             self._sandbox_archive_path_input.setText(selected)
 
     def _on_browse_real_archive(self) -> None:
@@ -1057,7 +1067,7 @@ class MainWindow(QMainWindow):
             self._real_archive_path_input.text() or "",
         )
         if selected:
-            self._pending_install_plan = None
+            self._invalidate_pending_plan()
             self._real_archive_path_input.setText(selected)
 
     def _on_browse_watched_downloads(self) -> None:
@@ -1183,8 +1193,7 @@ class MainWindow(QMainWindow):
             self._set_status(str(exc))
             return
 
-        self._pending_install_plan = None
-        self._set_plan_review_summary_text("Plan review: no plan yet. Click Plan install to review.")
+        self._invalidate_pending_plan()
         inspection_text = build_package_inspection_text(inspection)
         self._set_package_inspection_result_text(inspection_text)
         self._set_intake_output_text(inspection_text)
@@ -1205,8 +1214,7 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             )
         except AppShellError as exc:
-            self._pending_install_plan = None
-            self._set_plan_review_summary_text("Plan review: no plan yet. Click Plan install to review.")
+            self._invalidate_pending_plan()
             QMessageBox.critical(self, "Install plan failed", str(exc))
             self._set_plan_install_output_text(str(exc))
             self._set_status(str(exc))
@@ -1262,6 +1270,7 @@ class MainWindow(QMainWindow):
         review = self._shell_service.review_install_execution(plan)
         self._pending_install_plan = plan if review.allowed else None
         self._set_plan_review_summary_text(_build_plan_review_summary_text(plan, review))
+        self._set_plan_review_explanation_text(_build_plan_review_explanation_text(plan, review))
         self._set_plan_install_output_text(
             "\n\n".join(
                 (
@@ -2673,6 +2682,10 @@ class MainWindow(QMainWindow):
         self._plan_review_summary_label.setText(text)
         self._plan_review_summary_label.setToolTip(text)
 
+    def _set_plan_review_explanation_text(self, text: str) -> None:
+        self._plan_review_explanation_label.setText(text)
+        self._plan_review_explanation_label.setToolTip(text)
+
     def _set_package_inspection_result_text(self, text: str | None) -> None:
         has_text = bool(text and text.strip())
         self._package_inspection_result_box.setPlainText(text or "")
@@ -2687,7 +2700,8 @@ class MainWindow(QMainWindow):
 
     def _invalidate_pending_plan(self, *_: object) -> None:
         self._pending_install_plan = None
-        self._set_plan_review_summary_text("Plan review: no plan yet. Click Plan install to review.")
+        self._set_plan_review_summary_text(_NO_PLAN_REVIEW_SUMMARY_TEXT)
+        self._set_plan_review_explanation_text(_NO_PLAN_REVIEW_EXPLANATION_TEXT)
 
     def _on_watched_path_changed(self, *_: object) -> None:
         self._known_watched_zip_paths = tuple()
@@ -2712,7 +2726,8 @@ class MainWindow(QMainWindow):
 
     def _on_install_target_changed(self, *_: object) -> None:
         self._pending_install_plan = None
-        self._set_plan_review_summary_text("Plan review: no plan yet. Click Plan install to review.")
+        self._set_plan_review_summary_text(_NO_PLAN_REVIEW_SUMMARY_TEXT)
+        self._set_plan_review_explanation_text(_NO_PLAN_REVIEW_EXPLANATION_TEXT)
         self._refresh_install_destination_preview()
         if self._current_install_target() == INSTALL_TARGET_CONFIGURED_REAL_MODS:
             self._set_status("Install destination set to REAL game Mods path. Review carefully before executing.")
@@ -3368,6 +3383,70 @@ def _build_plan_review_summary_text(
     if has_runnable_warnings:
         return "Plan review: runnable with warnings."
     return "Plan review: ready to install."
+
+
+def _build_plan_review_explanation_text(
+    plan: SandboxInstallPlan,
+    review: InstallExecutionReview,
+) -> str:
+    dependency_warning = _first_dependency_warning_text(plan)
+    package_issue = _first_package_issue_text(plan)
+    runnable_warning = _first_runnable_warning_text(plan, review)
+
+    if not review.allowed:
+        if dependency_warning:
+            return f"Dependency issue: {dependency_warning}"
+        if package_issue:
+            return f"Package issue: {package_issue}"
+        return "Blocked: this plan contains non-runnable entries."
+
+    if runnable_warning:
+        return f"Warning: {runnable_warning}"
+    return "Ready: no blocking issues detected."
+
+
+def _first_dependency_warning_text(plan: SandboxInstallPlan) -> str | None:
+    for finding in plan.dependency_findings:
+        message = str(getattr(finding, "message", "")).strip()
+        if message:
+            return message
+    for warning in plan.plan_warnings:
+        if _contains_dependency_terms(warning):
+            return warning
+    for entry in plan.entries:
+        for warning in entry.warnings:
+            if _contains_dependency_terms(warning):
+                return warning
+    return None
+
+
+def _first_package_issue_text(plan: SandboxInstallPlan) -> str | None:
+    for finding in plan.package_findings:
+        message = str(getattr(finding, "message", "")).strip()
+        if message:
+            return message
+    for warning in plan.package_warnings:
+        warning_text = warning.strip()
+        if warning_text:
+            return warning_text
+    return None
+
+
+def _first_runnable_warning_text(
+    plan: SandboxInstallPlan,
+    review: InstallExecutionReview,
+) -> str | None:
+    warning_sources = (
+        *plan.plan_warnings,
+        *plan.package_warnings,
+        *[warning for entry in plan.entries for warning in entry.warnings],
+        *review.summary.review_warnings,
+    )
+    for warning in warning_sources:
+        warning_text = warning.strip()
+        if warning_text:
+            return warning_text
+    return None
 
 
 def _contains_dependency_terms(text: str) -> bool:
