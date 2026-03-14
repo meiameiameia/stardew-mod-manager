@@ -359,6 +359,7 @@ class AppShellService:
                 removed_target_paths=tuple(),
                 restored_target_paths=tuple(),
                 failure_message=review.message,
+                critical=False,
             )
             raise AppShellError(review.message)
 
@@ -428,6 +429,7 @@ class AppShellService:
                 removed_target_paths=tuple(removed_target_paths),
                 restored_target_paths=tuple(restored_target_paths),
                 failure_message=str(exc),
+                critical=bool(removed_target_paths or restored_target_paths),
             )
             raise
 
@@ -437,6 +439,7 @@ class AppShellService:
             removed_target_paths=result.removed_target_paths,
             restored_target_paths=result.restored_target_paths,
             failure_message=None,
+            critical=True,
         )
         return result
 
@@ -2321,9 +2324,11 @@ class AppShellService:
         )
         try:
             append_install_operation_record(self._install_operation_history_file, operation)
-        except (AppStateStoreError, OSError):
-            # History recording is best-effort so a completed install does not surface as failed.
-            return
+        except (AppStateStoreError, OSError) as exc:
+            raise AppShellError(
+                "Install completed, but recording install history failed: "
+                f"{exc}. Recovery inspection depends on recorded install history."
+            ) from exc
 
     def _record_recovery_execution_attempt(
         self,
@@ -2333,6 +2338,7 @@ class AppShellService:
         removed_target_paths: tuple[Path, ...],
         restored_target_paths: tuple[Path, ...],
         failure_message: str | None,
+        critical: bool,
     ) -> None:
         record = RecoveryExecutionRecord(
             recovery_execution_id=_new_operation_id("recovery"),
@@ -2350,9 +2356,23 @@ class AppShellService:
         )
         try:
             append_recovery_execution_record(self._recovery_execution_history_file, record)
-        except (AppStateStoreError, OSError):
-            # Recovery audit recording is best-effort so it does not hide the primary recovery outcome.
-            return
+        except (AppStateStoreError, OSError) as exc:
+            if not critical:
+                # Blocked/no-op recovery paths have not changed files, so the primary
+                # review outcome remains the important signal and audit recording can
+                # remain best-effort here.
+                return
+
+            if outcome_status == "completed":
+                raise AppShellError(
+                    "Recovery completed, but recording recovery history failed: "
+                    f"{exc}. Recovery audit history is required for reversible workflow trust."
+                ) from exc
+
+            raise AppShellError(
+                "Recovery failed after filesystem changes, and recording recovery history also failed: "
+                f"{exc}. Original recovery error: {failure_message or 'unknown'}"
+            ) from exc
 
 
 def _paths_deterministically_match(path_a: Path, path_b: Path) -> bool:
