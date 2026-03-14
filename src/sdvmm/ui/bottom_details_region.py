@@ -6,7 +6,6 @@ from PySide6.QtWidgets import QCheckBox
 from PySide6.QtWidgets import QGroupBox
 from PySide6.QtWidgets import QLabel
 from PySide6.QtWidgets import QPlainTextEdit
-from PySide6.QtWidgets import QScrollArea
 from PySide6.QtWidgets import QSizePolicy
 from PySide6.QtWidgets import QVBoxLayout
 
@@ -17,7 +16,6 @@ class BottomDetailsRegion(QGroupBox):
         *,
         details_toggle: QCheckBox,
         findings_box: QPlainTextEdit,
-        setup_scroll: QScrollArea,
     ) -> None:
         super().__init__("Operational Detail")
         self.setObjectName("bottom_details_group")
@@ -44,19 +42,7 @@ class BottomDetailsRegion(QGroupBox):
         details_group.setVisible(False)
         layout.addWidget(details_group, 1)
 
-        setup_group = QGroupBox("Setup")
-        setup_group.setObjectName("bottom_setup_group")
-        setup_group.setFlat(True)
-        setup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        setup_layout = QVBoxLayout(setup_group)
-        setup_layout.setContentsMargins(6, 4, 6, 4)
-        setup_layout.setSpacing(4)
-        setup_scroll.setObjectName("bottom_setup_tab")
-        setup_layout.addWidget(setup_scroll)
-        layout.addWidget(setup_group)
-
         self.details_group = details_group
-        self.setup_group = setup_group
 
 
 def _set_label_font_weight(label: QLabel, *, bold: bool = False) -> None:

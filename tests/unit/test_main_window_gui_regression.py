@@ -97,26 +97,22 @@ def test_main_window_has_separate_status_strip_and_bottom_details_region(
     assert bottom_details_group.isVisible()
 
 
-def test_main_window_bottom_details_surface_hosts_toggle_details_and_setup(
+def test_main_window_bottom_details_surface_is_output_only(
     main_window: MainWindow,
 ) -> None:
     bottom_details_group = main_window.findChild(QGroupBox, "bottom_details_group")
     detail_identity_label = main_window.findChild(QLabel, "bottom_detail_identity_label")
     details_group = main_window.findChild(QGroupBox, "bottom_summary_details_group")
-    setup_group = main_window.findChild(QGroupBox, "bottom_setup_group")
-    setup_tab = main_window.findChild(QScrollArea, "bottom_setup_tab")
 
     assert bottom_details_group is not None
     assert detail_identity_label is not None
     assert details_group is not None
-    assert setup_group is not None
-    assert setup_tab is not None
 
     assert bottom_details_group.title() == "Operational Detail"
     assert detail_identity_label.text() == "Detailed output"
     assert details_group.parentWidget() is bottom_details_group
-    assert setup_group.parentWidget() is bottom_details_group
-    assert setup_tab.parentWidget() is setup_group
+    assert main_window.findChild(QGroupBox, "bottom_setup_group") is None
+    assert main_window.findChild(QScrollArea, "bottom_setup_tab") is None
     assert main_window.findChild(QTabWidget, "bottom_details_tabs") is None
     assert main_window.findChild(QWidget, "bottom_summary_tab") is None
 
@@ -1328,9 +1324,11 @@ def test_main_window_real_archive_autofill_only_when_empty(
 
 
 def test_main_window_setup_surface_group_and_scroll_exist(main_window: MainWindow) -> None:
+    context_tabs = main_window._context_tabs
     setup_group = main_window.findChild(QGroupBox, "setup_surface_group")
     setup_scroll = main_window._setup_scroll
 
+    assert context_tabs is not None
     assert setup_group is not None
     assert setup_scroll is not None
     assert isinstance(setup_scroll, QScrollArea)
@@ -1338,6 +1336,13 @@ def test_main_window_setup_surface_group_and_scroll_exist(main_window: MainWindo
     assert setup_scroll.widget() is setup_group
     assert main_window._setup_group is setup_group
     assert main_window._setup_scroll is setup_scroll
+    assert setup_scroll.objectName() == "setup_workspace_tab"
+    setup_index = context_tabs.indexOf(setup_scroll)
+    assert setup_index >= 0
+    assert context_tabs.widget(setup_index) is setup_scroll
+    assert "Setup" in {
+        context_tabs.tabText(index) for index in range(context_tabs.count())
+    }
 
 
 def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: MainWindow) -> None:

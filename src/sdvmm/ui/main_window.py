@@ -578,6 +578,7 @@ class MainWindow(QMainWindow):
             save_button=save_button,
             detect_environment_button=detect_environment_button,
         )
+        setup_scroll.setObjectName("setup_workspace_tab")
         self._setup_group = setup_scroll.setup_group
         self._setup_scroll = setup_scroll
 
@@ -711,6 +712,7 @@ class MainWindow(QMainWindow):
         context_tabs.setUsesScrollButtons(True)
         context_tabs.setDocumentMode(True)
         self._context_tabs = context_tabs
+        context_tabs.addTab(setup_scroll, "Setup")
 
         self._search_mods_button = QPushButton("Search mods")
         self._search_mods_button.setObjectName("discovery_search_button")
@@ -952,7 +954,6 @@ class MainWindow(QMainWindow):
         bottom_details_region = BottomDetailsRegion(
             details_toggle=self._details_toggle,
             findings_box=self._findings_box,
-            setup_scroll=setup_scroll,
         )
         self._guidance_group = bottom_details_region
         self._secondary_group = bottom_details_region
@@ -1004,6 +1005,7 @@ class MainWindow(QMainWindow):
         if state.message:
             self._set_details_text(state.message)
             self._set_status(state.message)
+            self._context_tabs.setCurrentWidget(self._setup_scroll)
 
         self._refresh_scan_context_preview()
         self._refresh_install_destination_preview()
@@ -3497,7 +3499,6 @@ class MainWindow(QMainWindow):
         flow_hint_cap = max(24, min(44, int(window_height * 0.06)))
         intake_result_cap = max(92, min(156, int(window_height * 0.20)))
         status_strip_cap = max(56, min(78, int(window_height * 0.10)))
-        setup_cap = max(126, min(172, int(window_height * 0.22)))
         details_cap = max(104, min(188, int(window_height * 0.25)))
         guidance_closed_cap = max(118, min(162, int(window_height * 0.21)))
         guidance_open_cap = max(182, min(252, int(window_height * 0.33)))
@@ -3524,9 +3525,8 @@ class MainWindow(QMainWindow):
             self._findings_box.setMaximumHeight(details_cap)
 
         if hasattr(self, "_details_group"):
-            secondary_cap = max(
-                setup_cap,
-                guidance_open_cap if self._details_group.isVisible() else guidance_closed_cap,
+            secondary_cap = (
+                guidance_open_cap if self._details_group.isVisible() else guidance_closed_cap
             )
             if hasattr(self, "_secondary_group"):
                 self._secondary_group.setMaximumHeight(secondary_cap)
