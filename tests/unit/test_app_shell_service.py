@@ -40,7 +40,7 @@ from sdvmm.domain.install_codes import BLOCKED, INSTALL_NEW, OVERWRITE_WITH_ARCH
 from sdvmm.domain.package_codes import DIRECT_SINGLE_MOD_PACKAGE
 from sdvmm.domain.update_codes import UpdateState
 from sdvmm.domain.warning_codes import INVALID_MANIFEST
-from sdvmm.services.app_state_store import save_app_config
+from sdvmm.services.app_state_store import AppStateStoreError, save_app_config
 
 
 def test_load_startup_config_returns_none_when_state_absent(tmp_path: Path) -> None:
@@ -868,6 +868,43 @@ def test_execute_sandbox_install_plan_matches_review_for_allowed_sandbox_plan(
 
     assert result.destination_kind == INSTALL_TARGET_SANDBOX_MODS
     assert result.scan_context_path == sandbox
+
+
+def test_execute_sandbox_install_plan_surfaces_install_history_recording_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    sandbox.mkdir()
+    archive_root.mkdir()
+    package = tmp_path / "single.zip"
+
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "Mod/manifest.json",
+            '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
+        )
+        archive.writestr("Mod/file.txt", "hello")
+
+    plan = service.build_sandbox_install_plan(
+        str(package),
+        str(sandbox),
+        str(archive_root),
+        allow_overwrite=False,
+    )
+    monkeypatch.setattr(
+        shell_service_module,
+        "append_install_operation_record",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AppStateStoreError("disk full")),
+    )
+
+    with pytest.raises(AppShellError, match="Install completed, but recording install history failed"):
+        service.execute_sandbox_install_plan(plan)
+
+    assert (sandbox / "Mod" / "file.txt").read_text(encoding="utf-8") == "hello"
+    assert service.load_install_operation_history().operations == tuple()
 
 
 def test_execute_real_mods_plan_with_approval_matches_review_and_executes(
@@ -2431,6 +2468,36 @@ def test_execute_install_recovery_review_blocks_when_review_not_allowed(tmp_path
     assert history.operations[0].failure_message == review.message
 
 
+def test_execute_install_recovery_review_keeps_blocked_no_op_recording_best_effort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    operation = _install_operation_record(
+        tmp_path,
+        entries=(
+            _install_operation_entry(
+                tmp_path,
+                name="Missing Mod",
+                unique_id="Sample.Missing",
+                action=INSTALL_NEW,
+            ),
+        ),
+    )
+    recovery_plan = service.derive_install_operation_recovery_plan(operation)
+    review = service.review_install_recovery_execution(recovery_plan)
+    monkeypatch.setattr(
+        shell_service_module,
+        "append_recovery_execution_record",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AppStateStoreError("disk full")),
+    )
+
+    with pytest.raises(AppShellError, match=re.escape(review.message)):
+        service.execute_install_recovery_review(review)
+
+    assert service.load_recovery_execution_history().operations == tuple()
+
+
 def test_execute_install_recovery_review_removes_existing_target(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
     destination_mods = tmp_path / "SandboxMods"
@@ -2474,6 +2541,42 @@ def test_execute_install_recovery_review_removes_existing_target(tmp_path: Path)
     assert history.operations[0].removed_target_paths == (target_path,)
     assert history.operations[0].restored_target_paths == tuple()
     assert history.operations[0].failure_message is None
+
+
+def test_execute_install_recovery_review_surfaces_completed_recording_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    destination_mods = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    destination_mods.mkdir()
+    archive_root.mkdir()
+    target_path = _create_mod(destination_mods, "New Mod", "Sample.New")
+    operation = _install_operation_record(
+        tmp_path,
+        entries=(
+            _install_operation_entry(
+                tmp_path,
+                name="New Mod",
+                unique_id="Sample.New",
+                action=INSTALL_NEW,
+            ),
+        ),
+    )
+    recovery_plan = service.derive_install_operation_recovery_plan(operation)
+    review = service.review_install_recovery_execution(recovery_plan)
+    monkeypatch.setattr(
+        shell_service_module,
+        "append_recovery_execution_record",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AppStateStoreError("disk full")),
+    )
+
+    with pytest.raises(AppShellError, match="Recovery completed, but recording recovery history failed"):
+        service.execute_install_recovery_review(review)
+
+    assert target_path.exists() is False
+    assert service.load_recovery_execution_history().operations == tuple()
 
 
 def test_execute_install_recovery_review_restores_existing_archive_source(tmp_path: Path) -> None:
@@ -2618,6 +2721,59 @@ def test_execute_install_recovery_review_records_partial_failure_after_first_act
     assert history.operations[0].restored_target_paths == tuple()
     assert history.operations[0].failure_message is not None
     assert "Restore target already exists" in history.operations[0].failure_message
+
+
+def test_execute_install_recovery_review_surfaces_partial_change_recording_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    destination_mods = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    destination_mods.mkdir()
+    archive_root.mkdir()
+    removable_target = _create_mod(destination_mods, "New Mod", "Sample.New")
+    archived_path = _create_archived_entry(
+        archive_root / "Existing Mod__sdvmm_archive_001",
+        unique_id="Sample.Exists",
+        version="1.0.0",
+    )
+    _create_mod(destination_mods, "Existing Mod", "Sample.DestinationConflict")
+    operation = _install_operation_record(
+        tmp_path,
+        entries=(
+            _install_operation_entry(
+                tmp_path,
+                name="New Mod",
+                unique_id="Sample.New",
+                action=INSTALL_NEW,
+            ),
+            _install_operation_entry(
+                tmp_path,
+                name="Existing Mod",
+                unique_id="Sample.Exists",
+                action=OVERWRITE_WITH_ARCHIVE,
+                archive_path=archived_path,
+            ),
+        ),
+    )
+    recovery_plan = service.derive_install_operation_recovery_plan(operation)
+    review = service.review_install_recovery_execution(recovery_plan)
+    monkeypatch.setattr(
+        shell_service_module,
+        "append_recovery_execution_record",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AppStateStoreError("disk full")),
+    )
+
+    with pytest.raises(
+        AppShellError,
+        match="Recovery failed after filesystem changes, and recording recovery history also failed",
+    ):
+        service.execute_install_recovery_review(review)
+
+    assert removable_target.exists() is False
+    assert archived_path.exists() is True
+    assert service.load_recovery_execution_history().operations == tuple()
 
 
 def test_build_sandbox_plan_defaults_archive_path_when_empty(tmp_path: Path) -> None:
