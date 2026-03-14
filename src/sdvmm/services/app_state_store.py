@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from json import JSONDecodeError
 from pathlib import Path
+import tempfile
 
 from sdvmm.domain.models import (
     AppConfig,
@@ -97,7 +99,7 @@ def save_app_config(state_file: Path, config: AppConfig) -> None:
     }
 
     state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_json_atomic(state_file, payload)
 
 
 def install_operation_history_file(state_file: Path) -> Path:
@@ -138,7 +140,7 @@ def save_install_operation_history(
     }
 
     history_file.parent.mkdir(parents=True, exist_ok=True)
-    history_file.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_json_atomic(history_file, payload)
 
 
 def append_install_operation_record(
@@ -185,7 +187,7 @@ def save_recovery_execution_history(
     }
 
     history_file.parent.mkdir(parents=True, exist_ok=True)
-    history_file.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_json_atomic(history_file, payload)
 
 
 def append_recovery_execution_record(
@@ -209,6 +211,41 @@ def _load_json_object(*, history_file: Path, subject: str) -> dict[str, object]:
     if not isinstance(raw, dict):
         raise AppStateStoreError(f"{subject.capitalize()} root must be a JSON object")
     return raw
+
+
+def _write_json_atomic(target_file: Path, payload: dict[str, object]) -> None:
+    serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    _write_text_atomic(target_file, serialized)
+
+
+def _write_text_atomic(target_file: Path, content: str) -> None:
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="",
+            dir=target_file.parent,
+            prefix=f".{target_file.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+
+        os.replace(temp_path, target_file)
+    except OSError as exc:
+        raise AppStateStoreError(f"Could not write file atomically: {exc}") from exc
+    finally:
+        if temp_path is not None and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
 
 
 def _serialize_install_operation(operation: InstallOperationRecord) -> dict[str, object]:

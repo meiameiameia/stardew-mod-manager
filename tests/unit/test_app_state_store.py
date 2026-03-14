@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import sdvmm.services.app_state_store as app_state_store
 
 from sdvmm.domain.models import (
     AppConfig,
@@ -61,6 +62,71 @@ def test_save_and_load_app_config_round_trip(tmp_path: Path) -> None:
     assert payload["app_config"]["real_archive_path"] == str(config.real_archive_path)
     assert payload["app_config"]["nexus_api_key"] == "test-nexus-key"
     assert payload["app_config"]["install_target"] == "configured_real_mods"
+
+
+@pytest.mark.parametrize(
+    ("target_name", "save_operation"),
+    (
+        (
+            "app-state.json",
+            lambda tmp_path, target_file: save_app_config(
+                target_file,
+                AppConfig(
+                    game_path=Path("/games/Stardew Valley"),
+                    mods_path=Path("/games/Stardew Valley/Mods"),
+                    app_data_path=Path("/home/user/.local/share/sdvmm"),
+                    sandbox_mods_path=Path("/tmp/Sandbox/Mods"),
+                    sandbox_archive_path=Path("/tmp/Sandbox/.archive"),
+                    real_archive_path=Path("/games/Stardew Valley/Mods/.sdvmm-archive"),
+                    watched_downloads_path=Path("/tmp/Downloads"),
+                    nexus_api_key="test-nexus-key",
+                    scan_target="sandbox_mods",
+                    install_target="configured_real_mods",
+                ),
+            ),
+        ),
+        (
+            INSTALL_OPERATION_HISTORY_FILENAME,
+            lambda tmp_path, target_file: save_install_operation_history(
+                target_file,
+                InstallOperationHistory(operations=(_install_operation_record(tmp_path),)),
+            ),
+        ),
+        (
+            RECOVERY_EXECUTION_HISTORY_FILENAME,
+            lambda tmp_path, target_file: save_recovery_execution_history(
+                target_file,
+                RecoveryExecutionHistory(operations=(_recovery_execution_record(tmp_path),)),
+            ),
+        ),
+    ),
+)
+def test_save_operations_write_atomically_in_target_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target_name: str,
+    save_operation,
+) -> None:
+    target_file = tmp_path / "state" / target_name
+    replace_calls: list[tuple[Path, Path]] = []
+    original_replace = app_state_store.os.replace
+
+    def record_replace(source: str | Path, target: str | Path) -> None:
+        source_path = Path(source)
+        target_path = Path(target)
+        replace_calls.append((source_path, target_path))
+        assert source_path.parent == target_file.parent
+        assert target_path == target_file
+        original_replace(source, target)
+
+    monkeypatch.setattr(app_state_store.os, "replace", record_replace)
+
+    save_operation(tmp_path, target_file)
+
+    assert len(replace_calls) == 1
+    assert replace_calls[0][1] == target_file
+    assert target_file.exists()
+    assert sorted(path.name for path in target_file.parent.iterdir()) == [target_file.name]
 
 
 def test_load_app_config_returns_none_when_file_does_not_exist(tmp_path: Path) -> None:
