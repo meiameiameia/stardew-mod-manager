@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,6 +36,7 @@ from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_NEXUS
 from sdvmm.domain.discovery_codes import SMAPI_COMPATIBILITY_LIST_PROVIDER
 from sdvmm.domain.install_codes import INSTALL_NEW, OVERWRITE_WITH_ARCHIVE
 from sdvmm.domain.package_codes import INVALID_MANIFEST_PACKAGE
+from sdvmm.domain.update_codes import MISSING_UPDATE_KEY, UNSUPPORTED_UPDATE_KEY_FORMAT
 from sdvmm.domain.models import ArchivedModEntry
 from sdvmm.domain.models import DownloadsIntakeResult
 from sdvmm.domain.models import InstalledMod
@@ -52,6 +54,7 @@ from sdvmm.domain.models import SandboxInstallPlan
 from sdvmm.domain.models import SandboxInstallPlanEntry
 from sdvmm.ui.main_window import MainWindow
 from sdvmm.ui.main_window import _ROLE_DISCOVERY_INDEX
+from sdvmm.ui.main_window import _ROLE_MOD_UPDATE_STATUS
 from sdvmm.ui.main_window import _ROLE_UPDATE_BLOCK_REASON
 
 
@@ -446,7 +449,7 @@ def test_main_window_inventory_selected_row_guidance_shows_blocked_reason(
     )
     assert blocked_detail_label is not None
     assert blocked_detail_label.isVisible() is True
-    assert blocked_detail_label.text() == "Update source diagnostics: missing remote link."
+    assert blocked_detail_label.text() == "Update source diagnostics: missing update key."
     assert open_remote_button is not None
     assert open_remote_button.isEnabled() is False
     assert "No remote link available." in open_remote_button.toolTip()
@@ -499,9 +502,15 @@ def test_main_window_inventory_diagnostics_shows_update_key_issue_category(
     assert blocked_row >= 0
     beta_item = main_window._mods_table.item(blocked_row, 0)
     assert beta_item is not None
+    status_data = beta_item.data(_ROLE_MOD_UPDATE_STATUS)
+    assert isinstance(status_data, ModUpdateStatus)
+    beta_item.setData(
+        _ROLE_MOD_UPDATE_STATUS,
+        replace(status_data, update_source_diagnostic=UNSUPPORTED_UPDATE_KEY_FORMAT),
+    )
     beta_item.setData(
         _ROLE_UPDATE_BLOCK_REASON,
-        "Unsupported update key format: custom://alpha",
+        "Temporarily blocked by update diagnostics.",
     )
     main_window._mods_table.setCurrentCell(blocked_row, 0)
     qapp.processEvents()
@@ -510,6 +519,42 @@ def test_main_window_inventory_diagnostics_shows_update_key_issue_category(
     assert (
         blocked_detail_label.text()
         == "Update source diagnostics: unsupported update key format."
+    )
+
+
+def test_main_window_inventory_diagnostics_use_typed_field_not_block_reason_text(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    inventory = _inventory_for_update_actionability_tests()
+    report = _update_report_for_update_actionability_tests()
+    blocked_detail_label = main_window.findChild(
+        QLabel, "inventory_update_blocked_detail_label"
+    )
+    assert blocked_detail_label is not None
+
+    main_window._render_inventory(inventory)
+    main_window._apply_update_report(report)
+    blocked_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert blocked_row >= 0
+    beta_item = main_window._mods_table.item(blocked_row, 0)
+    assert beta_item is not None
+    status_data = beta_item.data(_ROLE_MOD_UPDATE_STATUS)
+    assert isinstance(status_data, ModUpdateStatus)
+    beta_item.setData(
+        _ROLE_MOD_UPDATE_STATUS,
+        replace(status_data, update_source_diagnostic=MISSING_UPDATE_KEY),
+    )
+    beta_item.setData(
+        _ROLE_UPDATE_BLOCK_REASON,
+        "Unsupported update key format: custom://alpha",
+    )
+    main_window._mods_table.setCurrentCell(blocked_row, 0)
+    qapp.processEvents()
+
+    assert (
+        blocked_detail_label.text()
+        == "Update source diagnostics: missing update key."
     )
 
 
@@ -3142,6 +3187,7 @@ def _update_report_for_update_actionability_tests() -> ModUpdateReport:
                 remote_version=None,
                 state="no_remote_link",
                 remote_link=None,
+                update_source_diagnostic=MISSING_UPDATE_KEY,
                 message="No remote link available.",
             ),
         )

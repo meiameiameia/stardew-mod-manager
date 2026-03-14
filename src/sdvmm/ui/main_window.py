@@ -108,6 +108,14 @@ from sdvmm.domain.smapi_log_codes import (
     SMAPI_LOG_UNABLE_TO_DETERMINE,
     SMAPI_LOG_WARNING,
 )
+from sdvmm.domain.update_codes import (
+    LOCAL_PRIVATE_MOD,
+    METADATA_SOURCE_ISSUE,
+    MISSING_UPDATE_KEY,
+    NO_PROVIDER_MAPPING,
+    REMOTE_METADATA_LOOKUP_FAILED,
+    UNSUPPORTED_UPDATE_KEY_FORMAT,
+)
 from sdvmm.ui.background_task import BackgroundTask
 from sdvmm.ui.archive_tab_surface import ArchiveTabSurface
 from sdvmm.ui.bottom_details_region import BottomDetailsRegion
@@ -2891,7 +2899,8 @@ class MainWindow(QMainWindow):
 
         mod_name = name_item.text().strip() or "Selected mod"
         status_text = status_item.text().strip() if status_item is not None else ""
-        status = name_item.data(_ROLE_MOD_UPDATE_STATUS)
+        status_data = name_item.data(_ROLE_MOD_UPDATE_STATUS)
+        status = status_data if isinstance(status_data, ModUpdateStatus) else None
         is_actionable = name_item.data(_ROLE_UPDATE_ACTIONABLE) is True
         blocked_reason = name_item.data(_ROLE_UPDATE_BLOCK_REASON)
 
@@ -2921,9 +2930,8 @@ class MainWindow(QMainWindow):
                 "Open remote page is unavailable for this row."
             )
             self._set_inventory_blocked_detail_text(
-                _derive_update_source_diagnostics_text(
-                    status=status,
-                    blocked_reason=blocked_reason,
+                _diagnostics_text_for_update_source_code(
+                    status.update_source_diagnostic if status is not None else None
                 )
             )
             self._set_open_remote_page_state(
@@ -3452,44 +3460,19 @@ def _update_status_actionability(status: ModUpdateStatus) -> tuple[bool, str]:
     return False, status.message or f"State '{status.state}' is not actionable."
 
 
-def _derive_update_source_diagnostics_text(
-    *,
-    status: ModUpdateStatus | None,
-    blocked_reason: object,
-) -> str | None:
-    reason_text = blocked_reason.strip() if isinstance(blocked_reason, str) else ""
-    lowered_reason = reason_text.casefold()
-
-    if (
-        "unsupported update key" in lowered_reason
-        or "update key format" in lowered_reason
-    ):
-        return "Update source diagnostics: unsupported update key format."
-    if "no provider mapping" in lowered_reason:
-        return "Update source diagnostics: no provider mapping."
-    if (
-        "local/private" in lowered_reason
-        or "local mod" in lowered_reason
-        or "private mod" in lowered_reason
-    ):
+def _diagnostics_text_for_update_source_code(code: str | None) -> str | None:
+    if code == LOCAL_PRIVATE_MOD:
         return "Update source diagnostics: local/private mod."
-    if (
-        "no remote link" in lowered_reason
-        or "missing remote link" in lowered_reason
-    ):
-        return "Update source diagnostics: missing remote link."
-    if (
-        "metadata unavailable" in lowered_reason
-        or "remote metadata unavailable" in lowered_reason
-    ):
-        return "Update source diagnostics: remote metadata unavailable."
-
-    if status is None:
-        return None
-    if status.state == "no_remote_link":
-        return "Update source diagnostics: missing remote link."
-    if status.state == "metadata_unavailable":
-        return "Update source diagnostics: remote metadata unavailable."
+    if code == MISSING_UPDATE_KEY:
+        return "Update source diagnostics: missing update key."
+    if code == UNSUPPORTED_UPDATE_KEY_FORMAT:
+        return "Update source diagnostics: unsupported update key format."
+    if code == NO_PROVIDER_MAPPING:
+        return "Update source diagnostics: no provider mapping."
+    if code == REMOTE_METADATA_LOOKUP_FAILED:
+        return "Update source diagnostics: remote metadata lookup failed."
+    if code == METADATA_SOURCE_ISSUE:
+        return "Update source diagnostics: metadata source issue."
     return None
 
 
