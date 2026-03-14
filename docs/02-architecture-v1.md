@@ -1,142 +1,135 @@
-# Architecture Note v1
+# Architecture Note
 
-## Proposed stack with justification
-
-### Recommendation
-
-Use Python 3.12 plus PySide6 for the desktop app, SQLite for local state, and `pytest` for tests.
-
-### Why this is the safest current choice
-
-- The product is dominated by local filesystem, archive, manifest, and log-processing work. Python handles that domain with low ceremony and strong standard-library support.
-- PySide6 is mature, cross-platform, and sufficient for a utilitarian desktop UI without committing to a browser-based desktop shell.
-- SQLite is deterministic, local-first, inspectable, and enough for inventory, profile metadata, history, and cache state.
-- This avoids introducing a split frontend/backend architecture before it is justified.
-- Linux-first delivery is straightforward while still keeping Windows support realistic later.
-
-### Rejected-for-now alternatives
-
-- Tauri plus web UI: viable, but adds cross-language complexity too early for a utility app whose hardest problems are local file operations.
-- Electron: higher runtime overhead and no clear advantage for the MVP.
-- Pure CLI first: lower initial cost, but profile switching, diagnostics, and inventory review benefit from a simple desktop shell from the start.
-
-## Domain and module boundaries
-
-- `app`: application bootstrap, dependency wiring, config loading, lifecycle.
-- `domain`: core entities and rules, independent from UI and filesystem details.
-- `services`: orchestration for scan, install, rollback, profile switch, update check, and log analysis.
-- `infra.fs`: filesystem reads, writes, archive extraction, snapshot creation, atomic replace helpers.
-- `infra.db`: SQLite persistence and repository implementations.
-- `infra.metadata`: allowed remote metadata clients and cache handling.
-- `ui`: PySide6 windows, dialogs, view models, table models.
-- `diagnostics`: SMAPI log parsing, issue classification, remediation hints.
-
-These boundaries are intentionally boring. The domain should not know about PySide6 or raw SQLite.
-
-## Local data model proposal
-
-### Core tables
-
-- `app_config`
-  - stores configured game path, active Mods path, app data root, active profile ID
-- `profiles`
-  - `id`, `name`, `mods_dir_mode`, `path`, `created_at`, `updated_at`
-- `mods`
-  - canonical installed mod record for the active scan: `id`, `profile_id`, `unique_id`, `name`, `version`, `path`, `manifest_path`, `author`, `description`, `scan_hash`, `last_seen_at`
-- `mod_dependencies`
-  - `mod_id`, `dependency_unique_id`, `required`, `min_version`, `source`
-- `mod_conflicts`
-  - derived findings cache: `profile_id`, `kind`, `subject_unique_id`, `details_json`
-- `install_history`
-  - `id`, `profile_id`, `operation`, `archive_path`, `snapshot_id`, `started_at`, `finished_at`, `status`, `details_json`
-- `snapshots`
-  - `id`, `profile_id`, `kind`, `storage_path`, `created_at`, `reason`
-- `update_cache`
-  - `unique_id`, `source`, `remote_version`, `checked_at`, `raw_json`
-
-### Domain objects
-
-- `Profile`
-- `InstalledMod`
-- `DependencyEdge`
-- `ConflictFinding`
-- `InstallPlan`
-- `SnapshotRecord`
-- `LogDiagnostic`
-
-The SQLite schema stores scan results and operation history. It should not be treated as the source of truth for installed files; the filesystem remains authoritative.
-
-## Filesystem model assumptions
-
-- User supplies explicit paths; the app does not guess aggressively.
-- Active mod content lives in a real directory on disk, not inside a database.
-- The app keeps its own state under an app data root, separate from the game install.
-- Extraction and staging happen in temporary directories inside app-managed storage, then move into place.
-- Case sensitivity must not be assumed long-term, even if Linux is the first target.
-- Symlinks inside user mod directories should be detected and surfaced, not silently rewritten.
-
-## Safe install/update pipeline concept
-
-1. User selects a local archive file.
-2. App extracts into a staging directory under app-managed temp storage.
-3. App inspects extracted content and identifies candidate manifest roots.
-4. App validates installability:
-   - manifest present
-   - one or more mod roots identified
-   - target conflicts known
-   - no path traversal or unsafe archive paths
-5. App creates a pre-change snapshot of affected directories.
-6. App applies changes using deterministic filesystem operations:
-   - move or copy staged mod roots into the active profile mod directory
-   - avoid partial overwrite when possible
-   - record replaced paths explicitly
-7. App rescans and records findings.
-
-For update checks, the app may fetch metadata from allowed sources, compare versions, and tell the user an update exists. It does not download archives.
-
-## Rollback and archive concept
-
-- Every mutating operation creates a snapshot record first.
-- Snapshot scope is narrow: only affected mod directories and operation metadata, not a blind copy of the whole game tree.
-- Snapshots are stored in app-managed archive storage with manifest metadata describing what was changed.
-- Rollback replays the inverse operation from snapshot contents and then rescans.
-- Old snapshots should be prunable by retention policy, but retention policy is not part of Stage 1.
-
-## Profile strategy options with recommendation
-
-### Option A: Separate real directories per profile
-
-- Each profile owns its own full `Mods` directory copy.
-- Pros: simple mental model, robust, easy rollback.
-- Cons: disk-heavy, slower switching.
-
-### Option B: Canonical profile store plus active materialization
-
-- Each profile is stored separately under app data or user-selected paths.
-- Switching materializes the selected profile into the live game `Mods` directory transactionally.
-- Pros: explicit behavior, good rollback boundary, no symlink dependency.
-- Cons: switching is slower than pointer-style approaches.
-
-### Option C: Symlink-based profiles
-
-- Active `Mods` directory is assembled from symlinks.
-- Pros: fast switching, low disk use.
-- Cons: brittle across filesystems, confusing for users, worse future Windows story.
+## Current stack decision
 
 ### Recommendation
 
-Choose Option B. It is the safest balance between determinism, rollback clarity, Linux practicality, and future Windows support. Avoid symlink-based design in the MVP.
+Keep the current stack:
 
-## Edge cases that must shape the design
+- Python 3.12
+- PySide6
+- file-based local persistence
+- `pytest`
 
-- Archives with nested top-level folders before the real mod root.
-- Archives containing multiple mods in one package.
-- Non-mod files mixed with valid mod folders.
-- Duplicate `UniqueID` values across different folders or versions.
-- Missing `manifest.json` or malformed manifests.
-- Partial overwrite during crash or interruption.
-- User-selected Mods path on another filesystem, making atomic rename less reliable.
-- Read-only files, permission issues, or unexpected ownership on Linux.
-- Active profile content modified outside the app between scans.
-- SMAPI logs from different versions or with truncated content.
-- Version strings that are non-semantic or custom-formatted.
+### Why this is still the right choice
+
+- The product is dominated by local filesystem, archive, manifest, install, and recovery workflows.
+- Python handles that problem space well with low ceremony.
+- PySide6 is mature enough for a desktop utility app without introducing a browser-shell architecture.
+- File-backed persistence is currently sufficient for config, install history, and recovery history.
+- There is still no concrete product need that justifies a database.
+
+### Explicit non-decision
+
+Do not introduce:
+
+- a database
+- a browser-based desktop shell
+- a split frontend/backend architecture
+
+unless a later roadmap phase produces a concrete product need.
+
+## Current module boundaries
+
+- `app`
+  - bootstrap, app wiring, orchestration helpers, shell service
+- `domain`
+  - immutable data contracts and literal code sets
+- `services`
+  - scan, package inspection, intake, dependency preflight, install execution, update metadata, persistence
+- `ui`
+  - Qt surfaces and workflow composition
+
+These boundaries are intentionally boring. The domain layer stays UI-agnostic, and Qt is not supposed to be the source of truth for workflow policy.
+
+## Current architectural strengths
+
+- Immutable `@dataclass(frozen=True, slots=True)` domain models
+- Clear `AppShellService` workflow boundary for install/recovery logic
+- Safe-by-default install review contract
+- Recorded install and recovery history with stable IDs
+- Recovery derivation and live review below the UI
+- Strong GUI regression coverage for `MainWindow`
+
+## Current architectural risks
+
+### 1. `MainWindow` remains a dense integration point
+
+`MainWindow` still coordinates:
+
+- selected-row guidance
+- tab-local outputs
+- intake staging
+- plan/review summary/explanation/facts
+- recovery selector state
+- update-source diagnostics presentation
+
+This is acceptable for now because product-facing workflow completion has been prioritized over more decomposition, but it remains the most likely place for UX wiring regressions.
+
+### 2. Some diagnostics are still inferred too close to the UI
+
+The current roadmap needs to promote update-source diagnostics into a typed contract below the UI instead of inferring them from user-facing strings.
+
+That promotion is the next important architecture move because it reduces one of the few remaining brittle seams.
+
+### 3. The app has multiple information surfaces
+
+The current UX uses:
+
+- global status strip
+- tab-local output boxes
+- selected-row guidance
+- structured review summaries/facts
+- a legacy bottom details region
+
+This is workable, but it must be consolidated later once the current workflow semantics stop moving.
+
+## Persistence model
+
+The app currently uses file-backed local state, not a database.
+
+Current persisted concerns include:
+
+- app configuration
+- install operation history
+- recovery execution history
+
+This is the right current tradeoff:
+
+- local-first
+- inspectable
+- low operational complexity
+
+The main future risk is schema evolution and migration discipline, not query complexity.
+
+## Current install/update/recovery model
+
+### Install
+
+1. User selects or stages a local package.
+2. The app builds an install plan.
+3. The app reviews that plan for execution safety.
+4. Sandbox is the recommended path.
+5. Real Mods execution requires explicit confirmation.
+6. Install execution records operation history.
+
+### Recovery
+
+1. Recovery plan is derived from recorded install history.
+2. Recovery plan is reviewed against the current filesystem.
+3. Recovery execution runs only from an allowed review.
+4. Recovery execution is recorded separately and linked to the originating install operation when possible.
+
+### Update checks
+
+1. Update checks are awareness-only.
+2. The app may use approved metadata providers to compare versions.
+3. The app does not download archives automatically.
+4. The user remains in control of the browser/download step.
+
+## Architectural guidance for the next phases
+
+- Prefer promoting typed diagnostics below the UI before adding more UI-specific explanation layers.
+- Prefer product-facing workflow completion over broad extraction work.
+- Do not remove narrative output boxes until structured UI surfaces have clearly replaced their user-facing value.
+- Defer broad UI/UX consolidation until update-source diagnostics and remaining workflow semantics stabilize.

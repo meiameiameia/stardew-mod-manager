@@ -35,6 +35,7 @@ It does not replace the thread-specific role prompt for the ARCHITECT or the EXE
 - Preserve behavior unless the current stage explicitly authorizes behavior change.
 - Do not move logic and layout in the same step unless the stage explicitly authorizes both.
 - Prefer narrow seams and reversible changes.
+- Do not reconstruct structured diagnostics or policy categories by parsing UI-facing strings when the underlying reason can be exposed as typed service/domain data.
 - Do not perform opportunistic cleanup outside the approved stage boundary unless it is strictly required to complete the task safely.
 - Keep diffs reviewable.
 

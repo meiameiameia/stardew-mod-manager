@@ -1,126 +1,142 @@
-# Stage Plan
+# Roadmap
 
-## Stage 1
+## Completed or effectively closed
 
-### Scope
+### 1. Core Workflow Foundation
 
-- Repository setup confirmation
-- app configuration model
-- path selection and validation logic
-- local mod scan of a chosen Mods directory
-- manifest parsing and inventory listing data model
+Implemented:
 
-### Validation gate
+- configuration and scan path setup
+- local mod inventory scan
+- duplicate and dependency visibility
+- package inspection and downloads intake
+- install planning and execution review
+- sandbox install execution
+- guarded real-Mods execution
+- install history
+- recovery derivation, review, and execution
+- recovery history with stable IDs
 
-- Can configure game path, active Mods path, and app data root
-- Can scan a real sample Mods directory deterministically
-- Produces consistent inventory records and parse warnings
+### 2. Guided Manual Update Flow
 
-### Explicitly out of scope
+Implemented:
 
-- installs
-- rollback
-- profiles
-- remote metadata checks
-- SMAPI diagnostics UI beyond placeholders
+- update check awareness flow
+- selected-row remote-page handoff
+- intake staging into `Plan & Install`
+- local workflow output in owning tabs
+- install-to-recovery continuity
 
-## Stage 2
+### 3. Managed Live Mods Safety Baseline
 
-### Scope
+Implemented baseline:
 
-- duplicate detection
-- dependency graph extraction from manifests
-- missing dependency and obvious version mismatch reporting
+- persistent destination safety context
+- explicit confirmation for real-Mods execution
+- stronger live destination messaging before execution
+- constrained-height resilience in `Plan & Install`
 
-### Validation gate
+### 4. History / Recovery UX Baseline
 
-- Test fixtures cover duplicate IDs, missing dependencies, and malformed manifests
-- Findings are reproducible across rescans
+Implemented baseline:
 
-### Explicitly out of scope
+- readable recovery selector
+- newest-first recovery record display
+- recovery summary cues
+- recovery filtering
+- recovery execution path with status continuity
 
-- automatic conflict resolution
-- install pipeline
-- profile switching
-- remote update lookups
+## Current phase
 
-## Stage 3
+### 5. Dependency / Conflict / Update Ergonomics
 
-### Scope
+Completed inside this phase so far:
 
-- local archive import
-- staging extraction
-- installability validation
-- safe install execution for local zip files
+- inventory update-actionability filter
+- selected-row update guidance
+- selected-row remote action enablement
+- `Plan & Install` review summary, explanation, and facts
+- initial selected-row update-source diagnostics surface
 
-### Validation gate
+### Current priority inside this phase
 
-- Can install from supported local archives without partial target corruption in normal conditions
-- Unsafe archive paths and malformed packages are rejected
+Promote update-source diagnostics below the UI so the Inventory diagnostics surface stops inferring structured meaning from user-facing strings.
 
-### Explicitly out of scope
+That means:
 
-- remote downloads
-- auto-update install
-- rollback UI beyond basic operation history
+- add typed update-source diagnostics in the domain/app/service layer
+- bind the Inventory UI to that typed contract
+- explicitly distinguish unsupported key format, missing key, missing remote link, provider-mapping failure, and metadata lookup failure
 
-## Stage 4
+## Next phase
 
-### Scope
+### 6A. Update Source Diagnostics Contract
 
-- snapshot creation
-- rollback execution
-- operation history
-- archive retention model definition
+Scope:
 
-### Validation gate
+- promote update-source diagnostics into a typed contract
+- remove UI-side string reconstruction for diagnostics
+- keep this phase read-only from the user's perspective
 
-- A completed install or remove operation can be rolled back from created snapshot data
-- Failure paths leave enough metadata for manual recovery
+Validation gate:
 
-### Explicitly out of scope
+- update-source failure categories are testable below the UI
+- Inventory diagnostics are driven by structured state, not message parsing
 
-- aggressive storage optimization
-- deduplicated snapshot storage
-- advanced retention automation
+Explicitly out of scope:
 
-## Stage 5
+- metadata editing
+- manual source association
+- provider automation
 
-### Scope
+### 6B. Update Source Repair UX
 
-- profile create/list/activate
-- profile materialization into live Mods directory
-- profile diff preview before switch
+Scope:
 
-### Validation gate
+- only after diagnostics are reliable, design whether users need repair actions for unsupported or missing update sources
 
-- Profile switch is deterministic and leaves the live Mods directory matching the selected profile
-- Rollback still works after a profile switch operation
+Validation gate:
 
-### Explicitly out of scope
+- a user can understand what is wrong with an update source and what, if anything, is fixable
 
-- symlink-based profiles
-- cloud sync
-- per-save automatic profile switching
+Explicitly out of scope:
 
-## Stage 6
+- automatic remote repair
+- automatic downloads
 
-### Scope
+## Later planned phases
 
-- allowed metadata-based update checks
-- SMAPI log import and diagnostic classification
-- basic release hardening and packaging assessment
+### 7. UI/UX Consolidation and Release Readiness
 
-### Validation gate
+Planned audits:
 
-- Update check does not download files and only uses approved metadata flow
-- SMAPI log parser identifies a useful first set of actionable issue categories
-- Packaging path for Linux is documented with known gaps
+1. duplicate-information / ownership audit
+2. redesign-necessity / interaction audit
+3. visual feedback / polish audit
 
-### Explicitly out of scope
+Entry criteria:
 
-- browser automation
-- scraping
-- premium-flow bypasses
-- rich UI polish
-- generalized plugin system
+- update-source diagnostics are a typed contract
+- current workflow surfaces are no longer changing every few days
+- `Plan & Install` information ownership is stable enough to audit
+
+### 8. Public Release Hardening
+
+Planned scope:
+
+- packaging
+- installer strategy
+- code signing
+- CI
+- persistence migration discipline
+- first-run/onboarding clarity
+
+### 9. Provider-Compliant Automation
+
+Planned scope:
+
+- official provider mechanisms only
+- user-owned auth
+- no scraping
+- no premium bypass
+- no one-click install-from-search until explicitly designed and approved
