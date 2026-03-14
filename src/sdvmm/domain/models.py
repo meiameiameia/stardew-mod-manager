@@ -22,7 +22,11 @@ from sdvmm.domain.smapi_log_codes import (
     SmapiLogStatusState,
 )
 from sdvmm.domain.smapi_codes import SmapiUpdateState
-from sdvmm.domain.update_codes import RemoteLinkProvider, UpdateState
+from sdvmm.domain.update_codes import (
+    RemoteLinkProvider,
+    UpdateSourceDiagnosticCode,
+    UpdateState,
+)
 from sdvmm.domain.warning_codes import ParseWarningCode
 
 
@@ -155,6 +159,7 @@ class ModUpdateStatus:
     remote_version: str | None
     state: UpdateState
     remote_link: RemoteModLink | None
+    update_source_diagnostic: UpdateSourceDiagnosticCode | None = None
     message: str | None = None
     remote_requirements_state: RemoteRequirementState = "requirements_unavailable"
     remote_requirements: tuple[str, ...] = tuple()

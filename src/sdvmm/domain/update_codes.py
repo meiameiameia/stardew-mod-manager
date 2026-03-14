@@ -23,3 +23,19 @@ RemoteLinkProvider = Literal[
 GITHUB_PROVIDER: RemoteLinkProvider = "github"
 NEXUS_PROVIDER: RemoteLinkProvider = "nexus"
 JSON_PROVIDER: RemoteLinkProvider = "json"
+
+UpdateSourceDiagnosticCode = Literal[
+    "local_private_mod",
+    "missing_update_key",
+    "unsupported_update_key_format",
+    "no_provider_mapping",
+    "remote_metadata_lookup_failed",
+    "metadata_source_issue",
+]
+
+LOCAL_PRIVATE_MOD: UpdateSourceDiagnosticCode = "local_private_mod"
+MISSING_UPDATE_KEY: UpdateSourceDiagnosticCode = "missing_update_key"
+UNSUPPORTED_UPDATE_KEY_FORMAT: UpdateSourceDiagnosticCode = "unsupported_update_key_format"
+NO_PROVIDER_MAPPING: UpdateSourceDiagnosticCode = "no_provider_mapping"
+REMOTE_METADATA_LOOKUP_FAILED: UpdateSourceDiagnosticCode = "remote_metadata_lookup_failed"
+METADATA_SOURCE_ISSUE: UpdateSourceDiagnosticCode = "metadata_source_issue"

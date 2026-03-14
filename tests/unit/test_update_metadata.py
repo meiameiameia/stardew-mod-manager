@@ -6,6 +6,14 @@ from typing import Mapping
 import pytest
 
 from sdvmm.domain.models import InstalledMod, ModsInventory
+from sdvmm.domain.update_codes import (
+    LOCAL_PRIVATE_MOD,
+    METADATA_SOURCE_ISSUE,
+    MISSING_UPDATE_KEY,
+    NO_PROVIDER_MAPPING,
+    REMOTE_METADATA_LOOKUP_FAILED,
+    UNSUPPORTED_UPDATE_KEY_FORMAT,
+)
 from sdvmm.services.update_metadata import (
     AUTH_FAILURE,
     MISSING_API_KEY,
@@ -129,6 +137,7 @@ def test_nexus_missing_api_key_is_reported_explicitly(monkeypatch: pytest.Monkey
 
     status = report.statuses[0]
     assert status.state == "metadata_unavailable"
+    assert status.update_source_diagnostic == REMOTE_METADATA_LOOKUP_FAILED
     assert f"[{MISSING_API_KEY}]" in (status.message or "")
     assert NEXUS_API_KEY_ENV in (status.message or "")
     assert status.remote_requirements_state == "requirements_unavailable"
@@ -146,6 +155,7 @@ def test_malformed_nexus_updatekey_is_reported_explicitly() -> None:
 
     status = report.statuses[0]
     assert status.state == "metadata_unavailable"
+    assert status.update_source_diagnostic == UNSUPPORTED_UPDATE_KEY_FORMAT
     assert "[malformed_update_key]" in (status.message or "")
     assert status.remote_requirements_state == "requirements_unavailable"
 
@@ -169,6 +179,7 @@ def test_nexus_auth_or_request_failure_is_reported(monkeypatch: pytest.MonkeyPat
 
     status = report.statuses[0]
     assert status.state == "metadata_unavailable"
+    assert status.update_source_diagnostic == REMOTE_METADATA_LOOKUP_FAILED
     assert f"[{AUTH_FAILURE}]" in (status.message or "")
     assert status.remote_requirements_state == "requirements_unavailable"
 
@@ -193,6 +204,7 @@ def test_nexus_response_missing_version_is_reported(monkeypatch: pytest.MonkeyPa
 
     status = report.statuses[0]
     assert status.state == "metadata_unavailable"
+    assert status.update_source_diagnostic == METADATA_SOURCE_ISSUE
     assert f"[{RESPONSE_MISSING_VERSION}]" in (status.message or "")
     assert status.remote_requirements_state == "requirements_absent"
 
@@ -211,6 +223,7 @@ def test_no_regression_for_json_provider() -> None:
     report = check_updates_for_inventory(inventory, fetcher=fetcher, nexus_api_key="test-api-key")
 
     assert report.statuses[0].state == "update_available"
+    assert report.statuses[0].update_source_diagnostic is None
 
 
 def test_no_regression_for_github_provider() -> None:
@@ -235,17 +248,45 @@ def test_no_regression_for_github_provider() -> None:
     )
 
     assert report.statuses[0].state == "up_to_date"
+    assert report.statuses[0].update_source_diagnostic is None
 
 
-def test_no_regression_for_no_remote_link_behavior() -> None:
+def test_missing_update_key_sets_typed_no_link_diagnostic() -> None:
     mod = _mod(unique_id="Sample.NoLink", version="1.0.0", update_keys=tuple())
     inventory = _inventory((mod,))
 
     report = check_updates_for_inventory(inventory, fetcher=StubFetcher())
 
     assert report.statuses[0].state == "no_remote_link"
+    assert report.statuses[0].update_source_diagnostic == MISSING_UPDATE_KEY
     assert report.statuses[0].remote_link is None
     assert report.statuses[0].remote_requirements_state == "no_remote_link"
+
+
+def test_local_private_update_source_sets_typed_no_link_diagnostic() -> None:
+    mod = _mod(unique_id="Sample.Private", version="1.0.0", update_keys=("Private:Sample.Mod",))
+    inventory = _inventory((mod,))
+
+    report = check_updates_for_inventory(inventory, fetcher=StubFetcher())
+
+    status = report.statuses[0]
+    assert status.state == "no_remote_link"
+    assert status.update_source_diagnostic == LOCAL_PRIVATE_MOD
+    assert status.remote_link is None
+    assert "[local_private_mod]" in (status.message or "")
+
+
+def test_unknown_provider_mapping_produces_distinct_diagnostic_code() -> None:
+    mod = _mod(unique_id="Sample.Custom", version="1.0.0", update_keys=("CustomProvider:abc123",))
+    inventory = _inventory((mod,))
+
+    report = check_updates_for_inventory(inventory, fetcher=StubFetcher())
+
+    status = report.statuses[0]
+    assert status.state == "metadata_unavailable"
+    assert status.update_source_diagnostic == NO_PROVIDER_MAPPING
+    assert "[unsupported_provider]" in (status.message or "")
+    assert "CustomProvider".casefold() in (status.message or "").casefold()
 
 
 def test_provider_fallback_uses_nexus_when_github_fails(
@@ -281,6 +322,7 @@ def test_provider_fallback_uses_nexus_when_github_fails(
 
     status = report.statuses[0]
     assert status.state == "update_available"
+    assert status.update_source_diagnostic is None
     assert status.remote_link is not None
     assert status.remote_link.provider == "nexus"
     assert status.remote_requirements_state == "requirements_absent"

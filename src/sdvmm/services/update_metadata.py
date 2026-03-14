@@ -32,9 +32,15 @@ from sdvmm.domain.remote_requirement_codes import (
 from sdvmm.domain.update_codes import (
     GITHUB_PROVIDER,
     JSON_PROVIDER,
+    LOCAL_PRIVATE_MOD,
     METADATA_UNAVAILABLE,
+    METADATA_SOURCE_ISSUE,
+    MISSING_UPDATE_KEY,
     NEXUS_PROVIDER,
     NO_REMOTE_LINK,
+    NO_PROVIDER_MAPPING,
+    REMOTE_METADATA_LOOKUP_FAILED,
+    UNSUPPORTED_UPDATE_KEY_FORMAT,
     UPDATE_AVAILABLE,
     UP_TO_DATE,
 )
@@ -430,6 +436,13 @@ def resolve_remote_link_candidates(
 
         adapter = _PROVIDERS_BY_NAME.get(provider)
         if adapter is None:
+            issues.append(
+                LinkResolutionIssue(
+                    provider=provider,
+                    reason=UNSUPPORTED_PROVIDER,
+                    message=f"UpdateKey provider '{provider}' is not mapped to a supported metadata adapter.",
+                )
+            )
             continue
 
         link = adapter.build_link(value)
@@ -468,6 +481,7 @@ def _check_single_mod(
         remote_version=None,
         state=NO_REMOTE_LINK,
         remote_link=links[0] if links else None,
+        update_source_diagnostic=None,
         message=None,
         remote_requirements_state=NO_REMOTE_LINK_FOR_REQUIREMENTS,
         remote_requirements=tuple(),
@@ -477,14 +491,24 @@ def _check_single_mod(
     if not links:
         if resolution_issues:
             issue = resolution_issues[0]
+            diagnostic_code = _diagnostic_code_for_resolution_issue(issue)
+            message = _message_for_resolution_issue(issue)
+            if diagnostic_code == LOCAL_PRIVATE_MOD:
+                return replace(
+                    base_status,
+                    update_source_diagnostic=diagnostic_code,
+                    message=message,
+                    remote_requirements_message=message,
+                )
             return replace(
                 base_status,
                 state=METADATA_UNAVAILABLE,
-                message=f"[{issue.reason}] {issue.message}",
+                update_source_diagnostic=diagnostic_code,
+                message=message,
                 remote_requirements_state=REQUIREMENTS_UNAVAILABLE,
-                remote_requirements_message=f"[{issue.reason}] {issue.message}",
+                remote_requirements_message=message,
             )
-        return base_status
+        return replace(base_status, update_source_diagnostic=MISSING_UPDATE_KEY)
 
     failures: list[ProviderFailure] = []
     best_requirements_state = REQUIREMENTS_UNAVAILABLE
@@ -588,6 +612,7 @@ def _check_single_mod(
         base_status,
         state=METADATA_UNAVAILABLE,
         remote_link=best_link or fallback_link,
+        update_source_diagnostic=_diagnostic_code_for_failures(failures),
         message=message,
         remote_requirements_state=best_requirements_state,
         remote_requirements=best_requirements,
@@ -783,3 +808,30 @@ def _summarize_failures(failures: list[ProviderFailure]) -> str:
     if len(failures) > len(shown):
         fragments.append(f"... {len(failures) - len(shown)} more provider failure(s)")
     return "; ".join(fragments)
+
+
+def _diagnostic_code_for_resolution_issue(issue: LinkResolutionIssue):
+    if issue.reason == MALFORMED_UPDATE_KEY:
+        return UNSUPPORTED_UPDATE_KEY_FORMAT
+    if issue.reason == UNSUPPORTED_PROVIDER:
+        if issue.provider in {"local", "private"}:
+            return LOCAL_PRIVATE_MOD
+        return NO_PROVIDER_MAPPING
+    return METADATA_SOURCE_ISSUE
+
+
+def _message_for_resolution_issue(issue: LinkResolutionIssue) -> str:
+    if issue.reason == UNSUPPORTED_PROVIDER and issue.provider in {"local", "private"}:
+        return "[local_private_mod] Mod declares a local/private update source; no public remote page is available."
+    if issue.reason == UNSUPPORTED_PROVIDER:
+        return f"[{UNSUPPORTED_PROVIDER}] No provider mapping for UpdateKey provider '{issue.provider}'."
+    return f"[{issue.reason}] {issue.message}"
+
+
+def _diagnostic_code_for_failures(failures: list[ProviderFailure]):
+    if any(
+        failure.reason in {AUTH_FAILURE, REQUEST_FAILURE, MISSING_API_KEY}
+        for failure in failures
+    ):
+        return REMOTE_METADATA_LOOKUP_FAILED
+    return METADATA_SOURCE_ISSUE
