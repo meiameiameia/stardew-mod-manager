@@ -3381,6 +3381,30 @@ def test_main_window_selecting_valid_intake_enables_plan_selected_button(
     assert main_window._plan_selected_intake_button.isEnabled() is True
 
 
+def test_main_window_intake_selection_does_not_override_global_operation_status(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    intakes = (
+        _intake_result("AlphaPack.zip", "new_install_candidate", "Alpha Mod", "Sample.Alpha"),
+        _intake_result("BetaPack.zip", "new_install_candidate", "Beta Mod", "Sample.Beta"),
+    )
+    main_window._detected_intakes = intakes
+    main_window._intake_correlations = tuple(
+        _intake_correlation(intake, next_step=f"Review {intake.package_path.name}") for intake in intakes
+    )
+    main_window._refresh_intake_selector()
+    qapp.processEvents()
+
+    operation_status = "Update check complete: 2 mod(s)"
+    main_window._set_status(operation_status)
+    main_window._intake_result_combo.setCurrentIndex(0)
+    qapp.processEvents()
+
+    assert main_window._status_strip_label.text() == operation_status
+    assert main_window._plan_selected_intake_button.isEnabled() is True
+
+
 def test_main_window_watched_path_change_clears_intakes_and_stops_active_watcher(
     main_window: MainWindow,
     qapp: QApplication,
