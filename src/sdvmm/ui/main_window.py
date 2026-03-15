@@ -70,6 +70,7 @@ from sdvmm.app.shell_service import (
     AppShellService,
     IntakeUpdateCorrelation,
     ScanResult,
+    SandboxModsSyncResult,
 )
 from sdvmm.domain.models import (
     AppConfig,
@@ -277,6 +278,28 @@ class MainWindow(QMainWindow):
         inventory_source_intent_actions_layout.addWidget(self._clear_source_intent_button)
         inventory_source_intent_actions_layout.addStretch(1)
         self._inventory_source_intent_actions_widget.setVisible(False)
+        self._inventory_sandbox_sync_actions_label = QLabel("Sandbox dev")
+        _set_auxiliary_label_style(self._inventory_sandbox_sync_actions_label)
+        self._sync_selected_to_sandbox_button = QPushButton("Sync selected to sandbox")
+        self._sync_selected_to_sandbox_button.setObjectName(
+            "inventory_sync_selected_to_sandbox_button"
+        )
+        _set_secondary_button_style(self._sync_selected_to_sandbox_button)
+        self._inventory_sandbox_sync_actions_widget = QWidget()
+        self._inventory_sandbox_sync_actions_widget.setObjectName(
+            "inventory_sandbox_sync_actions"
+        )
+        inventory_sandbox_sync_actions_layout = QHBoxLayout(
+            self._inventory_sandbox_sync_actions_widget
+        )
+        inventory_sandbox_sync_actions_layout.setContentsMargins(0, 0, 0, 0)
+        inventory_sandbox_sync_actions_layout.setSpacing(6)
+        inventory_sandbox_sync_actions_layout.addWidget(
+            self._inventory_sandbox_sync_actions_label
+        )
+        inventory_sandbox_sync_actions_layout.addWidget(self._sync_selected_to_sandbox_button)
+        inventory_sandbox_sync_actions_layout.addStretch(1)
+        self._inventory_sandbox_sync_actions_widget.setVisible(False)
         self._open_remote_page_button = QPushButton("Open remote page")
         self._open_remote_page_button.setObjectName("inventory_open_remote_page_button")
         self._open_remote_page_button.setEnabled(False)
@@ -305,6 +328,20 @@ class MainWindow(QMainWindow):
         self._install_target_combo.addItem(
             "Game Mods destination (real)",
             INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        )
+        self._install_target_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow
+        )
+        self._install_target_combo.setMinimumContentsLength(28)
+        install_target_view = self._install_target_combo.view()
+        install_target_view.setMinimumWidth(
+            max(
+                install_target_view.minimumWidth(),
+                self._install_target_combo.fontMetrics().horizontalAdvance(
+                    "Sandbox Mods destination (safe/test)"
+                )
+                + 48,
+            )
         )
         self._scan_target_combo = QComboBox()
         self._scan_target_combo.addItem("Real Mods path (scan only)", SCAN_TARGET_CONFIGURED_REAL_MODS)
@@ -382,6 +419,7 @@ class MainWindow(QMainWindow):
         )
         self._mods_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._mods_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._mods_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._mods_table.verticalHeader().setDefaultSectionSize(20)
         self._mods_table.verticalHeader().setVisible(False)
         self._mods_table.setAlternatingRowColors(True)
@@ -496,14 +534,21 @@ class MainWindow(QMainWindow):
         self._real_archive_path_input.textChanged.connect(self._refresh_install_safety_panel)
         self._overwrite_checkbox.toggled.connect(self._invalidate_pending_plan)
         self._scan_target_combo.currentIndexChanged.connect(self._refresh_scan_context_preview)
+        self._scan_target_combo.currentIndexChanged.connect(
+            self._refresh_inventory_sandbox_sync_action_state
+        )
         self._install_target_combo.currentIndexChanged.connect(self._on_install_target_changed)
         self._game_path_input.textChanged.connect(self._on_game_path_changed)
         self._mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
         self._mods_path_input.textChanged.connect(self._refresh_install_destination_preview)
         self._mods_path_input.textChanged.connect(self._refresh_sandbox_dev_launch_state)
+        self._mods_path_input.textChanged.connect(self._refresh_inventory_sandbox_sync_action_state)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_install_destination_preview)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_sandbox_dev_launch_state)
+        self._sandbox_mods_path_input.textChanged.connect(
+            self._refresh_inventory_sandbox_sync_action_state
+        )
         self._game_path_input.textChanged.connect(self._refresh_sandbox_dev_launch_state)
         self._watched_downloads_path_input.textChanged.connect(self._on_watched_path_changed)
         self._nexus_api_key_input.textChanged.connect(self._on_nexus_key_changed)
@@ -517,12 +562,18 @@ class MainWindow(QMainWindow):
         self._mods_table.itemSelectionChanged.connect(
             self._refresh_selected_mod_update_guidance
         )
+        self._mods_table.itemSelectionChanged.connect(
+            self._refresh_inventory_sandbox_sync_action_state
+        )
         self._mark_local_private_button.clicked.connect(self._on_mark_selected_mod_local_private)
         self._disable_tracking_button.clicked.connect(self._on_disable_selected_mod_tracking)
         self._manual_source_intent_button.clicked.connect(
             self._on_set_selected_mod_manual_source_intent
         )
         self._clear_source_intent_button.clicked.connect(self._on_clear_selected_mod_source_intent)
+        self._sync_selected_to_sandbox_button.clicked.connect(
+            self._on_sync_selected_mods_to_sandbox
+        )
         self._discovery_filter_input.textChanged.connect(self._apply_discovery_filter)
         self._intake_filter_input.textChanged.connect(self._refresh_intake_selector)
         self._archive_filter_input.textChanged.connect(self._apply_archive_filter)
@@ -736,6 +787,7 @@ class MainWindow(QMainWindow):
         inventory_layout.addWidget(self._inventory_update_guidance_label)
         inventory_layout.addWidget(self._inventory_blocked_detail_label)
         inventory_layout.addWidget(self._inventory_source_intent_actions_widget)
+        inventory_layout.addWidget(self._inventory_sandbox_sync_actions_widget)
         inventory_layout.addWidget(flow_hint_label)
         inventory_layout.addWidget(self._mods_table, 1)
         workspace_splitter.addWidget(inventory_group)
@@ -1016,6 +1068,7 @@ class MainWindow(QMainWindow):
             self._launch_vanilla_button,
             self._launch_smapi_button,
             self._launch_sandbox_dev_button,
+            self._sync_selected_to_sandbox_button,
         )
 
         self.setCentralWidget(container)
@@ -1053,6 +1106,7 @@ class MainWindow(QMainWindow):
         self._refresh_install_destination_preview()
         self._refresh_nexus_status(validated=False)
         self._refresh_sandbox_dev_launch_state()
+        self._refresh_inventory_sandbox_sync_action_state()
         self._refresh_responsive_panel_bounds()
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
@@ -1166,6 +1220,7 @@ class MainWindow(QMainWindow):
 
         self._refresh_nexus_status(validated=False)
         self._refresh_sandbox_dev_launch_state()
+        self._refresh_inventory_sandbox_sync_action_state()
         self._set_status(f"Saved config to {self._shell_service.state_file}")
 
     def _on_detect_environment(self) -> None:
@@ -2742,6 +2797,7 @@ class MainWindow(QMainWindow):
             button.setEnabled(enabled)
         self._discovery_query_input.setEnabled(enabled)
         self._refresh_sandbox_dev_launch_state()
+        self._refresh_inventory_sandbox_sync_action_state()
 
     def _set_details_text(self, text: str) -> None:
         self._findings_box.setPlainText(text)
@@ -2945,6 +3001,7 @@ class MainWindow(QMainWindow):
             )
             self._inventory_update_guidance_label.setText(message)
             self._inventory_update_guidance_label.setToolTip(message)
+            self._refresh_inventory_sandbox_sync_action_state()
             return
 
         name_item = self._mods_table.item(row, 0)
@@ -2964,6 +3021,7 @@ class MainWindow(QMainWindow):
             )
             self._inventory_update_guidance_label.setText(message)
             self._inventory_update_guidance_label.setToolTip(message)
+            self._refresh_inventory_sandbox_sync_action_state()
             return
 
         mod_name = name_item.text().strip() or "Selected mod"
@@ -3044,6 +3102,7 @@ class MainWindow(QMainWindow):
         )
         self._inventory_update_guidance_label.setText(message)
         self._inventory_update_guidance_label.setToolTip(message)
+        self._refresh_inventory_sandbox_sync_action_state()
 
     def _resolve_inventory_update_source_intent(self, unique_id: str):
         if not unique_id.strip():
@@ -3114,6 +3173,68 @@ class MainWindow(QMainWindow):
             return None
         mod_name = name_item.text().strip() or "Selected mod"
         return unique_id, mod_name
+
+    def _selected_inventory_mod_folder_paths(self) -> tuple[str, ...]:
+        selection_model = self._mods_table.selectionModel()
+        if selection_model is None:
+            return tuple()
+
+        selected_rows = sorted(
+            selection_model.selectedRows(0),
+            key=lambda index: index.row(),
+        )
+        folder_paths: list[str] = []
+        seen: set[str] = set()
+        for model_index in selected_rows:
+            row = model_index.row()
+            if row < 0 or self._mods_table.isRowHidden(row):
+                continue
+            name_item = self._mods_table.item(row, 0)
+            if name_item is None:
+                continue
+            folder_path = name_item.data(_ROLE_MOD_FOLDER_PATH)
+            if not isinstance(folder_path, str) or not folder_path.strip():
+                continue
+            normalized = folder_path.casefold()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            folder_paths.append(folder_path)
+        return tuple(folder_paths)
+
+    def _refresh_inventory_sandbox_sync_action_state(self, *_: object) -> None:
+        selected_mod_folder_paths = self._selected_inventory_mod_folder_paths()
+        has_selection = bool(selected_mod_folder_paths)
+        self._inventory_sandbox_sync_actions_widget.setVisible(has_selection)
+        if not has_selection:
+            self._sync_selected_to_sandbox_button.setEnabled(False)
+            self._sync_selected_to_sandbox_button.setToolTip(
+                "Select one or more installed real-mod rows to sync to sandbox."
+            )
+            return
+
+        if self._active_operation_name is not None:
+            self._sync_selected_to_sandbox_button.setEnabled(False)
+            self._sync_selected_to_sandbox_button.setToolTip(
+                "Wait for the active operation to finish before syncing to sandbox."
+            )
+            return
+
+        if self._current_scan_target() != SCAN_TARGET_CONFIGURED_REAL_MODS:
+            self._sync_selected_to_sandbox_button.setEnabled(False)
+            self._sync_selected_to_sandbox_button.setToolTip(
+                "Sync selected to sandbox only works while scanning the configured real Mods path."
+            )
+            return
+
+        readiness = self._shell_service.get_sandbox_mods_sync_readiness(
+            configured_mods_path_text=self._mods_path_input.text(),
+            sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+            selected_mod_folder_paths_text=selected_mod_folder_paths,
+            existing_config=self._config,
+        )
+        self._sync_selected_to_sandbox_button.setEnabled(readiness.ready)
+        self._sync_selected_to_sandbox_button.setToolTip(readiness.message)
 
     def _set_selected_mod_update_source_intent(self, intent_state: str) -> None:
         selected_context = self._selected_inventory_source_intent_context()
@@ -3208,6 +3329,56 @@ class MainWindow(QMainWindow):
             return
         self._refresh_selected_mod_update_guidance()
         self._set_status(f"Cleared saved update-source intent for {selected_unique_id}.")
+
+    def _on_sync_selected_mods_to_sandbox(self) -> None:
+        selected_mod_folder_paths = self._selected_inventory_mod_folder_paths()
+        if not selected_mod_folder_paths:
+            message = "Select at least one installed mod row to sync to sandbox."
+            self._set_status(message)
+            return
+
+        if self._current_scan_target() != SCAN_TARGET_CONFIGURED_REAL_MODS:
+            message = (
+                "Sync selected to sandbox only works while scanning the configured real Mods path."
+            )
+            self._set_status(message)
+            return
+
+        readiness = self._shell_service.get_sandbox_mods_sync_readiness(
+            configured_mods_path_text=self._mods_path_input.text(),
+            sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+            selected_mod_folder_paths_text=selected_mod_folder_paths,
+            existing_config=self._config,
+        )
+        if not readiness.ready:
+            self._set_status(readiness.message)
+            return
+
+        selected_count = len(selected_mod_folder_paths)
+        self._run_background_operation(
+            operation_name="Sandbox sync",
+            running_label="Sandbox sync",
+            started_status=(
+                f"Syncing {selected_count} selected mod(s) from real Mods to sandbox..."
+            ),
+            error_title="Sandbox sync failed",
+            task_fn=lambda _paths=selected_mod_folder_paths: self._shell_service.sync_installed_mods_to_sandbox(
+                configured_mods_path_text=self._mods_path_input.text(),
+                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                selected_mod_folder_paths_text=_paths,
+                existing_config=self._config,
+            ),
+            on_success=self._on_sync_selected_mods_to_sandbox_completed,
+        )
+
+    def _on_sync_selected_mods_to_sandbox_completed(
+        self,
+        result: SandboxModsSyncResult,
+    ) -> None:
+        self._set_details_text(_build_sandbox_mods_sync_result_text(result))
+        self._set_status(
+            f"Sandbox sync complete: {len(result.synced_target_paths)} mod(s) copied."
+        )
 
     def _apply_discovery_filter(self, *_: object) -> None:
         filter_text = self._discovery_filter_input.text()
@@ -4047,6 +4218,25 @@ def _format_recovery_execution_record(record: RecoveryExecutionRecord) -> str:
     if record.failure_message:
         return f"{summary} | failure={record.failure_message}"
     return summary
+
+
+def _build_sandbox_mods_sync_result_text(result: SandboxModsSyncResult) -> str:
+    lines = [
+        "Sandbox sync result",
+        f"Direction: real Mods -> sandbox Mods",
+        f"Configured real Mods path: {result.real_mods_path}",
+        f"Sandbox Mods path: {result.sandbox_mods_path}",
+        f"Copied targets: {len(result.synced_target_paths)}",
+    ]
+    if result.source_mod_paths:
+        lines.append("Source mod folders")
+        lines.extend(f"- {path}" for path in result.source_mod_paths)
+    if result.synced_target_paths:
+        lines.append("Sandbox target folders")
+        lines.extend(f"- {path}" for path in result.synced_target_paths)
+    lines.append("")
+    lines.append("Next step: switch scan source to Sandbox Mods and Scan to inspect the copied dev set.")
+    return "\n".join(lines)
 
 
 def _discovery_source_label(provider: str) -> str:

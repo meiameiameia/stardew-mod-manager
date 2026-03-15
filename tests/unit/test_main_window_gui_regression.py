@@ -382,6 +382,22 @@ def test_main_window_install_target_updates_context_archive_label_and_status(
     assert "REAL game Mods path" in status_label.text()
 
 
+def test_main_window_install_target_combo_uses_readability_contract(
+    main_window: MainWindow,
+) -> None:
+    install_target_combo = main_window.findChild(QComboBox, "plan_install_target_combo")
+
+    assert install_target_combo is not None
+    assert install_target_combo.minimumContentsLength() >= 28
+    assert (
+        install_target_combo.sizeAdjustPolicy()
+        == QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow
+    )
+    assert install_target_combo.view().minimumWidth() > 0
+    assert install_target_combo.itemText(0) == "Sandbox Mods destination (safe/test)"
+    assert install_target_combo.itemText(1) == "Game Mods destination (real)"
+
+
 def test_main_window_sandbox_dev_launch_starts_disabled_until_setup_is_sufficient(
     main_window: MainWindow,
     qapp: QApplication,
@@ -482,6 +498,177 @@ def test_main_window_sandbox_dev_launch_delegates_and_updates_status(
     assert str(sandbox_mods) in main_window._status_strip_label.text()
     assert runtime_label is not None
     assert runtime_label.text() == "Started"
+
+
+def test_main_window_sandbox_sync_action_is_hidden_and_inert_without_selection(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    sync_actions = main_window.findChild(QWidget, "inventory_sandbox_sync_actions")
+    sync_button = main_window.findChild(QPushButton, "inventory_sync_selected_to_sandbox_button")
+
+    assert sync_actions is not None
+    assert sync_button is not None
+    assert sync_actions.isVisible() is False
+    assert sync_button.isEnabled() is False
+
+    main_window._on_sync_selected_mods_to_sandbox()
+    qapp.processEvents()
+
+    assert (
+        main_window._status_strip_label.text()
+        == "Select at least one installed mod row to sync to sandbox."
+    )
+
+
+def test_main_window_sandbox_sync_button_enables_only_for_real_scan_with_valid_paths_and_selection(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    (real_mods / "AlphaMod").mkdir()
+
+    inventory = _inventory_for_sandbox_sync_ui_tests(real_mods)
+    sync_actions = main_window.findChild(QWidget, "inventory_sandbox_sync_actions")
+    sync_button = main_window.findChild(QPushButton, "inventory_sync_selected_to_sandbox_button")
+    scan_target_combo = main_window._scan_target_combo
+
+    assert sync_actions is not None
+    assert sync_button is not None
+
+    main_window._mods_path_input.setText(str(real_mods))
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+    main_window._render_inventory(inventory)
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert alpha_row >= 0
+    main_window._mods_table.setCurrentCell(alpha_row, 0)
+    qapp.processEvents()
+
+    assert sync_actions.isVisible() is True
+    assert sync_button.isEnabled() is True
+    assert "Ready to sync 1 selected mod(s)" in sync_button.toolTip()
+
+    sandbox_index = scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert sandbox_index >= 0
+    scan_target_combo.setCurrentIndex(sandbox_index)
+    qapp.processEvents()
+
+    assert sync_button.isEnabled() is False
+    assert "only works while scanning the configured real Mods path" in sync_button.toolTip()
+
+
+def test_main_window_sandbox_sync_delegates_and_updates_status_and_details(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    source_mod = real_mods / "AlphaMod"
+    target_mod = sandbox_mods / "AlphaMod"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    source_mod.mkdir()
+    inventory = _inventory_for_sandbox_sync_ui_tests(real_mods)
+    sync_button = main_window.findChild(QPushButton, "inventory_sync_selected_to_sandbox_button")
+    captured: dict[str, object] = {}
+
+    assert sync_button is not None
+
+    main_window._mods_path_input.setText(str(real_mods))
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+    main_window._render_inventory(inventory)
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert alpha_row >= 0
+    main_window._mods_table.setCurrentCell(alpha_row, 0)
+    qapp.processEvents()
+
+    def _fake_sync_installed_mods_to_sandbox(**kwargs):
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(
+            real_mods_path=real_mods,
+            sandbox_mods_path=sandbox_mods,
+            source_mod_paths=(source_mod,),
+            synced_target_paths=(target_mod,),
+        )
+
+    def _run_immediately(
+        *,
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+    ) -> None:
+        captured["operation_name"] = operation_name
+        captured["running_label"] = running_label
+        captured["started_status"] = started_status
+        captured["error_title"] = error_title
+        on_success(task_fn())
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "sync_installed_mods_to_sandbox",
+        _fake_sync_installed_mods_to_sandbox,
+    )
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
+
+    sync_button.click()
+    qapp.processEvents()
+
+    assert captured["operation_name"] == "Sandbox sync"
+    assert captured["running_label"] == "Sandbox sync"
+    assert captured["error_title"] == "Sandbox sync failed"
+    assert "Syncing 1 selected mod(s)" in str(captured["started_status"])
+    assert captured["kwargs"] == {
+        "configured_mods_path_text": str(real_mods),
+        "sandbox_mods_path_text": str(sandbox_mods),
+        "selected_mod_folder_paths_text": (str(source_mod),),
+        "existing_config": None,
+    }
+    assert main_window._status_strip_label.text() == "Sandbox sync complete: 1 mod(s) copied."
+    assert "Sandbox sync result" in main_window._findings_box.toPlainText()
+    assert str(target_mod) in main_window._findings_box.toPlainText()
+
+
+def test_main_window_sandbox_sync_conflict_sets_clear_status(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    source_mod = real_mods / "AlphaMod"
+    target_mod = sandbox_mods / "AlphaMod"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    source_mod.mkdir()
+    target_mod.mkdir()
+    inventory = _inventory_for_sandbox_sync_ui_tests(real_mods)
+    sync_button = main_window.findChild(QPushButton, "inventory_sync_selected_to_sandbox_button")
+
+    assert sync_button is not None
+
+    main_window._mods_path_input.setText(str(real_mods))
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+    main_window._render_inventory(inventory)
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert alpha_row >= 0
+    main_window._mods_table.setCurrentCell(alpha_row, 0)
+    qapp.processEvents()
+
+    assert sync_button.isEnabled() is False
+
+    main_window._on_sync_selected_mods_to_sandbox()
+    qapp.processEvents()
+
+    assert "sandbox target already exists for AlphaMod" in main_window._status_strip_label.text()
 
 
 def test_main_window_inventory_update_actionability_filter_exists_with_default_all(
@@ -3847,6 +4034,27 @@ def _inventory_for_update_actionability_tests() -> ModsInventory:
                 name="Gamma Mod",
                 unique_id="Sample.Gamma",
                 folder_name="GammaMod",
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+
+
+def _inventory_for_sandbox_sync_ui_tests(real_mods_root: Path) -> ModsInventory:
+    folder_path = real_mods_root / "AlphaMod"
+    return ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=folder_path,
+                manifest_path=folder_path / "manifest.json",
+                dependencies=tuple(),
             ),
         ),
         parse_warnings=tuple(),

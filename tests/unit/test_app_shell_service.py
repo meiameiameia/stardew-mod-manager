@@ -376,9 +376,94 @@ def test_launch_game_sandbox_dev_uses_smapi_with_sandbox_mods_override(tmp_path:
     )
     assert result.mode == "sandbox_dev_smapi"
     assert result.game_path == game_path
+    assert result.pid == 42424
     assert result.executable_path == smapi_executable
     assert result.mods_path_override == sandbox_mods
-    assert result.pid == 42424
+
+
+def test_get_sandbox_mods_sync_readiness_requires_selection(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+
+    readiness = service.get_sandbox_mods_sync_readiness(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        selected_mod_folder_paths_text=tuple(),
+        existing_config=None,
+    )
+
+    assert readiness.ready is False
+    assert readiness.message == "Select at least one installed mod row to sync to sandbox."
+
+
+def test_sync_installed_mods_to_sandbox_copies_selected_real_mod(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    source_mod = _create_mod(real_mods, "SampleMod", "Sample.Mod")
+    (source_mod / "config.json").write_text('{"ok": true}', encoding="utf-8")
+
+    result = service.sync_installed_mods_to_sandbox(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        selected_mod_folder_paths_text=(str(source_mod),),
+        existing_config=None,
+    )
+
+    target_mod = sandbox_mods / "SampleMod"
+    assert result.real_mods_path == real_mods
+    assert result.sandbox_mods_path == sandbox_mods
+    assert result.source_mod_paths == (source_mod,)
+    assert result.synced_target_paths == (target_mod,)
+    assert (target_mod / "manifest.json").exists()
+    assert (target_mod / "config.json").read_text(encoding="utf-8") == '{"ok": true}'
+
+
+def test_get_sandbox_mods_sync_readiness_reports_conflict(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    source_mod = _create_mod(real_mods, "SampleMod", "Sample.Mod")
+    _create_mod(sandbox_mods, "SampleMod", "Sample.Mod")
+
+    readiness = service.get_sandbox_mods_sync_readiness(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        selected_mod_folder_paths_text=(str(source_mod),),
+        existing_config=None,
+    )
+
+    assert readiness.ready is False
+    assert "sandbox target already exists for SampleMod" in readiness.message
+
+
+def test_sync_installed_mods_to_sandbox_rejects_mod_outside_real_mods(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    external_mods = tmp_path / "OtherMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    external_mods.mkdir()
+    external_mod = _create_mod(external_mods, "OutsideMod", "Outside.Mod")
+
+    with pytest.raises(
+        AppShellError,
+        match="Selected mod folder must be a direct child of the selected Mods destination.",
+    ):
+        service.sync_installed_mods_to_sandbox(
+            configured_mods_path_text=str(real_mods),
+            sandbox_mods_path_text=str(sandbox_mods),
+            selected_mod_folder_paths_text=(str(external_mod),),
+            existing_config=None,
+        )
 
 
 def test_check_smapi_update_status_uses_saved_game_path_when_input_empty(tmp_path: Path) -> None:

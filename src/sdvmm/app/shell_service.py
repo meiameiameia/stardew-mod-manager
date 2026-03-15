@@ -184,6 +184,23 @@ class SandboxDevLaunchReadiness:
 
 
 @dataclass(frozen=True, slots=True)
+class SandboxModsSyncReadiness:
+    ready: bool
+    message: str
+    real_mods_path: Path | None = None
+    sandbox_mods_path: Path | None = None
+    selected_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxModsSyncResult:
+    real_mods_path: Path
+    sandbox_mods_path: Path
+    source_mod_paths: tuple[Path, ...]
+    synced_target_paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class InstallTargetSafetyDecision:
     allowed: bool
     message: str | None
@@ -782,6 +799,62 @@ class AppShellService:
             executable_path=command.executable_path,
             pid=pid,
             mods_path_override=sandbox_mods_path,
+        )
+
+    def get_sandbox_mods_sync_readiness(
+        self,
+        *,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        selected_mod_folder_paths_text: Iterable[str],
+        existing_config: AppConfig | None = None,
+    ) -> SandboxModsSyncReadiness:
+        try:
+            real_mods_path, sandbox_mods_path, source_paths = self._resolve_sandbox_mod_sync_context(
+                configured_mods_path_text=configured_mods_path_text,
+                sandbox_mods_path_text=sandbox_mods_path_text,
+                selected_mod_folder_paths_text=selected_mod_folder_paths_text,
+                existing_config=existing_config,
+            )
+        except AppShellError as exc:
+            return SandboxModsSyncReadiness(ready=False, message=str(exc))
+
+        return SandboxModsSyncReadiness(
+            ready=True,
+            message=(
+                f"Ready to sync {len(source_paths)} selected mod(s) "
+                "from real Mods into sandbox Mods."
+            ),
+            real_mods_path=real_mods_path,
+            sandbox_mods_path=sandbox_mods_path,
+            selected_count=len(source_paths),
+        )
+
+    def sync_installed_mods_to_sandbox(
+        self,
+        *,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        selected_mod_folder_paths_text: Iterable[str],
+        existing_config: AppConfig | None = None,
+    ) -> SandboxModsSyncResult:
+        real_mods_path, sandbox_mods_path, source_paths = self._resolve_sandbox_mod_sync_context(
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            selected_mod_folder_paths_text=selected_mod_folder_paths_text,
+            existing_config=existing_config,
+        )
+        synced_target_paths: list[Path] = []
+        for source_path in source_paths:
+            target_path = sandbox_mods_path / source_path.name
+            shutil.copytree(source_path, target_path)
+            synced_target_paths.append(target_path)
+
+        return SandboxModsSyncResult(
+            real_mods_path=real_mods_path,
+            sandbox_mods_path=sandbox_mods_path,
+            source_mod_paths=source_paths,
+            synced_target_paths=tuple(synced_target_paths),
         )
 
     def check_smapi_update_status(
@@ -2067,6 +2140,90 @@ class AppShellService:
             argv=(*command.argv, "--mods-path", str(sandbox_mods_path)),
         )
         return game_path, sandbox_mods_path, sandbox_command
+
+    def _resolve_sandbox_mod_sync_context(
+        self,
+        *,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        selected_mod_folder_paths_text: Iterable[str],
+        existing_config: AppConfig | None,
+    ) -> tuple[Path, Path, tuple[Path, ...]]:
+        real_mods_path = self._resolve_optional_real_mods_path(
+            configured_mods_path_text=configured_mods_path_text,
+            existing_config=existing_config,
+        )
+        if real_mods_path is None:
+            raise AppShellError("Configured real Mods directory is required for sandbox sync.")
+
+        sandbox_mods_path = self._resolve_optional_sandbox_mods_path(
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            existing_config=existing_config,
+        )
+        if sandbox_mods_path is None:
+            raise AppShellError("Sandbox Mods directory is required for sandbox sync.")
+
+        if _paths_deterministically_match(real_mods_path, sandbox_mods_path):
+            raise AppShellError(
+                "Sandbox sync is blocked: sandbox Mods path matches the configured real Mods path."
+            )
+
+        source_paths = self._resolve_selected_real_mod_paths(
+            real_mods_path=real_mods_path,
+            selected_mod_folder_paths_text=selected_mod_folder_paths_text,
+        )
+
+        conflicting_targets = tuple(
+            sandbox_mods_path / source_path.name
+            for source_path in source_paths
+            if (sandbox_mods_path / source_path.name).exists()
+        )
+        if conflicting_targets:
+            conflict_names = ", ".join(target.name for target in conflicting_targets[:3])
+            if len(conflicting_targets) == 1:
+                raise AppShellError(
+                    "Sandbox sync blocked: sandbox target already exists for "
+                    f"{conflict_names}. Remove or archive the sandbox copy first."
+                )
+            raise AppShellError(
+                "Sandbox sync blocked: sandbox targets already exist for "
+                f"{conflict_names}. Remove or archive those sandbox copies first."
+            )
+
+        return real_mods_path, sandbox_mods_path, source_paths
+
+    def _resolve_selected_real_mod_paths(
+        self,
+        *,
+        real_mods_path: Path,
+        selected_mod_folder_paths_text: Iterable[str],
+    ) -> tuple[Path, ...]:
+        deduplicated_paths: list[Path] = []
+        seen_keys: set[str] = set()
+        for raw_value in selected_mod_folder_paths_text:
+            path_text = str(raw_value).strip()
+            if not path_text:
+                continue
+            source_path = Path(path_text).expanduser()
+            key = str(source_path.resolve(strict=False))
+            if os.name == "nt":
+                key = key.casefold()
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduplicated_paths.append(source_path)
+
+        if not deduplicated_paths:
+            raise AppShellError("Select at least one installed mod row to sync to sandbox.")
+
+        validated_paths = [
+            self._parse_and_validate_selected_mod_path(
+                mods_path=real_mods_path,
+                mod_folder_path_text=str(source_path),
+            )
+            for source_path in deduplicated_paths
+        ]
+        return tuple(validated_paths)
 
     def _resolve_archive_path_for_source(
         self,
