@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QTableWidget,
     QTabWidget,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -1371,7 +1372,10 @@ def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: Mai
 def test_main_window_plan_install_surface_has_expected_structure(
     main_window: MainWindow,
 ) -> None:
+    inventory_tabs = main_window._inventory_controls_tabs
+    inventory_shell = main_window.findChild(QWidget, "inventory_tabs_shell_container")
     context_tabs = main_window._context_tabs
+    context_shell = main_window.findChild(QWidget, "context_tabs_shell_container")
     plan_tab = main_window.findChild(QWidget, "plan_install_tab")
     plan_scroll = main_window.findChild(QScrollArea, "plan_install_scroll_area")
     plan_content = main_window.findChild(QWidget, "plan_install_tab_content")
@@ -1383,7 +1387,11 @@ def test_main_window_plan_install_surface_has_expected_structure(
     plan_facts_group = main_window.findChild(QGroupBox, "plan_install_facts_group")
     recovery_group = main_window.findChild(QGroupBox, "recovery_inspection_group")
 
+    assert inventory_tabs is not None
+    assert inventory_shell is not None
     assert context_tabs is not None
+    assert context_shell is not None
+    assert isinstance(inventory_tabs, QTabWidget)
     assert isinstance(context_tabs, QTabWidget)
     assert plan_tab is not None
     assert plan_scroll is not None
@@ -1399,6 +1407,32 @@ def test_main_window_plan_install_surface_has_expected_structure(
     tab_labels = {context_tabs.tabText(index) for index in range(context_tabs.count())}
     assert "Plan & Install" in tab_labels
     assert context_tabs.indexOf(plan_tab) >= 0
+    assert inventory_tabs.parentWidget() is inventory_shell
+    assert context_tabs.parentWidget() is context_shell
+    inventory_layout = inventory_shell.parentWidget().layout()
+    inventory_shell_layout = inventory_shell.layout()
+    shell_layout = context_shell.layout()
+    assert isinstance(inventory_layout, QVBoxLayout)
+    assert isinstance(inventory_shell_layout, QVBoxLayout)
+    assert isinstance(shell_layout, QVBoxLayout)
+    inventory_root_margins = inventory_layout.contentsMargins()
+    inventory_margins = inventory_shell_layout.contentsMargins()
+    margins = shell_layout.contentsMargins()
+    assert (
+        inventory_root_margins.left(),
+        inventory_root_margins.top(),
+        inventory_root_margins.right(),
+        inventory_root_margins.bottom(),
+    ) == (6, 0, 6, 4)
+    assert (
+        inventory_margins.left(),
+        inventory_margins.top(),
+        inventory_margins.right(),
+        inventory_margins.bottom(),
+    ) == (0, 4, 0, 0)
+    assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (0, 5, 0, 0)
+    assert "QTabWidget::pane { margin-top: 4px; }" in inventory_tabs.styleSheet()
+    assert "QTabWidget::pane { margin-top: 4px; }" in context_tabs.styleSheet()
 
     assert plan_scroll.parentWidget() is plan_tab
     assert plan_scroll.widget() is plan_content

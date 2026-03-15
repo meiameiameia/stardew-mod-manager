@@ -524,6 +524,22 @@ class MainWindow(QMainWindow):
         self._refresh_intake_selector()
         self._load_startup_state()
 
+    def _build_workspace_tabs_shell(
+        self,
+        tabs: QTabWidget,
+        *,
+        object_name: str,
+        top_margin: int = 4,
+    ) -> QWidget:
+        tabs.setStyleSheet("QTabWidget::pane { margin-top: 4px; }")
+        shell = QWidget()
+        shell.setObjectName(object_name)
+        shell_layout = QVBoxLayout(shell)
+        shell_layout.setContentsMargins(0, top_margin, 0, 0)
+        shell_layout.setSpacing(0)
+        shell_layout.addWidget(tabs)
+        return shell
+
     def _build_layout(self) -> None:
         container = QWidget()
         root_layout = QVBoxLayout(container)
@@ -593,7 +609,7 @@ class MainWindow(QMainWindow):
         inventory_group.setMinimumWidth(460)
         inventory_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         inventory_layout = QVBoxLayout(inventory_group)
-        inventory_layout.setContentsMargins(6, 4, 6, 4)
+        inventory_layout.setContentsMargins(6, 0, 6, 4)
         inventory_layout.setSpacing(4)
 
         inventory_controls_tabs = QTabWidget()
@@ -696,8 +712,13 @@ class MainWindow(QMainWindow):
         flow_hint_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         self._inventory_flow_hint_label = flow_hint_label
 
-        inventory_layout.addWidget(_section_label("Installed Mods Workspace"))
-        inventory_layout.addWidget(inventory_controls_tabs)
+        inventory_tabs_shell = self._build_workspace_tabs_shell(
+            inventory_controls_tabs,
+            object_name="inventory_tabs_shell_container",
+            top_margin=4,
+        )
+        self._inventory_tabs_shell = inventory_tabs_shell
+        inventory_layout.addWidget(inventory_tabs_shell)
         inventory_layout.addLayout(inventory_filter_row)
         inventory_layout.addWidget(self._inventory_update_guidance_label)
         inventory_layout.addWidget(self._inventory_blocked_detail_label)
@@ -941,7 +962,14 @@ class MainWindow(QMainWindow):
         context_tabs.addTab(plan_tab, "Plan & Install")
         self._plan_install_tab = plan_tab
 
-        workspace_splitter.addWidget(context_tabs)
+        context_tabs_shell = self._build_workspace_tabs_shell(
+            context_tabs,
+            object_name="context_tabs_shell_container",
+            top_margin=5,
+        )
+        self._context_tabs_shell = context_tabs_shell
+
+        workspace_splitter.addWidget(context_tabs_shell)
         workspace_splitter.setCollapsible(0, False)
         workspace_splitter.setCollapsible(1, False)
         workspace_splitter.setSizes([800, 540])
