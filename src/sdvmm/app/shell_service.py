@@ -121,6 +121,7 @@ from sdvmm.services.mod_discovery import (
 )
 from sdvmm.services.game_launcher import (
     GameLaunchError,
+    LaunchCommand,
     launch_game_process,
     resolve_launch_command,
 )
@@ -170,6 +171,16 @@ class LaunchStartResult:
     game_path: Path
     executable_path: Path
     pid: int
+    mods_path_override: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxDevLaunchReadiness:
+    ready: bool
+    message: str
+    game_path: Path | None = None
+    sandbox_mods_path: Path | None = None
+    executable_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -717,6 +728,60 @@ class AppShellService:
             game_path=game_path,
             executable_path=command.executable_path,
             pid=pid,
+        )
+
+    def get_sandbox_dev_launch_readiness(
+        self,
+        *,
+        game_path_text: str,
+        sandbox_mods_path_text: str,
+        configured_mods_path_text: str,
+        existing_config: AppConfig | None = None,
+    ) -> SandboxDevLaunchReadiness:
+        try:
+            game_path, sandbox_mods_path, command = self._resolve_sandbox_dev_launch_context(
+                game_path_text=game_path_text,
+                sandbox_mods_path_text=sandbox_mods_path_text,
+                configured_mods_path_text=configured_mods_path_text,
+                existing_config=existing_config,
+            )
+        except AppShellError as exc:
+            return SandboxDevLaunchReadiness(ready=False, message=str(exc))
+
+        return SandboxDevLaunchReadiness(
+            ready=True,
+            message=(
+                "Ready to launch sandbox dev with SMAPI using the configured sandbox Mods path."
+            ),
+            game_path=game_path,
+            sandbox_mods_path=sandbox_mods_path,
+            executable_path=command.executable_path,
+        )
+
+    def launch_game_sandbox_dev(
+        self,
+        *,
+        game_path_text: str,
+        sandbox_mods_path_text: str,
+        configured_mods_path_text: str,
+        existing_config: AppConfig | None = None,
+    ) -> LaunchStartResult:
+        game_path, sandbox_mods_path, command = self._resolve_sandbox_dev_launch_context(
+            game_path_text=game_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            configured_mods_path_text=configured_mods_path_text,
+            existing_config=existing_config,
+        )
+        try:
+            pid = launch_game_process(command)
+        except GameLaunchError as exc:
+            raise AppShellError(str(exc)) from exc
+        return LaunchStartResult(
+            mode="sandbox_dev_smapi",
+            game_path=game_path,
+            executable_path=command.executable_path,
+            pid=pid,
+            mods_path_override=sandbox_mods_path,
         )
 
     def check_smapi_update_status(
@@ -1957,6 +2022,51 @@ class AppShellService:
                 "Saved sandbox Mods path is not accessible",
             )
         return None
+
+    def _resolve_sandbox_dev_launch_context(
+        self,
+        *,
+        game_path_text: str,
+        sandbox_mods_path_text: str,
+        configured_mods_path_text: str,
+        existing_config: AppConfig | None,
+    ) -> tuple[Path, Path, LaunchCommand]:
+        game_path = self._resolve_game_path(game_path_text, existing_config)
+        sandbox_mods_path = self._resolve_optional_sandbox_mods_path(
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            existing_config=existing_config,
+        )
+        if sandbox_mods_path is None:
+            raise AppShellError("Sandbox Mods directory is required for sandbox dev launch.")
+
+        real_mods_path = self._resolve_optional_real_mods_path(
+            configured_mods_path_text=configured_mods_path_text,
+            existing_config=existing_config,
+        )
+        if real_mods_path is not None and _paths_deterministically_match(
+            sandbox_mods_path,
+            real_mods_path,
+        ):
+            raise AppShellError(
+                "Sandbox dev launch is blocked: sandbox Mods path matches the configured real Mods path."
+            )
+
+        try:
+            command = resolve_launch_command(game_path=game_path, mode="smapi")
+        except GameLaunchError as exc:
+            raise AppShellError(str(exc)) from exc
+
+        if command.executable_path.suffix.casefold() == ".sh":
+            raise AppShellError(
+                "Sandbox dev launch requires a direct SMAPI executable target; shell-script SMAPI wrappers are not supported in this stage."
+            )
+
+        sandbox_command = LaunchCommand(
+            mode=command.mode,
+            executable_path=command.executable_path,
+            argv=(*command.argv, "--mods-path", str(sandbox_mods_path)),
+        )
+        return game_path, sandbox_mods_path, sandbox_command
 
     def _resolve_archive_path_for_source(
         self,

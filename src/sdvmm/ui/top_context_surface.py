@@ -21,6 +21,7 @@ class TopContextSurface(QGroupBox):
         nexus_status_label: QLabel,
         watch_status_label: QLabel,
         operation_state_label: QLabel,
+        sandbox_launch_status_label: QLabel,
         scan_context_label: QLabel,
         install_context_label: QLabel,
     ) -> None:
@@ -71,6 +72,8 @@ class TopContextSurface(QGroupBox):
         runtime_layout.addWidget(watch_status_label, 1, 1)
         runtime_layout.addWidget(_context_caption("Operation"), 2, 0)
         runtime_layout.addWidget(operation_state_label, 2, 1)
+        runtime_layout.addWidget(_context_caption("Sandbox launch"), 3, 0)
+        runtime_layout.addWidget(sandbox_launch_status_label, 3, 1)
         runtime_layout.setColumnStretch(1, 1)
         runtime_container_layout.addLayout(runtime_layout)
 

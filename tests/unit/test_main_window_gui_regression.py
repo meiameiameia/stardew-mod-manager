@@ -265,6 +265,7 @@ def test_main_window_top_context_value_labels_exist(main_window: MainWindow) -> 
     label_names = (
         "top_context_environment_status_value",
         "top_context_runtime_nexus_value",
+        "top_context_runtime_sandbox_launch_value",
         "top_context_scan_source_value",
         "top_context_install_destination_value",
     )
@@ -379,6 +380,108 @@ def test_main_window_install_target_updates_context_archive_label_and_status(
     assert install_context_label.toolTip() == r"C:\Game\Mods"
     assert install_archive_label.text() == "Archive path for real Game Mods destination"
     assert "REAL game Mods path" in status_label.text()
+
+
+def test_main_window_sandbox_dev_launch_starts_disabled_until_setup_is_sufficient(
+    main_window: MainWindow,
+    qapp: QApplication,
+    tmp_path: Path,
+) -> None:
+    launch_button = main_window.findChild(QPushButton, "launch_sandbox_dev_button")
+    runtime_label = main_window.findChild(QLabel, "top_context_runtime_sandbox_launch_value")
+
+    assert launch_button is not None
+    assert runtime_label is not None
+    assert launch_button.isEnabled() is False
+    assert runtime_label.text() == "Needs game path"
+
+    game_path = tmp_path / "Game"
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    _create_launchable_game_install_for_ui(game_path)
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+
+    main_window._game_path_input.setText(str(game_path))
+    main_window._mods_path_input.setText(str(real_mods))
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+    qapp.processEvents()
+
+    assert launch_button.isEnabled() is True
+    assert runtime_label.text() == "Ready"
+    assert str(sandbox_mods) in runtime_label.toolTip()
+
+
+def test_main_window_sandbox_dev_launch_error_sets_status_without_launching(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.critical",
+        lambda *args: captured.setdefault("critical_args", args),
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "launch_game_sandbox_dev",
+        lambda **_: (_ for _ in ()).throw(
+            AppShellError("Sandbox Mods directory is required for sandbox dev launch.")
+        ),
+    )
+
+    main_window._on_launch_sandbox_dev()
+
+    runtime_label = main_window.findChild(QLabel, "top_context_runtime_sandbox_launch_value")
+    assert captured.get("critical_args") is not None
+    assert main_window._status_strip_label.text() == (
+        "Sandbox Mods directory is required for sandbox dev launch."
+    )
+    assert runtime_label is not None
+    assert runtime_label.text() == "Needs sandbox Mods path"
+
+
+def test_main_window_sandbox_dev_launch_delegates_and_updates_status(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+    game_path = tmp_path / "Game"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods = tmp_path / "RealMods"
+    smapi_path = game_path / "StardewModdingAPI.exe"
+    sandbox_mods.mkdir()
+    real_mods.mkdir()
+    game_path.mkdir()
+
+    main_window._game_path_input.setText(str(game_path))
+    main_window._mods_path_input.setText(str(real_mods))
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+
+    def _fake_launch_game_sandbox_dev(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            pid=5150,
+            executable_path=smapi_path,
+            mods_path_override=sandbox_mods,
+        )
+
+    monkeypatch.setattr(main_window._shell_service, "launch_game_sandbox_dev", _fake_launch_game_sandbox_dev)
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.critical", lambda *args: None)
+
+    main_window._on_launch_sandbox_dev()
+
+    runtime_label = main_window.findChild(QLabel, "top_context_runtime_sandbox_launch_value")
+    assert captured == {
+        "game_path_text": str(game_path),
+        "sandbox_mods_path_text": str(sandbox_mods),
+        "configured_mods_path_text": str(real_mods),
+        "existing_config": None,
+    }
+    assert "Sandbox dev launch started" in main_window._status_strip_label.text()
+    assert str(sandbox_mods) in main_window._status_strip_label.text()
+    assert runtime_label is not None
+    assert runtime_label.text() == "Started"
 
 
 def test_main_window_inventory_update_actionability_filter_exists_with_default_all(
@@ -3573,6 +3676,13 @@ def _install_recovery_inspection_for_ui(
         recovery_review=recovery_review,
         linked_recovery_history=linked_history,
     )
+
+
+def _create_launchable_game_install_for_ui(game_path: Path) -> None:
+    game_path.mkdir()
+    (game_path / "Mods").mkdir()
+    (game_path / "Stardew Valley.exe").write_text("", encoding="utf-8")
+    (game_path / "StardewModdingAPI.exe").write_text("", encoding="utf-8")
 
 
 def _sandbox_install_plan(

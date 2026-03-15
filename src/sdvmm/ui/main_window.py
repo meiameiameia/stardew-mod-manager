@@ -476,6 +476,10 @@ class MainWindow(QMainWindow):
         self._nexus_status_label.setObjectName("top_context_runtime_nexus_value")
         self._watch_status_label = QLabel("Stopped")
         self._operation_state_label = QLabel("Idle")
+        self._sandbox_launch_status_label = QLabel("Needs sandbox setup")
+        self._sandbox_launch_status_label.setObjectName(
+            "top_context_runtime_sandbox_launch_value"
+        )
         self._scan_context_label.setWordWrap(True)
         self._install_context_label.setWordWrap(True)
         self._details_toggle = QCheckBox("Show detailed output")
@@ -496,8 +500,11 @@ class MainWindow(QMainWindow):
         self._game_path_input.textChanged.connect(self._on_game_path_changed)
         self._mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
         self._mods_path_input.textChanged.connect(self._refresh_install_destination_preview)
+        self._mods_path_input.textChanged.connect(self._refresh_sandbox_dev_launch_state)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_install_destination_preview)
+        self._sandbox_mods_path_input.textChanged.connect(self._refresh_sandbox_dev_launch_state)
+        self._game_path_input.textChanged.connect(self._refresh_sandbox_dev_launch_state)
         self._watched_downloads_path_input.textChanged.connect(self._on_watched_path_changed)
         self._nexus_api_key_input.textChanged.connect(self._on_nexus_key_changed)
         self._intake_result_combo.currentIndexChanged.connect(self._on_intake_selection_changed)
@@ -553,6 +560,7 @@ class MainWindow(QMainWindow):
             nexus_status_label=self._nexus_status_label,
             watch_status_label=self._watch_status_label,
             operation_state_label=self._operation_state_label,
+            sandbox_launch_status_label=self._sandbox_launch_status_label,
             scan_context_label=self._scan_context_label,
             install_context_label=self._install_context_label,
         )
@@ -669,6 +677,11 @@ class MainWindow(QMainWindow):
         self._launch_smapi_button.clicked.connect(self._on_launch_smapi)
         _set_primary_button_style(self._launch_smapi_button)
         game_smapi_layout.addWidget(self._launch_smapi_button, 1, 2)
+        self._launch_sandbox_dev_button = QPushButton("Launch sandbox dev")
+        self._launch_sandbox_dev_button.setObjectName("launch_sandbox_dev_button")
+        self._launch_sandbox_dev_button.clicked.connect(self._on_launch_sandbox_dev)
+        _set_primary_button_style(self._launch_sandbox_dev_button)
+        game_smapi_layout.addWidget(self._launch_sandbox_dev_button, 2, 0, 1, 3)
         game_smapi_layout.setColumnStretch(1, 1)
         game_smapi_layout.setColumnStretch(2, 1)
         inventory_controls_tabs.addTab(game_smapi_tab, "Game / SMAPI")
@@ -1002,6 +1015,7 @@ class MainWindow(QMainWindow):
             self._delete_archived_button,
             self._launch_vanilla_button,
             self._launch_smapi_button,
+            self._launch_sandbox_dev_button,
         )
 
         self.setCentralWidget(container)
@@ -1038,6 +1052,7 @@ class MainWindow(QMainWindow):
         self._refresh_scan_context_preview()
         self._refresh_install_destination_preview()
         self._refresh_nexus_status(validated=False)
+        self._refresh_sandbox_dev_launch_state()
         self._refresh_responsive_panel_bounds()
 
     def resizeEvent(self, event) -> None:  # type: ignore[override]
@@ -1150,6 +1165,7 @@ class MainWindow(QMainWindow):
             return
 
         self._refresh_nexus_status(validated=False)
+        self._refresh_sandbox_dev_launch_state()
         self._set_status(f"Saved config to {self._shell_service.state_file}")
 
     def _on_detect_environment(self) -> None:
@@ -1176,6 +1192,7 @@ class MainWindow(QMainWindow):
                 "SMAPI log auto-detection requires a valid game path context."
             )
         self._set_details_text(build_environment_status_text(status))
+        self._refresh_sandbox_dev_launch_state()
         self._set_status("Environment detection complete.")
 
     def _on_launch_vanilla(self) -> None:
@@ -1207,6 +1224,33 @@ class MainWindow(QMainWindow):
         self._set_status(
             f"SMAPI launch started (PID {result.pid}): {result.executable_path}"
         )
+
+    def _on_launch_sandbox_dev(self) -> None:
+        try:
+            result = self._shell_service.launch_game_sandbox_dev(
+                game_path_text=self._game_path_input.text(),
+                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                configured_mods_path_text=self._mods_path_input.text(),
+                existing_config=self._config,
+            )
+        except AppShellError as exc:
+            message = str(exc)
+            QMessageBox.critical(self, "Sandbox dev launch failed", message)
+            self._sandbox_launch_status_label.setText(
+                _sandbox_dev_launch_summary_label(False, message)
+            )
+            self._sandbox_launch_status_label.setToolTip(message)
+            self._set_status(message)
+            return
+
+        launch_message = (
+            "Sandbox dev launch started "
+            f"(PID {result.pid}) via {result.executable_path} using sandbox Mods path "
+            f"{result.mods_path_override}."
+        )
+        self._sandbox_launch_status_label.setText("Started")
+        self._sandbox_launch_status_label.setToolTip(launch_message)
+        self._set_status(launch_message)
 
     def _on_scan(self) -> None:
         self._run_background_operation(
@@ -2697,6 +2741,7 @@ class MainWindow(QMainWindow):
         for button in self._background_action_buttons:
             button.setEnabled(enabled)
         self._discovery_query_input.setEnabled(enabled)
+        self._refresh_sandbox_dev_launch_state()
 
     def _set_details_text(self, text: str) -> None:
         self._findings_box.setPlainText(text)
@@ -2705,6 +2750,29 @@ class MainWindow(QMainWindow):
         self._next_step_strip_label.setText(next_step)
         self._blocking_issues_strip_label.setToolTip(blocking_issue)
         self._next_step_strip_label.setToolTip(next_step)
+
+    def _refresh_sandbox_dev_launch_state(self, *_: object) -> None:
+        readiness = self._shell_service.get_sandbox_dev_launch_readiness(
+            game_path_text=self._game_path_input.text(),
+            sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+            configured_mods_path_text=self._mods_path_input.text(),
+            existing_config=self._config,
+        )
+        summary = _sandbox_dev_launch_summary_label(readiness.ready, readiness.message)
+        tooltip = readiness.message
+        if readiness.ready:
+            tooltip = (
+                f"{readiness.message}\n"
+                f"Launch target: {readiness.executable_path}\n"
+                f"Sandbox Mods path: {readiness.sandbox_mods_path}"
+            )
+        self._sandbox_launch_status_label.setText(summary)
+        self._sandbox_launch_status_label.setToolTip(tooltip)
+        button_enabled = readiness.ready and self._active_operation_name is None
+        self._launch_sandbox_dev_button.setEnabled(button_enabled)
+        self._launch_sandbox_dev_button.setToolTip(
+            tooltip if button_enabled else readiness.message
+        )
 
     def _set_recovery_output_text(self, text: str) -> None:
         self._set_details_text(text)
@@ -2762,6 +2830,7 @@ class MainWindow(QMainWindow):
         self._environment_status_label.setText("Not checked")
         self._smapi_log_status_label.setText("Not checked")
         self._smapi_update_status_label.setText("Not checked")
+        self._refresh_sandbox_dev_launch_state()
 
     def _on_nexus_key_changed(self, *_: object) -> None:
         self._refresh_nexus_status(validated=False)
@@ -4120,6 +4189,21 @@ def _environment_summary_label(status: GameEnvironmentStatus) -> str:
     mods_state = "mods detected" if "mods_path_detected" in status.state_codes else "mods not detected"
     smapi_state = "SMAPI detected" if "smapi_detected" in status.state_codes else "SMAPI not detected"
     return f"{mods_state}, {smapi_state}"
+
+
+def _sandbox_dev_launch_summary_label(ready: bool, message: str) -> str:
+    if ready:
+        return "Ready"
+    lowered = message.casefold()
+    if "matches the configured real mods path" in lowered:
+        return "Blocked: matches real Mods"
+    if "sandbox mods directory" in lowered:
+        return "Needs sandbox Mods path"
+    if "game directory" in lowered or "game path" in lowered:
+        return "Needs game path"
+    if "smapi launch is unavailable" in lowered or "smapi executable target" in lowered:
+        return "SMAPI unavailable"
+    return "Not ready"
 
 
 def _nexus_status_label(state: str, masked_key: str | None) -> str:

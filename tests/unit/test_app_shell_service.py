@@ -291,6 +291,96 @@ def test_launch_game_smapi_is_blocked_when_not_detected(tmp_path: Path) -> None:
         service.launch_game_smapi(game_path_text=str(game_path), existing_config=None)
 
 
+def test_get_sandbox_dev_launch_readiness_reports_missing_game_path(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+
+    readiness = service.get_sandbox_dev_launch_readiness(
+        game_path_text="",
+        sandbox_mods_path_text="",
+        configured_mods_path_text="",
+        existing_config=None,
+    )
+
+    assert readiness.ready is False
+    assert readiness.message == "Game directory is required"
+
+
+def test_get_sandbox_dev_launch_readiness_reports_smapi_unavailable(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    game_path = tmp_path / "Game"
+    sandbox_mods = tmp_path / "SandboxMods"
+    _create_launchable_game_install(game_path, with_smapi=False)
+    sandbox_mods.mkdir()
+
+    readiness = service.get_sandbox_dev_launch_readiness(
+        game_path_text=str(game_path),
+        sandbox_mods_path_text=str(sandbox_mods),
+        configured_mods_path_text="",
+        existing_config=None,
+    )
+
+    assert readiness.ready is False
+    assert "SMAPI launch is unavailable" in readiness.message
+
+
+def test_get_sandbox_dev_launch_readiness_blocks_matching_real_mods_path(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    game_path = tmp_path / "Game"
+    mods_path = tmp_path / "Mods"
+    _create_launchable_game_install(game_path)
+    mods_path.mkdir()
+
+    readiness = service.get_sandbox_dev_launch_readiness(
+        game_path_text=str(game_path),
+        sandbox_mods_path_text=str(mods_path),
+        configured_mods_path_text=str(mods_path),
+        existing_config=None,
+    )
+
+    assert readiness.ready is False
+    assert "matches the configured real Mods path" in readiness.message
+
+
+def test_launch_game_sandbox_dev_uses_smapi_with_sandbox_mods_override(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    game_path = tmp_path / "Game"
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    smapi_executable = _create_launchable_game_install(game_path)
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    captured: dict[str, object] = {}
+
+    def _fake_launch(command):
+        captured["command"] = command
+        return 42424
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(shell_service_module, "launch_game_process", _fake_launch)
+    try:
+        result = service.launch_game_sandbox_dev(
+            game_path_text=str(game_path),
+            sandbox_mods_path_text=str(sandbox_mods),
+            configured_mods_path_text=str(real_mods),
+            existing_config=None,
+        )
+    finally:
+        monkeypatch.undo()
+
+    command = captured.get("command")
+    assert command is not None
+    assert command.argv == (
+        str(smapi_executable),
+        "--mods-path",
+        str(sandbox_mods),
+    )
+    assert result.mode == "sandbox_dev_smapi"
+    assert result.game_path == game_path
+    assert result.executable_path == smapi_executable
+    assert result.mods_path_override == sandbox_mods
+    assert result.pid == 42424
+
+
 def test_check_smapi_update_status_uses_saved_game_path_when_input_empty(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
     game_path = tmp_path / "Game"
@@ -3673,6 +3763,16 @@ def test_correlate_intake_with_updates_new_install_candidate_has_default_flow_me
     assert correlation.actionable is True
     assert "new install candidate" in correlation.summary.casefold()
     assert "plan install" in correlation.next_step.casefold()
+
+
+def _create_launchable_game_install(game_path: Path, *, with_smapi: bool = True) -> Path:
+    game_path.mkdir()
+    (game_path / "Mods").mkdir()
+    (game_path / "Stardew Valley.exe").write_text("", encoding="utf-8")
+    smapi_executable = game_path / "StardewModdingAPI.exe"
+    if with_smapi:
+        smapi_executable.write_text("", encoding="utf-8")
+    return smapi_executable
 
 
 def _empty_inventory():
