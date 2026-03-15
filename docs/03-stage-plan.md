@@ -105,8 +105,9 @@ Why this phase is current priority:
 Likely scope:
 
 - conflict preview / promotion clarity
+- preview + archive-aware replace for sandbox -> real conflicts
 - open sandbox / real Mods convenience actions
-- automatic rescan or destination-focus decisions after sync/promotion
+- automatic rescan of the destination after sync/promotion without switching context unless necessary
 - clearer launch/readiness explanation for sandbox workflow
 
 Validation gate:
@@ -126,7 +127,7 @@ Explicitly out of scope:
 
 Planned scope:
 
-- archive-aware replace/promotion policy if block-on-conflict becomes too limiting
+- extend preview/review and archive-aware replace once the first ergonomics slice proves the policy shape
 - stronger preview/review surfaces for live promotion and recovery
 - auditability improvements for live-write workflows
 

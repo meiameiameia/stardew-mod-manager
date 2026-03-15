@@ -48,6 +48,8 @@ The app is no longer just a scanner. It now has a coherent local workflow:
 
 The product is not feature-complete for public release, but it is materially beyond prototype state.
 
+The near-term product direction now explicitly includes a mod-development workflow, not only general end-user mod management.
+
 ## Current Architecture
 
 ### High-level layers
@@ -135,7 +137,7 @@ Current behavior is intentionally conservative:
 
 The next unresolved product question is:
 
-> Should the next step stay block-on-conflict, or move to archive-then-replace with an explicit preview/review step?
+> How should the app land preview + archive-aware replace without making live promotion feel casual or opaque?
 
 ### 2. `MainWindow` is still the densest integration point
 
@@ -216,7 +218,7 @@ Current recommendation:
 This phase should determine which one small improvement matters most:
 
 - conflict preview before promotion
-- archive-aware replace policy
+- preview + archive-aware replace policy
 - open sandbox / real Mods convenience actions
 - auto-rescan / destination-focus after sync or promotion
 
@@ -265,7 +267,7 @@ Question:
 
 Question:
 
-> After launch/sync/promotion foundation exists, which one improvement most increases trust and repeated use: preview, archive-replace, open-folder conveniences, or launch-after-action convenience?
+> Given that the intended near-term audience includes mod developers, what sequence best balances trust and speed: preview + archive-aware replace first, open-folder conveniences second, and broader compare/launch conveniences later?
 
 ## Explicit Constraints for the External Audit
 
@@ -299,7 +301,7 @@ A useful audit response should include:
 - architecture risks ordered by severity
 - roadmap-order challenges, if any
 - whether the sandbox dev-loop track is correctly prioritized
-- whether the promotion flow should stay conservative or move to archive-aware replace
+- how preview + archive-aware replace should be introduced without weakening live-write trust
 - concrete suggestions for improving sandbox-dev ergonomics without weakening real-Mods safety
 - criteria for when the app is ready to resume later UI/UX consolidation work
 - the next 3-5 smallest safe increments, ordered by product value

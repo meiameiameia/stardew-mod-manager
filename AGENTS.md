@@ -48,6 +48,7 @@ It does not replace the thread-specific role prompt for the ARCHITECT or the EXE
 - Treat `real -> sandbox` sync and `sandbox -> real` promotion as intentionally asymmetric:
   - `real -> sandbox` may be an explicit selected-mod sync
   - `sandbox -> real` must remain a managed promotion flow with real-Mods safety semantics
+- When `sandbox -> real` promotion grows beyond block-on-conflict, prefer preview/review plus archive-aware replace over overwrite shortcuts.
 - Do not introduce raw bidirectional mirroring that bypasses archive/recovery guarantees for live Mods.
 - No premium-bypass behavior.
 - No scraping or browser automation for downloads.
