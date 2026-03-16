@@ -95,6 +95,7 @@ from sdvmm.services.dependency_preflight import (
     summarize_missing_required_dependencies,
 )
 from sdvmm.services.sandbox_installer import (
+    SandboxFileLockError,
     SandboxInstallError,
     _build_archive_destination as _build_archive_destination_service,
     _ensure_archive_root as _ensure_archive_root_service,
@@ -140,6 +141,10 @@ from sdvmm.services.smapi_log import (
 
 class AppShellError(ValueError):
     """Recoverable UI-facing error for config and scan actions."""
+
+    def __init__(self, message: str, *, detail_message: str | None = None) -> None:
+        super().__init__(message)
+        self.detail_message = detail_message or message
 
 
 @dataclass(frozen=True, slots=True)
@@ -1777,6 +1782,8 @@ class AppShellService:
             completed_result = replace(result, destination_kind=plan.destination_kind)
             self._record_completed_install_operation(plan=plan, result=completed_result)
             return completed_result
+        except SandboxFileLockError as exc:
+            raise AppShellError(str(exc), detail_message=exc.technical_detail) from exc
         except SandboxInstallError as exc:
             raise AppShellError(str(exc)) from exc
         except OSError as exc:
@@ -1854,6 +1861,8 @@ class AppShellService:
                 plan.mods_path,
                 excluded_paths=(plan.archive_path, plan.mods_path / _LEGACY_ARCHIVE_DIRNAME),
             )
+        except SandboxFileLockError as exc:
+            raise AppShellError(str(exc), detail_message=exc.technical_detail) from exc
         except SandboxInstallError as exc:
             raise AppShellError(str(exc)) from exc
         except OSError as exc:
