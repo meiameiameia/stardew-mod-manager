@@ -2971,6 +2971,53 @@ def test_main_window_run_install_confirm_flow_executes_successfully(
     assert main_window._findings_box.toPlainText() == "install ok"
 
 
+def test_main_window_run_install_lock_failure_keeps_dialog_concise_and_details_technical(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sandbox_plan = _sandbox_install_plan(
+        destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+        action=OVERWRITE_WITH_ARCHIVE,
+        target_exists=True,
+        archive_path=Path(r"C:\Sandbox\.sdvmm-sandbox-archive\SampleMod__sdvmm_archive_001"),
+    )
+    captured: dict[str, object] = {}
+    friendly_message = (
+        "Sandbox write failed because Windows is still using files in the target mod folder. "
+        "Close Explorer windows or preview panes for that folder, any editor or terminal using the mod, "
+        "and the sandbox game or SMAPI if it is still running, then try again."
+    )
+    technical_detail = (
+        "Could not archive existing target before overwrite: "
+        r"C:\Sandbox\Mods\SampleMod -> "
+        r"C:\Sandbox\.sdvmm-sandbox-archive\SampleMod__sdvmm_archive_001: "
+        "[WinError 32] The process cannot access the file because it is being used by another process"
+    )
+
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.critical",
+        lambda *args: captured.setdefault("critical_args", args),
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "execute_sandbox_install_plan",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AppShellError(friendly_message, detail_message=technical_detail)
+        ),
+    )
+    main_window._pending_install_plan = sandbox_plan
+
+    main_window._on_run_install()
+
+    assert captured["critical_args"][1:] == ("Install failed", friendly_message)
+    assert main_window._status_strip_label.text() == friendly_message
+    assert main_window._findings_box.toPlainText() == technical_detail
+
+
 def test_main_window_successful_install_selects_new_recorded_install_for_recovery(
     main_window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
@@ -3077,6 +3124,39 @@ def test_main_window_successful_install_does_not_guess_when_new_record_is_ambigu
     assert main_window._status_strip_label.text() == "Sandbox install complete: 1 target(s)"
     assert main_window._findings_box.toPlainText() == "install ok"
     assert main_window._run_recovery_button.isEnabled() is False
+
+
+def test_main_window_background_operation_failure_uses_detailed_output_when_available(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    friendly_message = (
+        "Sandbox write failed because Windows is still using files in the target mod folder. "
+        "Close Explorer windows or preview panes for that folder, any editor or terminal using the mod, "
+        "and the sandbox game or SMAPI if it is still running, then try again."
+    )
+    technical_detail = (
+        "Could not move mod folder to archive: "
+        r"C:\Sandbox\Mods\SampleMod -> "
+        r"C:\Sandbox\.sdvmm-sandbox-archive\SampleMod__sdvmm_archive_001: "
+        "[WinError 5] Access is denied"
+    )
+
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.critical",
+        lambda *args: captured.setdefault("critical_args", args),
+    )
+
+    main_window._on_background_operation_failed(
+        "Mod removal",
+        "Mod removal failed",
+        AppShellError(friendly_message, detail_message=technical_detail),
+    )
+
+    assert captured["critical_args"][1:] == ("Mod removal failed", friendly_message)
+    assert main_window._status_strip_label.text() == friendly_message
+    assert main_window._findings_box.toPlainText() == technical_detail
 
 
 def test_main_window_recovery_selector_labels_are_human_readable_and_newest_first(

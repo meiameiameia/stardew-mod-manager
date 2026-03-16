@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 import shutil
@@ -19,6 +20,18 @@ from sdvmm.services.package_inspector import inspect_zip_package
 
 class SandboxInstallError(ValueError):
     """Raised when plan creation or install execution cannot proceed safely."""
+
+
+class SandboxFileLockError(SandboxInstallError):
+    """Raised when Windows is likely still holding a handle inside the target folder."""
+
+    def __init__(self, message: str, *, technical_detail: str) -> None:
+        super().__init__(message)
+        self.technical_detail = technical_detail
+
+
+_LOCK_ERRNOS = {errno.EACCES, errno.EPERM}
+_LOCK_WINERRORS = {5, 32, 33}
 
 
 def build_sandbox_install_plan(
@@ -219,8 +232,14 @@ def remove_mod_to_archive(
     try:
         _move_path(target_mod_path, archive_path)
     except Exception as exc:
+        detail = f"Could not move mod folder to archive: {target_mod_path} -> {archive_path}: {exc}"
+        if _is_likely_windows_lock_error(exc):
+            raise SandboxFileLockError(
+                _sandbox_file_lock_message(),
+                technical_detail=detail,
+            ) from exc
         raise SandboxInstallError(
-            f"Could not move mod folder to archive: {target_mod_path} -> {archive_path}: {exc}"
+            detail
         ) from exc
 
     return archive_path
@@ -341,8 +360,17 @@ def _overwrite_target_with_archive(staged_target: Path, target_path: Path, archi
     try:
         _move_path(target_path, archive_path)
     except Exception as exc:
+        detail = (
+            f"Could not archive existing target before overwrite: "
+            f"{target_path} -> {archive_path}: {exc}"
+        )
+        if _is_likely_windows_lock_error(exc):
+            raise SandboxFileLockError(
+                _sandbox_file_lock_message(),
+                technical_detail=detail,
+            ) from exc
         raise SandboxInstallError(
-            f"Could not archive existing target before overwrite: {target_path} -> {archive_path}: {exc}"
+            detail
         ) from exc
 
     try:
@@ -457,3 +485,46 @@ def _relative_to_source_root(path: PurePosixPath, source_root: PurePosixPath) ->
         return PurePosixPath(".")
 
     return PurePosixPath(*tail)
+
+
+def _is_likely_windows_lock_error(exc: BaseException) -> bool:
+    queue: list[BaseException] = [exc]
+    seen: set[int] = set()
+    while queue:
+        current = queue.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+
+        if isinstance(current, PermissionError):
+            return True
+
+        if isinstance(current, OSError):
+            if current.errno in _LOCK_ERRNOS:
+                return True
+            if getattr(current, "winerror", None) in _LOCK_WINERRORS:
+                return True
+            lowered = str(current).casefold()
+            if (
+                "being used by another process" in lowered
+                or "access is denied" in lowered
+                or "permission denied" in lowered
+            ):
+                return True
+
+        cause = getattr(current, "__cause__", None)
+        if isinstance(cause, BaseException):
+            queue.append(cause)
+        context = getattr(current, "__context__", None)
+        if isinstance(context, BaseException):
+            queue.append(context)
+
+    return False
+
+
+def _sandbox_file_lock_message() -> str:
+    return (
+        "Sandbox write failed because Windows is still using files in the target mod folder. "
+        "Close Explorer windows or preview panes for that folder, any editor or terminal using the mod, "
+        "and the sandbox game or SMAPI if it is still running, then try again."
+    )

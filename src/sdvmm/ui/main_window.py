@@ -1526,7 +1526,7 @@ class MainWindow(QMainWindow):
             )
         except AppShellError as exc:
             QMessageBox.critical(self, "Install failed", str(exc))
-            self._set_plan_install_output_text(str(exc))
+            self._set_plan_install_output_text(_error_detail_text(exc))
             self._set_status(str(exc))
             return
 
@@ -2912,9 +2912,10 @@ class MainWindow(QMainWindow):
         show_error_dialog: bool = True,
     ) -> None:
         message = str(exc)
+        detail_text = _error_detail_text(exc)
         if show_error_dialog:
             QMessageBox.critical(self, error_title, message)
-        self._set_details_text(message)
+        self._set_details_text(detail_text)
         self._set_status(message)
         if on_failure is not None:
             on_failure(message)
@@ -4809,3 +4810,10 @@ def _compact_path_text(path_text: str, *, max_length: int = 56) -> str:
     if len(path_text) <= max_length:
         return path_text
     return f"...{path_text[-(max_length - 3):]}"
+
+
+def _error_detail_text(exc: object) -> str:
+    detail_message = getattr(exc, "detail_message", None)
+    if isinstance(detail_message, str) and detail_message.strip():
+        return detail_message
+    return str(exc)

@@ -8,6 +8,7 @@ from typing import Literal
 import pytest
 
 import sdvmm.app.shell_service as shell_service_module
+import sdvmm.services.sandbox_installer as sandbox_installer_module
 from sdvmm.app.shell_service import (
     ARCHIVE_SOURCE_REAL,
     ARCHIVE_SOURCE_SANDBOX,
@@ -1455,6 +1456,59 @@ def test_execute_sandbox_install_plan_surfaces_install_history_recording_failure
     assert service.load_install_operation_history().operations == tuple()
 
 
+def test_execute_sandbox_install_plan_surfaces_lock_like_overwrite_failure_with_clear_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    sandbox.mkdir()
+    archive_root.mkdir()
+    _create_mod(sandbox, "Existing", "Sample.Exists")
+    package = tmp_path / "update.zip"
+
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "Existing/manifest.json",
+            '{"Name":"Existing","UniqueID":"Sample.Exists","Version":"2.0.0"}',
+        )
+        archive.writestr("Existing/file.txt", "updated")
+
+    plan = service.build_sandbox_install_plan(
+        str(package),
+        str(sandbox),
+        str(archive_root),
+        allow_overwrite=True,
+    )
+    target_path = plan.entries[0].target_path
+    archive_path = plan.entries[0].archive_path
+    assert archive_path is not None
+    original_move_path = sandbox_installer_module._move_path
+
+    def fake_move_path(source: Path, destination: Path) -> None:
+        if source == target_path and destination == archive_path:
+            raise PermissionError(
+                32,
+                "The process cannot access the file because it is being used by another process",
+                str(source),
+            )
+        original_move_path(source, destination)
+
+    monkeypatch.setattr(sandbox_installer_module, "_move_path", fake_move_path)
+
+    with pytest.raises(AppShellError) as exc_info:
+        service.execute_sandbox_install_plan(plan)
+
+    exc = exc_info.value
+    assert "Windows is still using files in the target mod folder" in str(exc)
+    assert "Explorer windows or preview panes" in str(exc)
+    assert exc.detail_message.startswith("Could not archive existing target before overwrite:")
+    assert str(target_path) in exc.detail_message
+    assert str(archive_path) in exc.detail_message
+    assert "being used by another process" in exc.detail_message
+
+
 def test_execute_real_mods_plan_with_approval_matches_review_and_executes(
     tmp_path: Path,
 ) -> None:
@@ -1628,6 +1682,84 @@ def test_execute_mod_removal_moves_real_mod_to_archive_and_rescans(tmp_path: Pat
     assert result.archived_target.exists()
     assert result.scan_context_path == real_mods
     assert {mod.unique_id for mod in result.inventory.mods} == {"Sample.Keep"}
+
+
+def test_execute_mod_removal_surfaces_lock_like_archive_failure_with_clear_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    sandbox_archive = tmp_path / "SandboxArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    sandbox_archive.mkdir()
+    _create_mod(sandbox_mods, "ToRemove", "Sample.Remove")
+
+    plan = service.build_mod_removal_plan(
+        scan_target=SCAN_TARGET_SANDBOX_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text="",
+        sandbox_archive_path_text=str(sandbox_archive),
+        mod_folder_path_text=str(sandbox_mods / "ToRemove"),
+    )
+    original_move_path = sandbox_installer_module._move_path
+
+    def fake_move_path(source: Path, destination: Path) -> None:
+        if source == plan.target_mod_path:
+            raise PermissionError(5, "Access is denied", str(source))
+        original_move_path(source, destination)
+
+    monkeypatch.setattr(sandbox_installer_module, "_move_path", fake_move_path)
+
+    with pytest.raises(AppShellError) as exc_info:
+        service.execute_mod_removal(plan, confirm_removal=True)
+
+    exc = exc_info.value
+    assert "Windows is still using files in the target mod folder" in str(exc)
+    assert "editor or terminal" in str(exc)
+    assert exc.detail_message.startswith("Could not move mod folder to archive:")
+    assert str(plan.target_mod_path) in exc.detail_message
+    assert "Access is denied" in exc.detail_message
+
+
+def test_execute_mod_removal_keeps_non_lock_failures_honest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    sandbox_archive = tmp_path / "SandboxArchive"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    sandbox_archive.mkdir()
+    _create_mod(sandbox_mods, "ToRemove", "Sample.Remove")
+
+    plan = service.build_mod_removal_plan(
+        scan_target=SCAN_TARGET_SANDBOX_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        real_archive_path_text="",
+        sandbox_archive_path_text=str(sandbox_archive),
+        mod_folder_path_text=str(sandbox_mods / "ToRemove"),
+    )
+
+    def fake_move_path(_source: Path, _destination: Path) -> None:
+        raise FileNotFoundError("archive volume disappeared")
+
+    monkeypatch.setattr(sandbox_installer_module, "_move_path", fake_move_path)
+
+    with pytest.raises(AppShellError) as exc_info:
+        service.execute_mod_removal(plan, confirm_removal=True)
+
+    exc = exc_info.value
+    assert "Windows is still using files in the target mod folder" not in str(exc)
+    assert str(exc).startswith("Could not move mod folder to archive:")
+    assert "archive volume disappeared" in str(exc)
+    assert exc.detail_message == str(exc)
 
 
 def test_list_archived_entries_includes_real_archive_entries(tmp_path: Path) -> None:
