@@ -18,7 +18,7 @@ The goal is not to restate the whole codebase. The goal is to give enough high-s
 - Entry point: `sdvmm-ui` -> [`src/sdvmm/app/main.py`](/Users/darth/Projects/stardew-mod-manager/src/sdvmm/app/main.py)
 - Current validation baseline:
   - `.\.venv\Scripts\python.exe -m pytest tests\unit -q`
-  - latest verified result in this thread: `434 passed, 1 skipped`
+  - latest verified result in this thread: `439 passed, 1 skipped`
   - UI startup smoke also passes offscreen
 - Product posture:
   - local-first
@@ -50,7 +50,7 @@ The app is no longer just a scanner. It now has a coherent local workflow:
 The product is not feature-complete for public release, but it is materially beyond prototype state.
 
 The near-term product direction now explicitly includes a mod-development workflow, not only general end-user mod management.
-The current private-testing build also includes the first multi-zip intake step, but intentionally stops short of blind multi-package planning/install behavior.
+The current private-testing build includes the first multi-zip intake step and second watcher-path intake convenience, but intentionally stops short of blind multi-package planning/install behavior.
 
 ## Current Architecture
 
@@ -105,6 +105,7 @@ The previously fragmented workflow has been tightened:
 
 - `Packages & Intake` stages into `Plan & Install`
 - `Packages & Intake` can now inspect multiple selected zips while preserving per-package visibility
+- watcher intake can monitor two configured paths into the same detected-packages flow
 - `Plan & Install` owns planning/review/execution
 - recovery is local to the same workflow surface
 - install completion now links back into recovery selection
@@ -122,7 +123,23 @@ The UI is still dense, but further generic decomposition is no longer the highes
 
 ## Current Weak Spots
 
-### 1. Sandbox promotion policy is intentionally conservative
+### 1. Session persistence ergonomics are still thin
+
+The core workflow works, but repeated use still pays friction from limited persisted session context and repeated re-orientation.
+
+The next question is:
+
+> What minimum persisted session state most improves daily use without creating hidden/unsafe behavior?
+
+### 2. Backup / restore / migration foundation is missing
+
+State is durable and atomic, but user-facing backup/restore/migration ergonomics are not yet established.
+
+The next question is:
+
+> What backup/export and restore/import baseline should exist before broader private sharing?
+
+### 3. Sandbox promotion policy is intentionally conservative
 
 The product now has explicit:
 
@@ -139,21 +156,21 @@ Current behavior is intentionally conservative:
 - no blind overwrite
 - archive/recovery trust preserved for real writes
 
-The next unresolved product question is:
+The next unresolved product question remains:
 
 > How should the app improve promotion speed and clarity now that preview + archive-aware replace already exists, without making live promotion feel casual or opaque?
 
-### 2. `MainWindow` is still the densest integration point
+### 4. `MainWindow` is still the densest integration point
 
 The app has improved ownership boundaries, but `MainWindow` still carries substantial UI workflow logic and cross-surface coordination.
 
 This is acceptable for now because product-facing workflow completion was correctly prioritized, but it remains a maintenance risk.
 
-### 3. Desktop interaction density is improved, not solved
+### 5. Desktop interaction density is improved, not solved
 
 The app is cleaner than before, but workflow surfaces are still dense. This is now a secondary concern behind sandbox dev-loop trust and live-write clarity.
 
-### 4. Public-release readiness work has barely started
+### 6. Public-release readiness work has barely started
 
 Notably still pending:
 
@@ -164,7 +181,7 @@ Notably still pending:
 - CI/release hardening
 - migration discipline for public users
 
-### 5. Multi-package planning is intentionally not solved yet
+### 7. Multi-package planning is intentionally not solved yet
 
 The app can now inspect multiple zip files in one explicit batch, but it does not yet build or execute a true multi-package install plan.
 
@@ -222,13 +239,14 @@ Already completed or effectively implemented:
 - promotion preview/review + archive-aware replace conflict handling
 - partial-failure safety handling for archive-aware promotion paths
 
-#### 6. Multi-Zip Intake Baseline
+#### 6. Multi-Zip Intake + Second Watcher Path Baseline
 
-Implemented for `0.3.0`:
+Implemented for `0.3.0`/`0.3.1`:
 
 - multi-file zip selection in `Packages & Intake`
 - batch inspection with per-package result visibility
 - explicit single-package staging from the selected inspected package
+- dual watcher paths feeding one intake detection flow
 - no blind batch planning/install
 
 Current recommendation:
@@ -236,23 +254,35 @@ Current recommendation:
 - use private testing to validate whether batch inspection + single-package staging feels clear enough before expanding planner semantics
 - preserve explicit plan review as a non-negotiable constraint for any later multi-package work
 
-### Next likely phase
+### Next likely phases (real-world usability first)
 
-#### 7. Sandbox Dev Loop Ergonomics
+#### 7. Session Persistence Ergonomics
 
-This phase should determine which one small improvement matters most:
+- reduce repeat setup/re-orientation cost across launches
+- preserve safe, explicit workflow semantics
 
-- open sandbox / real Mods convenience actions
-- auto-rescan / destination-focus after sync or promotion
-- clearer promotion preview orientation for multi-mod operations
+#### 8. Backup / Restore / Migration Foundation
+
+- user-facing backup/export and restore/import baseline
+- practical migration safety for private testing across machines
+
+#### 9. Real vs Sandbox Compare View
+
+- explicit compare surface to guide promotion decisions and reduce mistakes
+
+#### 10. Steam Prelaunch Best-Effort Behavior
+
+- pragmatic Steam-aware launch assistance without promising guaranteed automation
 
 ### Later planned phase
 
-#### 8. Information Architecture Follow-up
+#### 11. Information Architecture Follow-up
 
 The UI simplification track is now intentionally paused until sandbox-dev workflow trust work is no longer the main blocker.
 
-#### 9. Visual Feedback and Polish
+#### 12. Visual Feedback and Polish
+
+Icon/taskbar refinement remains a lower-priority polish item compared with session, backup/migration, compare, and Steam prelaunch usability.
 
 This phase should happen after the IA simplification decisions are made, not before.
 
@@ -260,9 +290,14 @@ This phase should happen after the IA simplification decisions are made, not bef
 
 An external model should specifically challenge these points:
 
-### A. Is the current roadmap still in the right order?
+### A. Is the updated roadmap still in the right order?
 
-The current recommendation is to keep the sandbox dev-loop track ahead of more generic UX consolidation.
+The current recommendation is to prioritize real-world usability and trust ergonomics first:
+
+- session persistence ergonomics
+- backup/restore/migration foundation
+- compare view and launch reliability
+- then broader polish/refactor work
 
 Question:
 
