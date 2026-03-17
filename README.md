@@ -29,7 +29,7 @@ Current workflow emphasis:
 4. Launch the game through SMAPI against the sandbox Mods path only.
 5. Open remote provider page for actionable rows.
 6. Download mod archives manually.
-7. Select one or more zip packages for batch inspection, or let watcher/package intake detect new zip files.
+7. Select one or more zip packages for batch inspection, or let watcher/package intake detect new zip files from one or two configured watch paths.
 8. Review per-package inspection results, then stage one selected package into Plan & Install.
 9. Build plan, review safety/summary/facts, then run install.
 10. Promote selected sandbox mods into real Mods through an explicit managed action when ready.
@@ -55,7 +55,7 @@ Live Mods safety expectations:
 - **Packages & Intake**
   - multi-zip selection and batch inspection
   - per-package inspection results with explicit selection
-  - watcher-based downloads intake
+- watcher-based downloads intake from up to two configured watch paths
   - single-package staging handoff to Plan & Install
 - **Plan & Install**
   - destination selection (sandbox vs real)
@@ -150,7 +150,7 @@ You can still run focused suites when iterating:
 .\.venv\Scripts\python.exe -m pytest tests\unit\test_main_window_gui_regression.py -q
 ```
 
-### 4) Build Windows portable folder (`0.3.0`)
+### 4) Build Windows portable folder (`0.3.1`)
 
 Packaging baseline in this repo uses **PyInstaller one-folder** output because it is the smallest practical Windows desktop packaging path here without introducing installer/signing work.
 
@@ -169,13 +169,13 @@ Build the portable folder:
 Output folder:
 
 ```text
-dist\stardew-mod-manager-0.3.0-windows-portable\
+dist\stardew-mod-manager-0.3.1-windows-portable\
 ```
 
 Launch the packaged app:
 
 ```powershell
-.\dist\stardew-mod-manager-0.3.0-windows-portable\Stardew Mod Manager.exe
+.\dist\stardew-mod-manager-0.3.1-windows-portable\Stardew Mod Manager.exe
 ```
 
 Current caveats:
@@ -193,6 +193,7 @@ Current caveats:
 - no profiles/instances workflow
 - no packaging/installer/release hardening yet
 - no cross-platform polish emphasis yet (Windows workflow is the primary dev path)
+- near-term usability priorities still pending: stronger session persistence ergonomics, backup/restore/migration baseline, real-vs-sandbox compare view, and Steam prelaunch best-effort behavior
 
 ## Data and persistence notes
 

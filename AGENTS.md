@@ -134,6 +134,14 @@ Prefer one commit per approved stage.
 
 ---
 
+## Documentation freshness discipline
+
+- For approved user-facing or packaging-impacting stages, update stale user-facing docs in the same stage when needed.
+- At minimum, keep `README.md` and relevant roadmap/audit docs aligned with actual shipped behavior and version/artifact naming.
+- Do not defer obvious docs drift to a later stage if the current stage already changed the user-visible contract.
+
+---
+
 ## Handoff discipline
 
 Executor handoffs should be concrete and audit-friendly.

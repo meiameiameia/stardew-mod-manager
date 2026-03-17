@@ -1,179 +1,104 @@
 # Roadmap
 
-## Completed or effectively closed
+## Shipped through `0.3.1`
 
-### 1. Core Workflow Foundation
+### Core workflow and trust baseline
 
-Implemented:
+Shipped:
 
-- configuration and scan path setup
-- local mod inventory scan
-- duplicate and dependency visibility
-- package inspection and downloads intake
-- install planning and execution review
-- sandbox install execution
-- guarded real-Mods execution
-- install history
-- recovery derivation, review, and execution
-- recovery history with stable IDs
+- setup/config + inventory scan
+- update awareness + guided manual remote-page flow
+- package inspection/intake -> plan/review -> explicit execution
+- install history + recovery derivation/review/execution
+- guarded real-Mods writes with archive/recovery semantics
 
-### 2. Guided Manual Update Flow
+### Update-source intent and diagnostics
 
-Implemented:
+Shipped:
 
-- update check awareness flow
-- selected-row remote-page handoff
-- intake staging into `Plan & Install`
-- install-to-recovery continuity
-
-### 3. Managed Live Mods Safety Baseline
-
-Implemented baseline:
-
-- persistent destination safety context
-- explicit confirmation for real-Mods execution
-- stronger live destination messaging before execution
-- constrained-height resilience in `Plan & Install`
-
-### 4. History / Recovery UX Baseline
-
-Implemented baseline:
-
-- readable recovery selector
-- newest-first recovery record display
-- recovery summary cues
-- recovery filtering
-- recovery execution path with status continuity
-
-### 5. Update Source Diagnostics / Persistence / Repair Foundations
-
-Implemented:
-
-- typed update-source diagnostics below the UI
-- Inventory binding to typed diagnostics
-- atomic app-state and history writes
-- honest handling of critical history-recording failure
-- platform-correct app-state path behavior
-- durable update-source intent overlay
-- local/private and no-tracking intent
-- manual source association storage and UI
+- typed update-source diagnostics
+- persisted update-source intent overlay (`local/private`, `no-tracking`, `manual source association`)
 - manual source association participation in update checks
+- atomic app-state/history writes and explicit critical history-failure handling
 
-### 6. Information Architecture Simplification (Paused)
+### Sandbox dev loop + intake ergonomics
+
+Shipped:
+
+- sandbox-only launch (SMAPI with sandbox Mods path)
+- explicit selected-mod `real -> sandbox` sync
+- explicit selected-mod `sandbox -> real` promotion with preview/review
+- archive-aware replace on live conflicts (no blind overwrite)
+- partial-failure safety handling for promotion paths
+- multi-zip batch inspection with per-package visibility
+- explicit single-package staging (no opaque batch install)
+- second watcher-path support feeding the same intake flow
+
+### Information architecture simplification (paused)
 
 Implemented enough for now:
 
-- bottom area reduced to output-only ownership
-- setup moved into a dedicated workspace tab
-- duplicate narrative/detail access scaffolding removed
-- top context and status ownership reduced
-- shell/tab alignment issue driven down to an acceptable stop point
+- bottom area is output-only
+- setup moved into main workspace ownership
+- duplicated detail scaffolding reduced
 
-Paused because:
+Still paused because product-facing usability/trust gaps now outweigh more decomposition.
 
-- product-facing sandbox/dev workflow completion is now higher value than more decomposition or shell polish
-- additional UI cleanup is hitting diminishing returns relative to workflow gaps
+## Critical next priorities (near-term)
 
-## Current phase
+### 1. Session persistence ergonomics
 
-### 7. Sandbox Dev Loop Foundation
+- preserve practical working context between launches (active targets, last-used intake/watch context, recent selections where safe)
+- reduce repetitive setup/check clicks for everyday usage
+- keep state explicit and user-controllable
 
-Completed:
+### 2. Backup / restore / migration foundation
 
-- sandbox-only SMAPI dev launch using `--mods-path <sandbox>`
-- runtime readiness/status for sandbox launch
-- explicit selected-mod `real -> sandbox` sync
-- explicit selected-mod `sandbox -> real` managed promotion
-- promotion preview/review before live writes
-- archive-aware replace for live-target conflicts (no blind overwrite)
-- explicit confirmation-first live write flow
-- safety handling for partial-failure paths so live-write trust/recovery semantics remain coherent
+- add explicit user-facing backup/export and restore/import baseline for file-backed state/history
+- include pragmatic migration guardrails for personal-machine changes
+- keep trust/recovery semantics transparent and inspectable
 
-Why this phase is current priority:
+### 3. Real vs sandbox compare view
 
-- it directly supports the actual personal mod-development loop
-- it keeps real personal Mods isolated from dev/test iteration
-- it has higher product value than more generic UI decomposition
+- provide a focused compare surface to review what differs between real and sandbox Mods
+- support safer promotion decisions and faster dev-loop orientation
+- keep this compare-first, not auto-merge or blind sync
 
-### 8. Multi-Zip Intake Baseline
+### 4. Steam prelaunch best-effort behavior
 
-Completed for `0.3.0`:
+- support best-effort launch behavior that works with Steam ownership constraints without implying guaranteed automation
+- keep launch intent explicit and sandbox-safe
+- surface when fallback/manual launch is required
 
-- `Packages & Intake` can now select multiple zip files in one action
-- batch inspection preserves per-package visibility instead of collapsing results
-- partial batch failures stay visible per package
-- staging remains explicit and single-package in this first step
+## Near-term but lower priority
 
-Why this stopped here:
+### Icon/taskbar refinement follow-up
 
-- true multi-package planning/install would be harder to review safely in the current planner
-- single-package staging keeps plan review clear and avoids opaque batch execution semantics
+- continue icon/taskbar sizing polish only after critical workflow usability items above
+- treat as quality polish, not a workflow blocker
 
-## Next phase
+## Later priorities
 
-### 9. Sandbox Dev Loop Ergonomics
+### Recovery/promotion hardening follow-up
 
-Likely scope:
+- stronger multi-mod live-write review/audit surfaces
+- clearer recovery inspectability for more complex real-write scenarios
 
-- open sandbox / real Mods convenience actions
-- automatic rescan of the destination after sync/promotion without switching context unless necessary
-- clearer launch/readiness and promotion-state orientation for sandbox workflow
-- private-testing feedback on multi-zip intake clarity before expanding batch planning behavior
+### Public release hardening
 
-Validation gate:
+- installer/signing/distribution hardening
+- CI/release gating maturity
+- migration discipline for broader audience rollout
 
-- repeated dev-loop use feels explicit and low-friction without weakening real-Mods safety
-
-Explicitly out of scope:
-
-- raw bidirectional mirroring
-- blind overwrite into real Mods
-- profile or instance systems
-- build/watch automation
-
-## Later planned phases
-
-### 10. Recovery and Promotion Hardening
-
-Planned scope:
-
-- stronger preview/review surfaces for multi-mod live promotion and recovery
-- auditability improvements for live-write workflows
-
-### 11. Information Architecture Follow-up
-
-Revisit only after the sandbox dev loop is no longer the main product blocker.
-
-Planned scope:
-
-- remaining ownership cleanup
-- `Plan & Install` / `Recovery` surface simplification if still justified
-- progressive disclosure for dense but stable workflows
-
-### 12. Visual Polish and Release UX
-
-Planned scope:
-
-- visual hierarchy cleanup
-- warning/disabled-state clarity
-- first-run and advanced-mode UX clarity
-
-### 13. Public Release Hardening
-
-Planned scope:
-
-- packaging
-- installer strategy
-- code signing
-- CI
-- persistence migration discipline
-
-### 14. Provider-Compliant Automation
-
-Planned scope:
+### Provider-compliant automation (still constrained)
 
 - official provider mechanisms only
-- user-owned auth
-- no scraping
-- no premium bypass
-- no one-click install-from-search until explicitly designed and approved
+- explicit user-owned auth
+- no scraping, no premium bypass, no one-click install-from-search until explicitly approved
+
+## Guardrails that remain non-negotiable
+
+- preserve asymmetry: `real -> sandbox` sync vs managed `sandbox -> real` promotion
+- no raw bidirectional mirroring
+- no blind overwrite into real Mods
+- no profile/instance broadening unless explicitly approved
