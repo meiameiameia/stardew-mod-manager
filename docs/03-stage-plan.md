@@ -1,6 +1,6 @@
 # Roadmap
 
-## Shipped through `0.4.0`
+## Shipped through `0.5.0`
 
 ### Core workflow and trust baseline
 
@@ -47,6 +47,15 @@ Shipped:
   - ambiguous match for duplicate/unclear UniqueID grouping
 - compare remains visibility-first in this stage (no compare-driven writes)
 
+### Backup bundle inspection baseline
+
+Shipped:
+
+- explicit read-only inspection of exported backup bundle folders
+- manifest/version/item-status visibility before any restore behavior exists
+- structural usability reporting for future restore/import work
+- no restore/apply behavior in this baseline
+
 ### Information architecture simplification (paused)
 
 Implemented enough for now:
@@ -67,7 +76,7 @@ Still paused because product-facing usability/trust gaps now outweigh more decom
 
 ### 2. Backup / restore / migration foundation
 
-- add explicit user-facing backup/export and restore/import baseline for file-backed state/history
+- build from the shipped export + inspection baseline into a fuller restore/import workflow
 - include pragmatic migration guardrails for personal-machine changes
 - keep trust/recovery semantics transparent and inspectable
 

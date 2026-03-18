@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 from collections.abc import Iterable
@@ -18,6 +19,8 @@ from sdvmm.domain.models import (
     ArchiveRestorePlan,
     ArchiveRestoreResult,
     AppConfig,
+    BackupBundleInspectionItem,
+    BackupBundleInspectionResult,
     DependencyPreflightFinding,
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
@@ -595,6 +598,48 @@ class AppShellService:
             summary_path=summary_path,
             created_at_utc=created_at_utc,
             items=plan,
+        )
+
+    def inspect_backup_bundle(
+        self,
+        *,
+        bundle_path_text: str,
+    ) -> BackupBundleInspectionResult:
+        if not bundle_path_text.strip():
+            raise AppShellError("Select a backup bundle folder first.")
+        bundle_path = Path(bundle_path_text.strip()).expanduser()
+        if not bundle_path.exists() or not bundle_path.is_dir():
+            raise AppShellError(f"Backup bundle folder is not accessible: {bundle_path}")
+
+        manifest_path = bundle_path / "manifest.json"
+        summary_path = bundle_path / "README.txt"
+        if not manifest_path.exists() or not manifest_path.is_file():
+            return _invalid_backup_bundle_inspection_result(
+                bundle_path=bundle_path,
+                manifest_path=manifest_path,
+                summary_path=summary_path,
+                message="Backup bundle is structurally invalid: manifest.json is missing.",
+                warnings=("Required manifest file is missing.",),
+            )
+
+        try:
+            raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            return _invalid_backup_bundle_inspection_result(
+                bundle_path=bundle_path,
+                manifest_path=manifest_path,
+                summary_path=summary_path,
+                message="Backup bundle is structurally invalid: manifest.json is not valid JSON.",
+                warnings=(f"Manifest JSON could not be parsed: {exc}",),
+            )
+        except OSError as exc:
+            raise AppShellError(f"Could not inspect backup bundle: {exc}") from exc
+
+        return _build_backup_bundle_inspection_result(
+            bundle_path=bundle_path,
+            manifest_path=manifest_path,
+            summary_path=summary_path,
+            raw_manifest=raw_manifest,
         )
 
     def inspect_install_recovery_by_operation_id(
@@ -3978,6 +4023,264 @@ class AppShellService:
             ) from exc
 
 
+def _invalid_backup_bundle_inspection_result(
+    *,
+    bundle_path: Path,
+    manifest_path: Path,
+    summary_path: Path,
+    message: str,
+    warnings: tuple[str, ...],
+) -> BackupBundleInspectionResult:
+    if not summary_path.exists():
+        warnings = (*warnings, "Bundle summary README.txt is missing.")
+    return BackupBundleInspectionResult(
+        bundle_path=bundle_path,
+        manifest_path=manifest_path,
+        summary_path=summary_path,
+        bundle_format=None,
+        format_version=None,
+        created_at_utc=None,
+        items=tuple(),
+        structurally_usable=False,
+        message=message,
+        warnings=warnings,
+    )
+
+
+def _build_backup_bundle_inspection_result(
+    *,
+    bundle_path: Path,
+    manifest_path: Path,
+    summary_path: Path,
+    raw_manifest: object,
+) -> BackupBundleInspectionResult:
+    if not isinstance(raw_manifest, dict):
+        return _invalid_backup_bundle_inspection_result(
+            bundle_path=bundle_path,
+            manifest_path=manifest_path,
+            summary_path=summary_path,
+            message="Backup bundle is structurally invalid: manifest root must be a JSON object.",
+            warnings=("Manifest root is not a JSON object.",),
+        )
+
+    warnings: list[str] = []
+    bundle_format = (
+        raw_manifest.get("bundle_format")
+        if isinstance(raw_manifest.get("bundle_format"), str)
+        else None
+    )
+    format_version = (
+        raw_manifest.get("format_version")
+        if isinstance(raw_manifest.get("format_version"), int)
+        else None
+    )
+    created_at_utc = (
+        raw_manifest.get("created_at_utc")
+        if isinstance(raw_manifest.get("created_at_utc"), str)
+        else None
+    )
+    if bundle_format != "sdvmm-local-backup":
+        warnings.append(
+            "Manifest bundle_format is missing or unsupported for the current backup format."
+        )
+    if format_version != 1:
+        warnings.append(
+            "Manifest format_version is missing or unsupported for the current inspection baseline."
+        )
+    if created_at_utc is None:
+        warnings.append("Manifest created_at_utc is missing or invalid.")
+
+    raw_items = raw_manifest.get("items")
+    if not isinstance(raw_items, list):
+        warnings.append("Manifest items list is missing or invalid.")
+        return BackupBundleInspectionResult(
+            bundle_path=bundle_path,
+            manifest_path=manifest_path,
+            summary_path=summary_path,
+            bundle_format=bundle_format,
+            format_version=format_version,
+            created_at_utc=created_at_utc,
+            items=tuple(),
+            structurally_usable=False,
+            message="Backup bundle is structurally invalid: manifest items are missing or unreadable.",
+            warnings=_finish_backup_bundle_inspection_warnings(
+                warnings=warnings,
+                summary_path=summary_path,
+            ),
+            intentionally_not_included=_parse_backup_bundle_not_included(raw_manifest),
+        )
+
+    items: list[BackupBundleInspectionItem] = []
+    structurally_usable = bundle_format == "sdvmm-local-backup" and format_version == 1
+    for index, raw_item in enumerate(raw_items):
+        parsed_item, item_warning, item_valid_for_restore = _parse_backup_bundle_inspection_item(
+            bundle_path=bundle_path,
+            raw_item=raw_item,
+            item_index=index,
+        )
+        if parsed_item is not None:
+            items.append(parsed_item)
+        if item_warning is not None:
+            warnings.append(item_warning)
+        structurally_usable = structurally_usable and item_valid_for_restore
+
+    if not any(item.key == "app_state" and item.structure_state == "present" for item in items):
+        warnings.append("App state/config snapshot is missing from the bundle.")
+        structurally_usable = False
+
+    warnings = _finish_backup_bundle_inspection_warnings(
+        warnings=warnings,
+        summary_path=summary_path,
+    )
+    message = (
+        "Backup bundle looks structurally usable for future restore/import."
+        if structurally_usable
+        else "Backup bundle is inspectable, but structurally incomplete for future restore/import."
+    )
+    return BackupBundleInspectionResult(
+        bundle_path=bundle_path,
+        manifest_path=manifest_path,
+        summary_path=summary_path,
+        bundle_format=bundle_format,
+        format_version=format_version,
+        created_at_utc=created_at_utc,
+        items=tuple(items),
+        structurally_usable=structurally_usable,
+        message=message,
+        warnings=warnings,
+        intentionally_not_included=_parse_backup_bundle_not_included(raw_manifest),
+    )
+
+
+def _parse_backup_bundle_inspection_item(
+    *,
+    bundle_path: Path,
+    raw_item: object,
+    item_index: int,
+) -> tuple[BackupBundleInspectionItem | None, str | None, bool]:
+    if not isinstance(raw_item, dict):
+        return (
+            None,
+            f"Manifest item #{item_index + 1} is not a JSON object.",
+            False,
+        )
+
+    key = raw_item.get("key")
+    label = raw_item.get("label")
+    kind = raw_item.get("kind")
+    declared_status = raw_item.get("status")
+    relative_path_text = raw_item.get("relative_path")
+    note = raw_item.get("note")
+    if not isinstance(key, str) or not key.strip():
+        return (None, f"Manifest item #{item_index + 1} has no valid key.", False)
+    if not isinstance(label, str) or not label.strip():
+        return (None, f"Manifest item '{key}' has no valid label.", False)
+    if kind not in {"file", "directory"}:
+        return (None, f"Manifest item '{key}' has an unsupported kind.", False)
+    if declared_status not in {
+        "copied",
+        "not_present",
+        "not_configured",
+        "configured_missing",
+    }:
+        return (None, f"Manifest item '{key}' has an unsupported status.", False)
+    if not isinstance(relative_path_text, str) or not relative_path_text.strip():
+        return (None, f"Manifest item '{key}' has no valid relative_path.", False)
+    if note is not None and not isinstance(note, str):
+        note = str(note)
+
+    relative_path = Path(relative_path_text)
+    bundle_item_path = bundle_path / relative_path
+    expected_type_matches = (
+        bundle_item_path.is_file() if kind == "file" else bundle_item_path.is_dir()
+    )
+    if declared_status == "copied":
+        if expected_type_matches:
+            return (
+                BackupBundleInspectionItem(
+                    key=key,
+                    label=label,
+                    kind=kind,
+                    declared_status=declared_status,
+                    relative_path=relative_path,
+                    structure_state="present",
+                    note=note,
+                ),
+                None,
+                True,
+            )
+        warning = (
+            f"{label} was marked copied in the manifest but is missing or has the wrong type in the bundle."
+        )
+        return (
+            BackupBundleInspectionItem(
+                key=key,
+                label=label,
+                kind=kind,
+                declared_status=declared_status,
+                relative_path=relative_path,
+                structure_state="missing_expected",
+                note=note or warning,
+            ),
+            warning,
+            False,
+        )
+
+    if bundle_item_path.exists():
+        warning = f"{label} is present in the bundle even though the manifest marked it {declared_status}."
+        return (
+            BackupBundleInspectionItem(
+                key=key,
+                label=label,
+                kind=kind,
+                declared_status=declared_status,
+                relative_path=relative_path,
+                structure_state="unexpected_present",
+                note=note or warning,
+            ),
+            warning,
+            True,
+        )
+
+    return (
+        BackupBundleInspectionItem(
+            key=key,
+            label=label,
+            kind=kind,
+            declared_status=declared_status,
+            relative_path=relative_path,
+            structure_state="absent_as_declared",
+            note=note,
+        ),
+        None,
+        True,
+    )
+
+
+def _finish_backup_bundle_inspection_warnings(
+    *,
+    warnings: list[str],
+    summary_path: Path,
+) -> tuple[str, ...]:
+    if not summary_path.exists():
+        warnings.append("Bundle summary README.txt is missing.")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for warning in warnings:
+        if warning in seen:
+            continue
+        seen.add(warning)
+        deduped.append(warning)
+    return tuple(deduped)
+
+
+def _parse_backup_bundle_not_included(raw_manifest: dict[str, object]) -> tuple[str, ...]:
+    values = raw_manifest.get("intentionally_not_included")
+    if not isinstance(values, list):
+        return tuple()
+    return tuple(value for value in values if isinstance(value, str) and value.strip())
+
+
 def _paths_deterministically_match(path_a: Path, path_b: Path) -> bool:
     left = path_a.expanduser()
     right = path_b.expanduser()
@@ -4393,6 +4696,45 @@ def build_mods_compare_text(result: ModsCompareResult) -> str:
             f"- {entry.name} [{_mods_compare_state_label(entry.state)}] "
             f"real={real_version} sandbox={sandbox_version}{note}"
         )
+    return "\n".join(lines)
+
+
+def build_backup_bundle_inspection_text(result: BackupBundleInspectionResult) -> str:
+    declared_counts = Counter(item.declared_status for item in result.items)
+    structure_counts = Counter(item.structure_state for item in result.items)
+    lines = [
+        "Stardew Mod Manager backup bundle inspection",
+        f"Bundle folder: {result.bundle_path}",
+        f"Manifest: {result.manifest_path}",
+        f"Summary: {result.summary_path}",
+        (
+            f"Bundle format: {result.bundle_format} (v{result.format_version})"
+            if result.bundle_format is not None and result.format_version is not None
+            else "Bundle format: unavailable"
+        ),
+        f"Created at (UTC): {result.created_at_utc or '-'}",
+        f"Structurally usable for future restore/import: {'yes' if result.structurally_usable else 'no'}",
+        f"Declared copied items: {declared_counts.get('copied', 0)}",
+        f"Present copied items: {structure_counts.get('present', 0)}",
+        f"Missing expected copied items: {structure_counts.get('missing_expected', 0)}",
+        f"Unexpected present items: {structure_counts.get('unexpected_present', 0)}",
+    ]
+    if result.warnings:
+        lines.extend(("", "Warnings:"))
+        lines.extend(f"- {warning}" for warning in result.warnings)
+    if result.items:
+        lines.extend(("", "Bundle items:"))
+        for item in result.items:
+            note_text = f" | {item.note}" if item.note else ""
+            lines.append(
+                f"- {item.label}: declared={item.declared_status}, actual={item.structure_state}, "
+                f"path={item.relative_path}{note_text}"
+            )
+    else:
+        lines.extend(("", "Bundle items:", "- No readable manifest items were available."))
+    if result.intentionally_not_included:
+        lines.extend(("", "Intentionally not included:"))
+        lines.extend(f"- {item}" for item in result.intentionally_not_included)
     return "\n".join(lines)
 
 

@@ -473,6 +473,124 @@ def test_export_backup_bundle_reports_optional_missing_sources_honestly(tmp_path
     assert "No sandbox archive root is configured." == manifest_items["sandbox_archive"]["note"]
 
 
+def test_inspect_backup_bundle_reports_valid_export_bundle(tmp_path: Path) -> None:
+    state_file = tmp_path / "state" / "app-state.json"
+    service = AppShellService(state_file=state_file)
+    exports_root = tmp_path / "Exports"
+    exports_root.mkdir()
+    game_path = tmp_path / "Game"
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    sandbox_archive = tmp_path / "SandboxArchive"
+    _create_launchable_game_install(game_path)
+    _create_mod(real_mods, "RealAlpha", "Sample.RealAlpha")
+    _create_mod(sandbox_mods, "SandboxAlpha", "Sample.SandboxAlpha")
+    real_archive.mkdir()
+    sandbox_archive.mkdir()
+
+    config = AppConfig(
+        game_path=game_path,
+        mods_path=real_mods,
+        app_data_path=tmp_path / "AppData",
+        sandbox_mods_path=sandbox_mods,
+        sandbox_archive_path=sandbox_archive,
+        real_archive_path=real_archive,
+    )
+
+    exported = service.export_backup_bundle(
+        destination_root_text=str(exports_root),
+        game_path_text=str(game_path),
+        mods_dir_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text=str(real_archive),
+        sandbox_archive_path_text=str(sandbox_archive),
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        existing_config=config,
+    )
+
+    inspection = service.inspect_backup_bundle(bundle_path_text=str(exported.bundle_path))
+    items_by_key = {item.key: item for item in inspection.items}
+
+    assert inspection.bundle_path == exported.bundle_path
+    assert inspection.bundle_format == "sdvmm-local-backup"
+    assert inspection.format_version == 1
+    assert inspection.created_at_utc is not None
+    assert inspection.structurally_usable is True
+    assert "usable" in inspection.message
+    assert items_by_key["app_state"].structure_state == "present"
+    assert items_by_key["real_mods"].structure_state == "present"
+    assert items_by_key["sandbox_mods"].structure_state == "present"
+    assert any(
+        "A restore/import workflow. This bundle is export-only in this stage." in item
+        for item in inspection.intentionally_not_included
+    )
+
+
+@pytest.mark.parametrize(
+    ("manifest_content", "expected_message"),
+    (
+        (None, "manifest.json is missing"),
+        ("{not valid json", "manifest.json is not valid JSON"),
+    ),
+)
+def test_inspect_backup_bundle_reports_missing_or_invalid_manifest(
+    tmp_path: Path,
+    manifest_content: str | None,
+    expected_message: str,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    bundle_path = tmp_path / "Exports" / "sdvmm-backup-test"
+    bundle_path.mkdir(parents=True)
+    (bundle_path / "README.txt").write_text("summary", encoding="utf-8")
+    if manifest_content is not None:
+        (bundle_path / "manifest.json").write_text(manifest_content, encoding="utf-8")
+
+    inspection = service.inspect_backup_bundle(bundle_path_text=str(bundle_path))
+
+    assert inspection.structurally_usable is False
+    assert expected_message in inspection.message
+    assert inspection.items == tuple()
+
+
+def test_inspect_backup_bundle_reports_missing_expected_copied_content(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    bundle_path = tmp_path / "Exports" / "sdvmm-backup-test"
+    bundle_path.mkdir(parents=True)
+    (bundle_path / "README.txt").write_text("summary", encoding="utf-8")
+    manifest = {
+        "bundle_format": "sdvmm-local-backup",
+        "format_version": 1,
+        "created_at_utc": "2026-03-18T00:00:00Z",
+        "items": [
+            {
+                "key": "app_state",
+                "label": "App state/config",
+                "kind": "file",
+                "status": "copied",
+                "relative_path": "manager-state/app-state.json",
+                "source_path": "C:/State/app-state.json",
+                "note": "Generated from the current export configuration snapshot.",
+            }
+        ],
+        "intentionally_not_included": [],
+    }
+    (bundle_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    inspection = service.inspect_backup_bundle(bundle_path_text=str(bundle_path))
+
+    assert inspection.structurally_usable is False
+    assert "incomplete" in inspection.message
+    assert len(inspection.items) == 1
+    assert inspection.items[0].key == "app_state"
+    assert inspection.items[0].structure_state == "missing_expected"
+    assert any("marked copied" in warning for warning in inspection.warnings)
+
+
 def test_scan_rejects_missing_mods_path(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
 

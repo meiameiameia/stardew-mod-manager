@@ -200,6 +200,47 @@ class ModsCompareResult:
     entries: tuple[ModsCompareEntry, ...]
 
 
+BackupBundleItemKind = Literal["file", "directory"]
+BackupBundleDeclaredStatus = Literal[
+    "copied",
+    "not_present",
+    "not_configured",
+    "configured_missing",
+]
+BackupBundleStructureState = Literal[
+    "present",
+    "absent_as_declared",
+    "missing_expected",
+    "unexpected_present",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class BackupBundleInspectionItem:
+    key: str
+    label: str
+    kind: BackupBundleItemKind
+    declared_status: BackupBundleDeclaredStatus
+    relative_path: Path
+    structure_state: BackupBundleStructureState
+    note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BackupBundleInspectionResult:
+    bundle_path: Path
+    manifest_path: Path
+    summary_path: Path
+    bundle_format: str | None
+    format_version: int | None
+    created_at_utc: str | None
+    items: tuple[BackupBundleInspectionItem, ...]
+    structurally_usable: bool
+    message: str
+    warnings: tuple[str, ...] = tuple()
+    intentionally_not_included: tuple[str, ...] = tuple()
+
+
 UpdateSourceIntentState = Literal[
     "local_private_mod",
     "no_tracking",
