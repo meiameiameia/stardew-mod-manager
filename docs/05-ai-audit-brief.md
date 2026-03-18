@@ -20,7 +20,7 @@ The goal is not to restate the whole codebase. The goal is to give enough high-s
   - `.\.venv\Scripts\python.exe -m pytest tests\unit -q`
   - latest verified result in this thread: `457 passed, 1 skipped`
   - UI startup smoke also passes offscreen
-- Shipped baseline in this brief: `0.4.0` (includes real-vs-sandbox compare visibility baseline)
+- Shipped baseline in this brief: `0.5.0` (includes real-vs-sandbox compare visibility baseline and backup-bundle inspection baseline)
 - Product posture:
   - local-first
   - safe-by-default
@@ -52,7 +52,7 @@ The app is no longer just a scanner. It now has a coherent local workflow:
 The product is not feature-complete for public release, but it is materially beyond prototype state.
 
 The near-term product direction now explicitly includes a mod-development workflow, not only general end-user mod management.
-The current private-testing build includes the first multi-zip intake step, second watcher-path intake convenience, and a visibility-first real-vs-sandbox compare baseline, while intentionally stopping short of blind multi-package planning/install behavior and compare-driven write shortcuts.
+The current private-testing build includes the first multi-zip intake step, second watcher-path intake convenience, a visibility-first real-vs-sandbox compare baseline, and read-only backup-bundle inspection, while intentionally stopping short of blind multi-package planning/install behavior, compare-driven write shortcuts, and restore/apply behavior.
 
 ## Current Architecture
 
@@ -133,13 +133,13 @@ The next question is:
 
 > What minimum persisted session state most improves daily use without creating hidden/unsafe behavior?
 
-### 2. Backup / restore / migration foundation is missing
+### 2. Backup / restore / migration foundation is only partially established
 
-State is durable and atomic, but user-facing backup/restore/migration ergonomics are not yet established.
+State is durable and atomic, and the app now has explicit backup export plus read-only bundle inspection, but restore/import ergonomics are not yet established.
 
 The next question is:
 
-> What backup/export and restore/import baseline should exist before broader private sharing?
+> What restore/import baseline should exist now that export plus bundle inspection already exist?
 
 ### 3. Sandbox promotion policy is intentionally conservative
 
@@ -269,34 +269,44 @@ Implemented for `0.4.0`:
   - ambiguous match
 - compare is intentionally visibility-first in this stage (no compare-driven write behavior)
 
+#### 8. Backup Bundle Inspection Baseline
+
+Implemented for `0.5.0`:
+
+- explicit read-only inspection of exported backup bundle folders
+- manifest/version/item-status visibility before any restore behavior exists
+- structural usability reporting for future restore/import work
+- no restore/apply behavior in this baseline
+
 ### Next likely phases (real-world usability first)
 
-#### 8. Session Persistence Ergonomics
+#### 9. Session Persistence Ergonomics
 
 - reduce repeat setup/re-orientation cost across launches
 - preserve safe, explicit workflow semantics
 
-#### 9. Backup / Restore / Migration Foundation
+#### 10. Backup / Restore / Migration Foundation
 
-- user-facing backup/export and restore/import baseline
-- practical migration safety for private testing across machines
+- export-first backup baseline is already shipped
+- read-only bundle inspection baseline is already shipped
+- restore/import behavior and migration conflict handling are still pending
 
-#### 10. Steam Prelaunch Best-Effort Behavior
+#### 11. Steam Prelaunch Best-Effort Behavior
 
 - pragmatic Steam-aware launch assistance without promising guaranteed automation
 
-#### 11. Compare Follow-up (deferred after baseline ship)
+#### 12. Compare Follow-up (deferred after baseline ship)
 
 - possible richer compare ergonomics after safety semantics are explicitly approved
 - keep baseline compare visibility trustworthy and avoid implicit write shortcuts
 
 ### Later planned phase
 
-#### 12. Information Architecture Follow-up
+#### 13. Information Architecture Follow-up
 
 The UI simplification track is now intentionally paused until sandbox-dev workflow trust work is no longer the main blocker.
 
-#### 13. Visual Feedback and Polish
+#### 14. Visual Feedback and Polish
 
 Icon/taskbar refinement remains a lower-priority polish item compared with session, backup/migration, compare, and Steam prelaunch usability.
 

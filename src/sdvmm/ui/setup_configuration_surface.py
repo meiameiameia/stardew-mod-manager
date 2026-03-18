@@ -31,6 +31,8 @@ class SetupConfigurationSurface(QScrollArea):
         save_button: QPushButton,
         detect_environment_button: QPushButton,
         export_backup_button: QPushButton,
+        inspect_backup_button: QPushButton,
+        backup_bundle_inspection_summary_label: QLabel,
     ) -> None:
         super().__init__()
         self.setWidgetResizable(True)
@@ -73,8 +75,10 @@ class SetupConfigurationSurface(QScrollArea):
         setup_actions.addWidget(save_button)
         setup_actions.addWidget(detect_environment_button)
         setup_actions.addWidget(export_backup_button)
+        setup_actions.addWidget(inspect_backup_button)
         setup_actions.addStretch(1)
         setup_layout.addLayout(setup_actions, 6, 0, 1, 3)
+        setup_layout.addWidget(backup_bundle_inspection_summary_label, 7, 0, 1, 3)
 
         self.setWidget(setup_group)
         self.setup_group = setup_group

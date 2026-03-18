@@ -45,6 +45,8 @@ from sdvmm.domain.smapi_codes import SMAPI_UP_TO_DATE
 from sdvmm.domain.smapi_log_codes import SMAPI_LOG_NOT_FOUND, SMAPI_LOG_SOURCE_AUTO_DETECTED
 from sdvmm.domain.update_codes import MISSING_UPDATE_KEY, UNSUPPORTED_UPDATE_KEY_FORMAT
 from sdvmm.domain.models import ArchivedModEntry
+from sdvmm.domain.models import BackupBundleInspectionItem
+from sdvmm.domain.models import BackupBundleInspectionResult
 from sdvmm.domain.models import DownloadsIntakeResult
 from sdvmm.domain.models import GameEnvironmentStatus
 from sdvmm.domain.models import InstalledMod
@@ -2074,6 +2076,7 @@ def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: Mai
         "setup_save_config_button",
         "setup_detect_environment_button",
         "setup_export_backup_button",
+        "setup_inspect_backup_button",
     )
 
     for name in input_names:
@@ -2163,6 +2166,99 @@ def test_main_window_export_backup_bundle_cancel_sets_status_without_running(
 
     assert captured == []
     assert main_window._status_strip_label.text() == "Backup export cancelled."
+
+
+def test_main_window_inspect_backup_bundle_runs_service_and_updates_output(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle_path = tmp_path / "Exports" / "sdvmm-backup-20260318-120000Z"
+    bundle_path.mkdir(parents=True)
+    manifest_path = bundle_path / "manifest.json"
+    summary_path = bundle_path / "README.txt"
+    result = BackupBundleInspectionResult(
+        bundle_path=bundle_path,
+        manifest_path=manifest_path,
+        summary_path=summary_path,
+        bundle_format="sdvmm-local-backup",
+        format_version=1,
+        created_at_utc="2026-03-18T12:00:00Z",
+        items=(
+            BackupBundleInspectionItem(
+                key="app_state",
+                label="App state/config",
+                kind="file",
+                declared_status="copied",
+                relative_path=Path("manager-state") / "app-state.json",
+                structure_state="present",
+            ),
+        ),
+        structurally_usable=True,
+        message="Backup bundle looks structurally usable for future restore/import.",
+        warnings=tuple(),
+        intentionally_not_included=(
+            "A restore/import workflow. This bundle is export-only in this stage.",
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QFileDialog.getExistingDirectory",
+        lambda *args, **kwargs: str(bundle_path),
+    )
+
+    def fake_inspect_backup_bundle(**kwargs: object) -> BackupBundleInspectionResult:
+        captured["service_kwargs"] = kwargs
+        return result
+
+    def fake_run_background_operation(**kwargs: object) -> None:
+        captured["operation_name"] = kwargs["operation_name"]
+        task_result = kwargs["task_fn"]()
+        kwargs["on_success"](task_result)
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "inspect_backup_bundle",
+        fake_inspect_backup_bundle,
+    )
+    monkeypatch.setattr(main_window, "_run_background_operation", fake_run_background_operation)
+
+    main_window._on_inspect_backup_bundle()
+
+    assert captured["operation_name"] == "Backup bundle inspection"
+    assert captured["service_kwargs"] == {"bundle_path_text": str(bundle_path)}
+    assert (
+        main_window._status_strip_label.text()
+        == "Backup bundle looks structurally usable for future restore/import."
+    )
+    assert (
+        main_window._backup_bundle_inspection_summary_label.text()
+        == "Backup bundle looks structurally usable for future restore/import."
+    )
+    assert "backup bundle inspection" in main_window._findings_box.toPlainText().casefold()
+    assert str(bundle_path) in main_window._findings_box.toPlainText()
+
+
+def test_main_window_inspect_backup_bundle_cancel_sets_status_without_running(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[str] = []
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QFileDialog.getExistingDirectory",
+        lambda *args, **kwargs: "",
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda **kwargs: captured.append(str(kwargs["operation_name"])),
+    )
+
+    main_window._on_inspect_backup_bundle()
+
+    assert captured == []
+    assert main_window._status_strip_label.text() == "Backup bundle inspection cancelled."
 
 
 def test_main_window_start_watch_uses_both_watched_paths_and_updates_status(

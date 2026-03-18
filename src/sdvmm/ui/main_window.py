@@ -75,11 +75,13 @@ from sdvmm.app.shell_service import (
     SandboxModsPromotionPreview,
     SandboxModsPromotionResult,
     SandboxModsSyncResult,
+    build_backup_bundle_inspection_text,
     build_backup_bundle_export_text,
     build_mods_compare_text,
 )
 from sdvmm.domain.models import (
     AppConfig,
+    BackupBundleInspectionResult,
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
     GameEnvironmentStatus,
@@ -590,6 +592,14 @@ class MainWindow(QMainWindow):
         )
         self._zip_staging_rule_label.setWordWrap(True)
         _set_auxiliary_label_style(self._zip_staging_rule_label)
+        self._backup_bundle_inspection_summary_label = QLabel(
+            "Inspect a backup bundle to review its contents before restore/import exists."
+        )
+        self._backup_bundle_inspection_summary_label.setObjectName(
+            "setup_backup_bundle_inspection_summary_label"
+        )
+        self._backup_bundle_inspection_summary_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._backup_bundle_inspection_summary_label)
 
         self._status_strip_group = GlobalStatusStrip()
         self._status_strip_label = self._status_strip_group.current_status_label
@@ -767,6 +777,9 @@ class MainWindow(QMainWindow):
         export_backup_button = QPushButton("Export backup bundle")
         export_backup_button.setObjectName("setup_export_backup_button")
         export_backup_button.clicked.connect(self._on_export_backup_bundle)
+        inspect_backup_button = QPushButton("Inspect backup bundle")
+        inspect_backup_button.setObjectName("setup_inspect_backup_button")
+        inspect_backup_button.clicked.connect(self._on_inspect_backup_bundle)
 
         setup_scroll = SetupConfigurationSurface(
             game_path_input=self._game_path_input,
@@ -784,6 +797,8 @@ class MainWindow(QMainWindow):
             save_button=save_button,
             detect_environment_button=detect_environment_button,
             export_backup_button=export_backup_button,
+            inspect_backup_button=inspect_backup_button,
+            backup_bundle_inspection_summary_label=self._backup_bundle_inspection_summary_label,
         )
         setup_scroll.setObjectName("setup_workspace_tab")
         self._setup_group = setup_scroll.setup_group
@@ -1254,6 +1269,7 @@ class MainWindow(QMainWindow):
             self._restore_archived_button,
             self._delete_archived_button,
             self._compare_real_vs_sandbox_button,
+            inspect_backup_button,
             self._launch_vanilla_button,
             self._launch_smapi_button,
             self._launch_sandbox_dev_button,
@@ -1596,6 +1612,38 @@ class MainWindow(QMainWindow):
         self._set_status(
             f"Backup export complete: {copied_count} item(s) copied to {result.bundle_path}"
         )
+
+    def _on_inspect_backup_bundle(self) -> None:
+        bundle_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select backup bundle folder",
+            self._mods_path_input.text() or str(self._shell_service.state_file.parent),
+        )
+        if not bundle_path:
+            self._set_status("Backup bundle inspection cancelled.")
+            return
+
+        self._run_background_operation(
+            operation_name="Backup bundle inspection",
+            running_label="Backup bundle inspection",
+            started_status="Inspecting backup bundle...",
+            error_title="Backup bundle inspection failed",
+            task_fn=lambda: self._shell_service.inspect_backup_bundle(
+                bundle_path_text=bundle_path,
+            ),
+            on_success=self._on_backup_bundle_inspection_completed,
+        )
+
+    def _on_backup_bundle_inspection_completed(
+        self,
+        result: BackupBundleInspectionResult,
+    ) -> None:
+        self._backup_bundle_inspection_summary_label.setText(result.message)
+        self._backup_bundle_inspection_summary_label.setToolTip(
+            build_backup_bundle_inspection_text(result)
+        )
+        self._set_details_text(build_backup_bundle_inspection_text(result))
+        self._set_status(result.message)
 
     def _on_launch_vanilla(self) -> None:
         try:

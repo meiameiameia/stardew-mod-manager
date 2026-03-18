@@ -79,6 +79,10 @@ Live Mods safety expectations:
   - dedicated compare tab for drift visibility before sync/promotion decisions
   - clear first-pass categories: only in real, only in sandbox, same version, version mismatch, ambiguous match
   - compare is visibility-first in this baseline (no compare-driven write actions)
+- **Backup bundle inspection baseline**
+  - inspect exported backup bundles without modifying local data
+  - surface manifest format/version, included items, missing expected content, and structural usability
+  - keep restore/import deferred while making backup bundles understandable first
 
 ## Manual source guidance
 
@@ -154,7 +158,7 @@ You can still run focused suites when iterating:
 .\.venv\Scripts\python.exe -m pytest tests\unit\test_main_window_gui_regression.py -q
 ```
 
-### 4) Build Windows portable folder (`0.4.0`)
+### 4) Build Windows portable folder (`0.5.0`)
 
 Packaging baseline in this repo uses **PyInstaller one-folder** output because it is the smallest practical Windows desktop packaging path here without introducing installer/signing work.
 
@@ -173,13 +177,13 @@ Build the portable folder:
 Output folder:
 
 ```text
-dist\stardew-mod-manager-0.4.0-windows-portable\
+dist\stardew-mod-manager-0.5.0-windows-portable\
 ```
 
 Launch the packaged app:
 
 ```powershell
-.\dist\stardew-mod-manager-0.4.0-windows-portable\Stardew Mod Manager.exe
+.\dist\stardew-mod-manager-0.5.0-windows-portable\Stardew Mod Manager.exe
 ```
 
 Current caveats:
@@ -197,7 +201,7 @@ Current caveats:
 - no profiles/instances workflow
 - no packaging/installer/release hardening yet
 - no cross-platform polish emphasis yet (Windows workflow is the primary dev path)
-- restore/import workflow is still deferred; the current backup foundation is export-first
+- restore/import workflow is still deferred; the current backup foundation now includes export plus read-only bundle inspection
 - near-term usability priorities still pending: fuller backup restore/migration workflow, Steam prelaunch best-effort behavior, and richer compare follow-up (for example compare-driven convenience actions) beyond the current visibility-first baseline
 
 ## Data and persistence notes
@@ -207,4 +211,5 @@ Current caveats:
 - update-source intent overlay is persisted separately and merged at app-layer update check time
 - `Export backup bundle` creates a local folder snapshot using the current validated setup values, not just the last saved `app-state.json`
 - the export bundle can include app state/config, install/recovery history, update-source intent overlay, real/sandbox Mods, and app-managed archive roots when they exist
-- the export is intentionally inspectable and non-destructive; restore/import UX is not implemented yet
+- `Inspect backup bundle` reads an exported bundle and reports structure/usability without applying restore changes
+- the backup foundation is intentionally inspectable and non-destructive; restore/import UX is not implemented yet
