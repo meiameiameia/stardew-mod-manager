@@ -27,6 +27,8 @@ The goal is not to restate the whole codebase. The goal is to give enough high-s
   - reversible where possible
   - sandbox remains the recommended path
   - no scraping, no browser automation, no premium-bypass behavior
+  - strongest near-term lane is safe local workflow, dev-loop trust, and migration trust
+  - not aiming to become a one-click downloader or broad profile manager in the near term
 
 ## Current Product Shape
 
@@ -53,6 +55,7 @@ The product is not feature-complete for public release, but it is materially bey
 
 The near-term product direction now explicitly includes a mod-development workflow, not only general end-user mod management.
 The current private-testing build includes the first multi-zip intake step, second watcher-path intake convenience, a visibility-first real-vs-sandbox compare baseline, and read-only backup-bundle inspection, while intentionally stopping short of blind multi-package planning/install behavior, compare-driven write shortcuts, and restore/apply behavior.
+It now also includes practical session persistence ergonomics and explicit local backup export, which makes restore/import planning the next honest workflow step.
 
 ## Current Architecture
 
@@ -125,23 +128,15 @@ The UI is still dense, but further generic decomposition is no longer the highes
 
 ## Current Weak Spots
 
-### 1. Session persistence ergonomics are still thin
+### 1. Backup / restore / migration foundation is only partially established
 
-The core workflow works, but repeated use still pays friction from limited persisted session context and repeated re-orientation.
-
-The next question is:
-
-> What minimum persisted session state most improves daily use without creating hidden/unsafe behavior?
-
-### 2. Backup / restore / migration foundation is only partially established
-
-State is durable and atomic, and the app now has explicit backup export plus read-only bundle inspection, but restore/import ergonomics are not yet established.
+State is durable and atomic, and the app now has explicit backup export plus read-only bundle inspection, but restore/import planning and apply ergonomics are not yet established.
 
 The next question is:
 
-> What restore/import baseline should exist now that export plus bundle inspection already exist?
+> What restore/import planning baseline should exist now that export plus bundle inspection already exist?
 
-### 3. Sandbox promotion policy is intentionally conservative
+### 2. Sandbox promotion policy is intentionally conservative
 
 The product now has explicit:
 
@@ -161,6 +156,14 @@ Current behavior is intentionally conservative:
 The next unresolved product question remains:
 
 > How should the app improve promotion speed and clarity now that preview + archive-aware replace already exists, without making live promotion feel casual or opaque?
+
+### 3. Open-folder and local convenience ergonomics are still light
+
+The app is now strong on explicit workflow semantics, but everyday local movement around Mods, archives, and export bundles still costs more clicks than it should.
+
+The next question is:
+
+> Which explicit open-folder conveniences add real daily value without turning the app into a shell-automation tangle?
 
 ### 4. `MainWindow` is still the densest integration point
 
@@ -273,6 +276,7 @@ Implemented for `0.4.0`:
 
 Implemented for `0.5.0`:
 
+- explicit local backup export baseline for migration/recovery groundwork
 - explicit read-only inspection of exported backup bundle folders
 - manifest/version/item-status visibility before any restore behavior exists
 - structural usability reporting for future restore/import work
@@ -280,33 +284,37 @@ Implemented for `0.5.0`:
 
 ### Next likely phases (real-world usability first)
 
-#### 9. Session Persistence Ergonomics
+#### 9. Restore/Import Planning Baseline
 
-- reduce repeat setup/re-orientation cost across launches
-- preserve safe, explicit workflow semantics
+- build on shipped export + inspection by showing what a restore/import would do before any writes happen
+- make bundle usability, conflicts, and destination mapping understandable
 
-#### 10. Backup / Restore / Migration Foundation
+#### 10. Open-Folder Conveniences
 
-- export-first backup baseline is already shipped
-- read-only bundle inspection baseline is already shipped
-- restore/import behavior and migration conflict handling are still pending
+- add explicit local folder-opening actions where they reduce daily friction
+- keep these conveniences narrow and workflow-owned
 
-#### 11. Steam Prelaunch Best-Effort Behavior
+#### 11. Restore/Import Execution Baseline
+
+- ship the first apply path only after restore/import planning is trustworthy
+- preserve explicit, reviewable, safety-first semantics
+
+#### 12. Steam Prelaunch Best-Effort Behavior
 
 - pragmatic Steam-aware launch assistance without promising guaranteed automation
 
-#### 12. Compare Follow-up (deferred after baseline ship)
+#### 13. Compare Follow-up (deferred after baseline ship)
 
 - possible richer compare ergonomics after safety semantics are explicitly approved
 - keep baseline compare visibility trustworthy and avoid implicit write shortcuts
 
 ### Later planned phase
 
-#### 13. Information Architecture Follow-up
+#### 14. Information Architecture Follow-up
 
 The UI simplification track is now intentionally paused until sandbox-dev workflow trust work is no longer the main blocker.
 
-#### 14. Visual Feedback and Polish
+#### 15. Visual Feedback and Polish
 
 Icon/taskbar refinement remains a lower-priority polish item compared with session, backup/migration, compare, and Steam prelaunch usability.
 
@@ -320,14 +328,15 @@ An external model should specifically challenge these points:
 
 The current recommendation is to prioritize real-world usability and trust ergonomics first:
 
-- session persistence ergonomics
-- backup/restore/migration foundation
-- compare view and launch reliability
+- restore/import planning
+- open-folder convenience
+- restore/import execution
+- Steam-aware launch reliability
 - then broader polish/refactor work
 
 Question:
 
-> Is it correct to keep sandbox launch/sync/promotion ergonomics ahead of more UI consolidation and polish?
+> Is it correct to keep restore/import trust work and local workflow convenience ahead of more UI consolidation and polish?
 
 ### B. Should live promotion stay conservative longer?
 
@@ -348,11 +357,11 @@ Question:
 
 > Which of these should remain, collapse, or be retired?
 
-### D. What is the next best sandbox-dev ergonomics increment?
+### D. What is the next best daily-use ergonomics increment?
 
 Question:
 
-> Given that the intended near-term audience includes mod developers, what sequence best balances trust and speed: preview + archive-aware replace first, open-folder conveniences second, and broader compare/launch conveniences later?
+> Given that the intended near-term audience includes mod developers and careful local users, what sequence best balances trust and speed: restore/import planning first, open-folder conveniences second, restore/import execution third, and broader compare/launch conveniences later?
 
 ### E. When should multi-package planning be allowed?
 

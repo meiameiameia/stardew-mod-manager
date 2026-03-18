@@ -16,10 +16,17 @@ Current maturity is best described as:
 - still evolving, with some UX and product-completion gaps called out below
 
 Current workflow emphasis:
+- safe local mod workflow over broad platform-management ambitions
 - sandbox-first mod development and validation
+- migration trust through explicit local backup/export inspection
 - explicit, user-triggered movement between sandbox and real Mods
 - no hidden mirroring or blind overwrite of live Mods
 - explicit batch package inspection with single-package staging for planning
+
+Near-term product identity:
+- strongest at safe local workflow, dev-loop trust, and migration trust
+- not trying to become a one-click downloader in the near term
+- not trying to become a broad profile or instance manager in the near term
 
 ## Current supported workflow
 
@@ -55,8 +62,11 @@ Live Mods safety expectations:
 - **Packages & Intake**
   - multi-zip selection and batch inspection
   - per-package inspection results with explicit selection
-- watcher-based downloads intake from up to two configured watch paths
+  - watcher-based downloads intake from up to two configured watch paths
   - single-package staging handoff to Plan & Install
+- **Session persistence ergonomics**
+  - practical setup/session fields survive restart
+  - watcher paths, key Mods/archive paths, and active scan/install targets reload automatically
 - **Plan & Install**
   - destination selection (sandbox vs real)
   - plan review summary/explanation/facts
@@ -80,6 +90,7 @@ Live Mods safety expectations:
   - clear first-pass categories: only in real, only in sandbox, same version, version mismatch, ambiguous match
   - compare is visibility-first in this baseline (no compare-driven write actions)
 - **Backup bundle inspection baseline**
+  - explicit export-first backup bundle creation for migration/recovery groundwork
   - inspect exported backup bundles without modifying local data
   - surface manifest format/version, included items, missing expected content, and structural usability
   - keep restore/import deferred while making backup bundles understandable first
@@ -202,7 +213,13 @@ Current caveats:
 - no packaging/installer/release hardening yet
 - no cross-platform polish emphasis yet (Windows workflow is the primary dev path)
 - restore/import workflow is still deferred; the current backup foundation now includes export plus read-only bundle inspection
-- near-term usability priorities still pending: fuller backup restore/migration workflow, Steam prelaunch best-effort behavior, and richer compare follow-up (for example compare-driven convenience actions) beyond the current visibility-first baseline
+- near-term usability priorities are now:
+  - restore/import planning baseline
+  - open-folder conveniences
+  - restore/import execution baseline
+  - Steam prelaunch best-effort behavior
+- compare follow-up remains deferred until the current visibility-first baseline has been used enough to justify compare-driven conveniences
+- downloader automation, profile systems, and broad UI polish remain lower priority than restore/import trust work
 
 ## Data and persistence notes
 

@@ -1,8 +1,24 @@
 # Roadmap
 
+## Product direction after `0.5.0`
+
+The app is now a local-first Stardew Valley mod workflow manager with a sandbox-first safety model.
+
+Its strongest lane is:
+
+- safe local workflow
+- dev-loop trust around sandbox launch, sync, promotion, and compare
+- migration trust through local backup export and backup-bundle inspection
+
+It is not trying to become, in the near term:
+
+- a one-click downloader
+- a broad profile or instance manager
+- a broad shell-polish project divorced from workflow value
+
 ## Shipped through `0.5.0`
 
-### Core workflow and trust baseline
+### Core workflow and safety baseline
 
 Shipped:
 
@@ -21,10 +37,11 @@ Shipped:
 - manual source association participation in update checks
 - atomic app-state/history writes and explicit critical history-failure handling
 
-### Sandbox dev loop + intake ergonomics
+### Daily-use ergonomics and sandbox dev loop
 
 Shipped:
 
+- session persistence ergonomics for practical setup/session fields
 - sandbox-only launch (SMAPI with sandbox Mods path)
 - explicit selected-mod `real -> sandbox` sync
 - explicit selected-mod `sandbox -> real` promotion with preview/review
@@ -34,7 +51,7 @@ Shipped:
 - explicit single-package staging (no opaque batch install)
 - second watcher-path support feeding the same intake flow
 
-### Real vs sandbox compare baseline
+### Compare and migration-trust baseline
 
 Shipped:
 
@@ -46,11 +63,7 @@ Shipped:
   - version mismatch
   - ambiguous match for duplicate/unclear UniqueID grouping
 - compare remains visibility-first in this stage (no compare-driven writes)
-
-### Backup bundle inspection baseline
-
-Shipped:
-
+- explicit backup export baseline for local migration/recovery groundwork
 - explicit read-only inspection of exported backup bundle folders
 - manifest/version/item-status visibility before any restore behavior exists
 - structural usability reporting for future restore/import work
@@ -64,47 +77,52 @@ Implemented enough for now:
 - setup moved into main workspace ownership
 - duplicated detail scaffolding reduced
 
-Still paused because product-facing usability/trust gaps now outweigh more decomposition.
+Still paused because workflow completion and trust are higher-value than more decomposition.
 
-## Critical next priorities (near-term)
+## Near-term priorities
 
-### 1. Session persistence ergonomics
+### 1. Restore/import planning baseline
 
-- preserve practical working context between launches (active targets, last-used intake/watch context, recent selections where safe)
-- reduce repetitive setup/check clicks for everyday usage
-- keep state explicit and user-controllable
+- turn shipped backup export + bundle inspection into a concrete restore/import planning surface
+- show what would map where before any local files are changed
+- expose conflicts, missing content, and trust boundaries clearly
 
-### 2. Backup / restore / migration foundation
+Why this is first:
 
-- build from the shipped export + inspection baseline into a fuller restore/import workflow
-- include pragmatic migration guardrails for personal-machine changes
-- keep trust/recovery semantics transparent and inspectable
+- export and inspection already exist, so planning is the next honest step
+- migration trust is now one of the product's strongest lanes
+- users need a believable path from "I backed this up" to "I can understand how I would recover it"
 
-### 3. Steam prelaunch best-effort behavior
+### 2. Open-folder conveniences
+
+- add narrow local convenience actions that reduce friction in everyday workflow
+- prefer actions that support trust and orientation, such as opening the relevant mods/archive/export folders
+- keep these conveniences explicit and local rather than automating decisions
+
+### 3. Restore/import execution baseline
+
+- add the first restore/apply path only after restore/import planning is visible and trustworthy
+- keep execution explicit, reviewable, and non-destructive by default where possible
+- preserve real-vs-sandbox safety semantics
+
+### 4. Steam prelaunch best-effort behavior
 
 - support best-effort launch behavior that works with Steam ownership constraints without implying guaranteed automation
 - keep launch intent explicit and sandbox-safe
 - surface when fallback/manual launch is required
 
-### 4. Compare follow-up (deferred after baseline ship)
+## Later or deferred
+
+### Compare follow-up
 
 - keep the shipped compare view readable and trustworthy as a first-class drift/orientation surface
-- defer richer compare actions (for example direct compare-driven sync/promotion shortcuts) until safety semantics are explicitly designed
-- preserve compare-first visibility discipline; no blind merge/write behavior
+- defer richer compare actions until safety semantics are explicitly designed
+- no compare-driven bulk sync/promotion shortcuts yet
 
-## Near-term but lower priority
+### Icon/taskbar refinement
 
-### Icon/taskbar refinement follow-up
-
-- continue icon/taskbar sizing polish only after critical workflow usability items above
+- continue icon/taskbar polish only after higher-value workflow usability items above
 - treat as quality polish, not a workflow blocker
-
-## Later priorities
-
-### Recovery/promotion hardening follow-up
-
-- stronger multi-mod live-write review/audit surfaces
-- clearer recovery inspectability for more complex real-write scenarios
 
 ### Public release hardening
 
@@ -117,6 +135,11 @@ Still paused because product-facing usability/trust gaps now outweigh more decom
 - official provider mechanisms only
 - explicit user-owned auth
 - no scraping, no premium bypass, no one-click install-from-search until explicitly approved
+
+### Profile/instance systems
+
+- remain outside near-term scope
+- revisit only if the local workflow manager direction stops fitting the product
 
 ## Guardrails that remain non-negotiable
 
