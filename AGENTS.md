@@ -88,6 +88,7 @@ Default validation expectations:
 - run targeted tests for the touched seam or feature when applicable
 - run the full test suite when the stage touches shared UI composition, workflow wiring, or behavior
 - run a basic startup smoke check when UI composition or startup paths are touched
+- rebuild the Windows portable package when the approved stage is user-facing and versioned, or when packaged behavior/package metadata is part of the stage's acceptance bar
 - expect CI for changes that affect shared workflow behavior before public-release readiness work is considered complete
 
 Do not claim validation that was not actually performed.
@@ -108,6 +109,8 @@ When manual testing is necessary:
 - ask for the minimum necessary validation only
 - keep steps short and specific
 - prefer real workflow checks over cosmetic inspection
+- name the exact uncertainty the manual check is meant to close
+- do not ask for a packaged manual check unless the correct packaged version for that stage has actually been rebuilt
 
 ---
 
@@ -123,6 +126,9 @@ Do not recommend bundling unrelated changes into one commit.
 
 Prefer one commit per approved stage.
 
+- Do not suggest a commit message before the stage is actually closed or only waiting on one clearly bounded manual check.
+- If a stage still has a known blocking risk, missing package rebuild, or unmet manual gate, defer commit-message guidance until that is resolved.
+
 ---
 
 ## Versioning discipline
@@ -131,6 +137,7 @@ Prefer one commit per approved stage.
 - Use patch bumps (`x.y.Z`) for fixes and narrow corrective behavior changes.
 - Use minor bumps (`x.Y.0`) for meaningful workflow expansions that change practical product capability.
 - Do not bump version for analysis-only, prompt-only, or non-impacting internal refactor stages.
+- If a stage bumps version and the app has a packaged portable artifact, treat package rebuild/validation as part of stage closeout unless the stage is explicitly docs-only.
 
 ---
 
