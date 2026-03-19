@@ -1023,6 +1023,23 @@ class AppShellService:
 
         return config
 
+    def resolve_configured_folder_for_open(
+        self,
+        *,
+        field_label: str,
+        path_text: str,
+    ) -> Path:
+        raw_value = path_text.strip()
+        if not raw_value:
+            raise AppShellError(f"{field_label} is not configured.")
+
+        path = Path(raw_value).expanduser()
+        if not path.exists():
+            raise AppShellError(f"{field_label} does not exist: {path}")
+        if not path.is_dir():
+            raise AppShellError(f"{field_label} is not a folder: {path}")
+        return path
+
     def _build_validated_operational_config(
         self,
         *,

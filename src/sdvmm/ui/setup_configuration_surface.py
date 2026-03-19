@@ -24,9 +24,13 @@ class SetupConfigurationSurface(QScrollArea):
         nexus_api_key_input: QLineEdit,
         browse_game_button: QPushButton,
         browse_mods_button: QPushButton,
+        open_mods_button: QPushButton,
         browse_sandbox_button: QPushButton,
+        open_sandbox_button: QPushButton,
         browse_sandbox_archive_button: QPushButton,
+        open_sandbox_archive_button: QPushButton,
         browse_real_archive_button: QPushButton,
+        open_real_archive_button: QPushButton,
         check_nexus_button: QPushButton,
         save_button: QPushButton,
         detect_environment_button: QPushButton,
@@ -56,18 +60,22 @@ class SetupConfigurationSurface(QScrollArea):
         setup_layout.addWidget(QLabel("Mods directory (real path)"), 1, 0)
         setup_layout.addWidget(mods_path_input, 1, 1)
         setup_layout.addWidget(browse_mods_button, 1, 2)
+        setup_layout.addWidget(open_mods_button, 1, 3)
 
         setup_layout.addWidget(QLabel("Sandbox Mods target"), 2, 0)
         setup_layout.addWidget(sandbox_mods_path_input, 2, 1)
         setup_layout.addWidget(browse_sandbox_button, 2, 2)
+        setup_layout.addWidget(open_sandbox_button, 2, 3)
 
         setup_layout.addWidget(QLabel("Sandbox archive path"), 3, 0)
         setup_layout.addWidget(sandbox_archive_path_input, 3, 1)
         setup_layout.addWidget(browse_sandbox_archive_button, 3, 2)
+        setup_layout.addWidget(open_sandbox_archive_button, 3, 3)
 
         setup_layout.addWidget(QLabel("Real Mods archive path"), 4, 0)
         setup_layout.addWidget(real_archive_path_input, 4, 1)
         setup_layout.addWidget(browse_real_archive_button, 4, 2)
+        setup_layout.addWidget(open_real_archive_button, 4, 3)
 
         setup_layout.addWidget(QLabel("Nexus API key"), 5, 0)
         setup_layout.addWidget(nexus_api_key_input, 5, 1)
