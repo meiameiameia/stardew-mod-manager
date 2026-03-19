@@ -2045,17 +2045,32 @@ def test_main_window_real_archive_autofill_only_when_empty(
 def test_main_window_setup_surface_group_and_scroll_exist(main_window: MainWindow) -> None:
     context_tabs = main_window._context_tabs
     setup_group = main_window.findChild(QGroupBox, "setup_surface_group")
+    setup_output_group = main_window.findChild(QGroupBox, "setup_output_group")
+    setup_output_box = main_window.findChild(QPlainTextEdit, "setup_output_box")
     setup_scroll = main_window._setup_scroll
 
     assert context_tabs is not None
     assert setup_group is not None
+    assert setup_output_group is not None
+    assert setup_output_box is not None
     assert setup_scroll is not None
     assert isinstance(setup_scroll, QScrollArea)
     assert setup_group.isVisible()
-    assert setup_scroll.widget() is setup_group
+    assert setup_scroll.widget() is not None
+    assert setup_group.parentWidget() is setup_scroll.widget()
+    assert setup_output_group.parentWidget() is setup_scroll.widget()
+    assert setup_output_box.parentWidget() is setup_output_group
     assert main_window._setup_group is setup_group
+    assert main_window._setup_output_group is setup_output_group
     assert main_window._setup_scroll is setup_scroll
     assert setup_scroll.objectName() == "setup_workspace_tab"
+    assert setup_scroll.widgetResizable() is True
+    assert (
+        setup_scroll.sizePolicy().verticalPolicy()
+        == QSizePolicy.Policy.Expanding
+    )
+    assert setup_output_box.isReadOnly() is True
+    assert setup_output_box.minimumHeight() >= 120
     setup_index = context_tabs.indexOf(setup_scroll)
     assert setup_index >= 0
     assert context_tabs.widget(setup_index) is setup_scroll
@@ -2096,6 +2111,36 @@ def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: Mai
     for name in button_names:
         button = main_window.findChild(QPushButton, name)
         assert button is not None
+
+    assert main_window.findChild(QPlainTextEdit, "setup_output_box") is not None
+
+
+def test_main_window_detect_environment_updates_setup_local_output_and_shared_details(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    game_path = tmp_path / "Stardew Valley"
+    _create_launchable_game_install_for_ui(game_path)
+    environment_status = GameEnvironmentStatus(
+        game_path=game_path,
+        mods_path=game_path / "Mods",
+        smapi_path=game_path / "StardewModdingAPI.exe",
+        state_codes=("game_path_detected", "mods_path_detected", "smapi_detected"),
+    )
+
+    main_window._game_path_input.setText(str(game_path))
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "detect_game_environment",
+        lambda path_text: environment_status,
+    )
+
+    main_window._on_detect_environment()
+
+    assert str(game_path) in main_window._setup_output_box.toPlainText()
+    assert main_window._setup_output_box.toPlainText() == main_window._findings_box.toPlainText()
+    assert main_window._status_strip_label.text() == "Environment detection complete."
 
 
 def test_main_window_export_backup_bundle_runs_service_and_updates_output(
@@ -2153,6 +2198,8 @@ def test_main_window_export_backup_bundle_runs_service_and_updates_output(
     assert main_window._status_strip_label.text() == (
         f"Backup export complete: 1 item(s) copied to {bundle_path}"
     )
+    assert "Stardew Mod Manager backup export" in main_window._setup_output_box.toPlainText()
+    assert str(bundle_path) in main_window._setup_output_box.toPlainText()
     assert "Stardew Mod Manager backup export" in main_window._findings_box.toPlainText()
     assert str(bundle_path) in main_window._findings_box.toPlainText()
 
@@ -2246,6 +2293,8 @@ def test_main_window_inspect_backup_bundle_runs_service_and_updates_output(
         main_window._backup_bundle_inspection_summary_label.text()
         == "Backup bundle looks structurally usable for future restore/import."
     )
+    assert "backup bundle inspection" in main_window._setup_output_box.toPlainText().casefold()
+    assert str(bundle_path) in main_window._setup_output_box.toPlainText()
     assert "backup bundle inspection" in main_window._findings_box.toPlainText().casefold()
     assert str(bundle_path) in main_window._findings_box.toPlainText()
 
@@ -2377,6 +2426,8 @@ def test_main_window_plan_restore_import_runs_service_and_updates_output(
         main_window._restore_import_planning_summary_label.text()
         == "Restore/import planning complete: 0 item(s) look straightforward, 1 item(s) need review."
     )
+    assert "restore/import planning" in main_window._setup_output_box.toPlainText().casefold()
+    assert str(bundle_path) in main_window._setup_output_box.toPlainText()
     assert "restore/import planning" in main_window._findings_box.toPlainText().casefold()
     assert str(bundle_path) in main_window._findings_box.toPlainText()
 

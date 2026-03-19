@@ -101,6 +101,9 @@ Live Mods safety expectations:
   - explicit open-folder actions for the key configured workflow locations
   - quick access to real Mods, sandbox Mods, both archive roots, and both watched-download folders
   - honest feedback when a path is unconfigured, missing, or cannot be opened
+- **Setup ergonomics patch**
+  - Setup remains usable at smaller window sizes through a more scroll-friendly layout and less fragile action-row compression
+  - setup-local detail output now keeps backup/setup results readable inside the Setup tab while the shared global detailed output still mirrors those details
 
 ## Manual source guidance
 
@@ -176,7 +179,7 @@ You can still run focused suites when iterating:
 .\.venv\Scripts\python.exe -m pytest tests\unit\test_main_window_gui_regression.py -q
 ```
 
-### 4) Build Windows portable folder (`0.6.1`)
+### 4) Build Windows portable folder (`0.6.2`)
 
 Packaging baseline in this repo uses **PyInstaller one-folder** output because it is the smallest practical Windows desktop packaging path here without introducing installer/signing work.
 
@@ -195,13 +198,13 @@ Build the portable folder:
 Output folder:
 
 ```text
-dist\stardew-mod-manager-0.6.1-windows-portable\
+dist\stardew-mod-manager-0.6.2-windows-portable\
 ```
 
 Launch the packaged app:
 
 ```powershell
-.\dist\stardew-mod-manager-0.6.1-windows-portable\Stardew Mod Manager.exe
+.\dist\stardew-mod-manager-0.6.2-windows-portable\Stardew Mod Manager.exe
 ```
 
 Current caveats:
