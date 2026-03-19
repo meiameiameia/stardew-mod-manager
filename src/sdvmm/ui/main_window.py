@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
         self._syncing_auto_overwrite_checkbox = False
 
         self.setWindowTitle("Stardew Mod Manager (Sandbox-first)")
-        self.setMinimumSize(980, 640)
+        self.setMinimumSize(900, 600)
         self.resize(1360, 860)
 
         self._game_path_input = QLineEdit()
@@ -568,6 +568,14 @@ class MainWindow(QMainWindow):
         self._findings_box.setReadOnly(True)
         self._findings_box.setMinimumHeight(120)
         self._findings_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._setup_output_box = QPlainTextEdit()
+        self._setup_output_box.setObjectName("setup_output_box")
+        self._setup_output_box.setReadOnly(True)
+        self._setup_output_box.setMinimumHeight(140)
+        self._setup_output_box.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         self._package_inspection_result_box = QPlainTextEdit()
         self._package_inspection_result_box.setReadOnly(True)
         self._package_inspection_result_box.setMinimumHeight(92)
@@ -830,9 +838,11 @@ class MainWindow(QMainWindow):
             plan_restore_import_button=plan_restore_import_button,
             backup_bundle_inspection_summary_label=self._backup_bundle_inspection_summary_label,
             restore_import_planning_summary_label=self._restore_import_planning_summary_label,
+            setup_output_box=self._setup_output_box,
         )
         setup_scroll.setObjectName("setup_workspace_tab")
         self._setup_group = setup_scroll.setup_group
+        self._setup_output_group = setup_scroll.setup_output_group
         self._setup_scroll = setup_scroll
 
         workspace_splitter = QSplitter()
@@ -843,7 +853,7 @@ class MainWindow(QMainWindow):
         self._workspace_splitter = workspace_splitter
 
         inventory_group = QWidget()
-        inventory_group.setMinimumWidth(460)
+        inventory_group.setMinimumWidth(420)
         inventory_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         inventory_layout = QVBoxLayout(inventory_group)
         inventory_layout.setContentsMargins(6, 0, 6, 4)
@@ -971,7 +981,7 @@ class MainWindow(QMainWindow):
         workspace_splitter.addWidget(inventory_group)
 
         context_tabs = QTabWidget()
-        context_tabs.setMinimumWidth(380)
+        context_tabs.setMinimumWidth(340)
         context_tabs.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         context_tabs.setUsesScrollButtons(True)
         context_tabs.setDocumentMode(True)
@@ -1610,15 +1620,18 @@ class MainWindow(QMainWindow):
             )
         except AppShellError as exc:
             QMessageBox.critical(self, "Open folder failed", str(exc))
+            self._set_setup_output_text(str(exc))
             self._set_status(str(exc))
             return
 
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_path))):
             message = f"Could not open {field_label}: {folder_path}"
             QMessageBox.critical(self, "Open folder failed", message)
+            self._set_setup_output_text(message)
             self._set_status(message)
             return
 
+        self._set_setup_output_text(f"Opened {field_label}: {folder_path}")
         self._set_status(f"Opened {field_label}: {folder_path}")
 
     def _on_open_real_mods_folder(self) -> None:
@@ -1664,12 +1677,14 @@ class MainWindow(QMainWindow):
             )
         except AppShellError as exc:
             QMessageBox.critical(self, "Save failed", str(exc))
+            self._set_setup_output_text(str(exc))
             self._set_status(str(exc))
             return
 
         self._refresh_nexus_status(validated=False)
         self._refresh_sandbox_dev_launch_state()
         self._refresh_inventory_sandbox_sync_action_state()
+        self._set_setup_output_text(self._build_setup_config_summary_text())
         self._set_status(f"Saved config to {self._shell_service.state_file}")
 
     def _on_detect_environment(self) -> None:
@@ -1677,11 +1692,12 @@ class MainWindow(QMainWindow):
             status = self._shell_service.detect_game_environment(self._game_path_input.text())
         except AppShellError as exc:
             QMessageBox.critical(self, "Environment detect failed", str(exc))
+            self._set_setup_output_text(str(exc))
             self._set_status(str(exc))
             return
 
         self._apply_environment_status(status)
-        self._set_details_text(build_environment_status_text(status))
+        self._set_setup_output_and_details_text(build_environment_status_text(status))
         self._refresh_sandbox_dev_launch_state()
         self._set_status("Environment detection complete.")
 
@@ -1705,11 +1721,12 @@ class MainWindow(QMainWindow):
                 **self._current_operational_config_inputs(),
             ),
             on_success=self._on_backup_bundle_export_completed,
+            on_failure=self._set_setup_output_text,
         )
 
     def _on_backup_bundle_export_completed(self, result: BackupBundleExportResult) -> None:
         copied_count = sum(1 for item in result.items if item.status == "copied")
-        self._set_details_text(build_backup_bundle_export_text(result))
+        self._set_setup_output_and_details_text(build_backup_bundle_export_text(result))
         self._set_status(
             f"Backup export complete: {copied_count} item(s) copied to {result.bundle_path}"
         )
@@ -1733,17 +1750,17 @@ class MainWindow(QMainWindow):
                 bundle_path_text=bundle_path,
             ),
             on_success=self._on_backup_bundle_inspection_completed,
+            on_failure=self._set_setup_output_text,
         )
 
     def _on_backup_bundle_inspection_completed(
         self,
         result: BackupBundleInspectionResult,
     ) -> None:
+        inspection_text = build_backup_bundle_inspection_text(result)
         self._backup_bundle_inspection_summary_label.setText(result.message)
-        self._backup_bundle_inspection_summary_label.setToolTip(
-            build_backup_bundle_inspection_text(result)
-        )
-        self._set_details_text(build_backup_bundle_inspection_text(result))
+        self._backup_bundle_inspection_summary_label.setToolTip(inspection_text)
+        self._set_setup_output_and_details_text(inspection_text)
         self._set_status(result.message)
 
     def _on_plan_restore_import(self) -> None:
@@ -1766,6 +1783,7 @@ class MainWindow(QMainWindow):
                 **self._current_operational_config_inputs(),
             ),
             on_success=self._on_restore_import_planning_completed,
+            on_failure=self._set_setup_output_text,
         )
 
     def _on_restore_import_planning_completed(
@@ -1775,7 +1793,7 @@ class MainWindow(QMainWindow):
         planning_text = build_restore_import_planning_text(result)
         self._restore_import_planning_summary_label.setText(result.message)
         self._restore_import_planning_summary_label.setToolTip(planning_text)
-        self._set_details_text(planning_text)
+        self._set_setup_output_and_details_text(planning_text)
         self._set_status(result.message)
 
     def _on_launch_vanilla(self) -> None:
@@ -2544,9 +2562,10 @@ class MainWindow(QMainWindow):
         )
         self._nexus_status_label.setText(_nexus_status_label(status.state, status.masked_key))
         if status.message:
-            self._set_details_text(status.message)
+            self._set_setup_output_and_details_text(status.message)
             self._set_status(status.message)
         else:
+            self._set_setup_output_text("Nexus status check complete.")
             self._set_status("Nexus status check complete.")
 
     def _on_open_remote_page(self) -> None:
@@ -3414,6 +3433,35 @@ class MainWindow(QMainWindow):
         self._next_step_strip_label.setText(next_step)
         self._blocking_issues_strip_label.setToolTip(blocking_issue)
         self._next_step_strip_label.setToolTip(next_step)
+
+    def _set_setup_output_text(self, text: str) -> None:
+        self._setup_output_box.setPlainText(text)
+
+    def _set_setup_output_and_details_text(self, text: str) -> None:
+        self._set_setup_output_text(text)
+        self._set_details_text(text)
+
+    def _build_setup_config_summary_text(self) -> str:
+        lines = [
+            "Config saved.",
+            f"State file: {self._shell_service.state_file}",
+        ]
+        configured_paths = (
+            ("Game directory", self._game_path_input.text().strip()),
+            ("Real Mods path", self._mods_path_input.text().strip()),
+            ("Sandbox Mods path", self._sandbox_mods_path_input.text().strip()),
+            ("Sandbox archive path", self._sandbox_archive_path_input.text().strip()),
+            ("Real archive path", self._real_archive_path_input.text().strip()),
+            ("Watched downloads path 1", self._watched_downloads_path_input.text().strip()),
+            (
+                "Watched downloads path 2",
+                self._secondary_watched_downloads_path_input.text().strip(),
+            ),
+        )
+        for label, path_text in configured_paths:
+            if path_text:
+                lines.append(f"{label}: {path_text}")
+        return "\n".join(lines)
 
     def _refresh_sandbox_dev_launch_state(self, *_: object) -> None:
         readiness = self._shell_service.get_sandbox_dev_launch_readiness(
