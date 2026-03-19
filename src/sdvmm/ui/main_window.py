@@ -77,6 +77,7 @@ from sdvmm.app.shell_service import (
     SandboxModsSyncResult,
     build_backup_bundle_inspection_text,
     build_backup_bundle_export_text,
+    build_restore_import_execution_result_text,
     build_restore_import_planning_text,
     build_mods_compare_text,
 )
@@ -105,6 +106,8 @@ from sdvmm.domain.models import (
     PackageInspectionBatchEntry,
     PackageInspectionBatchResult,
     RestoreImportPlanningResult,
+    RestoreImportExecutionReview,
+    RestoreImportExecutionResult,
     SmapiUpdateStatus,
     SandboxInstallPlan,
 )
@@ -160,6 +163,10 @@ _NO_PLAN_FACTS_TEXT = (
     "Approval required: -\n"
     "Blocked entries: -"
 )
+_NO_RESTORE_IMPORT_PLANNING_SUMMARY_TEXT = (
+    "Plan restore/import to compare a backup bundle against this machine without changing local files."
+)
+_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP = "Plan restore/import first."
 
 
 class MainWindow(QMainWindow):
@@ -182,6 +189,8 @@ class MainWindow(QMainWindow):
         self._install_operation_history: tuple[InstallOperationRecord, ...] = tuple()
         self._install_operation_display_indexes: tuple[int, ...] = tuple()
         self._current_recovery_inspection: InstallRecoveryInspectionResult | None = None
+        self._current_restore_import_planning_result: RestoreImportPlanningResult | None = None
+        self._current_restore_import_execution_review: RestoreImportExecutionReview | None = None
         self._guided_update_unique_ids: tuple[str, ...] = tuple()
         self._last_environment_status: GameEnvironmentStatus | None = None
         self._last_smapi_log_report: SmapiLogReport | None = None
@@ -648,6 +657,11 @@ class MainWindow(QMainWindow):
 
         self._zip_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._zip_path_input.textChanged.connect(self._on_zip_path_changed)
+        self._game_path_input.textChanged.connect(self._invalidate_restore_import_plan)
+        self._mods_path_input.textChanged.connect(self._invalidate_restore_import_plan)
+        self._sandbox_mods_path_input.textChanged.connect(self._invalidate_restore_import_plan)
+        self._sandbox_archive_path_input.textChanged.connect(self._invalidate_restore_import_plan)
+        self._real_archive_path_input.textChanged.connect(self._invalidate_restore_import_plan)
         self._sandbox_mods_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._sandbox_archive_path_input.textChanged.connect(self._invalidate_pending_plan)
         self._sandbox_archive_path_input.textChanged.connect(self._refresh_install_safety_panel)
@@ -813,6 +827,11 @@ class MainWindow(QMainWindow):
         plan_restore_import_button = QPushButton("Plan restore/import")
         plan_restore_import_button.setObjectName("setup_plan_restore_import_button")
         plan_restore_import_button.clicked.connect(self._on_plan_restore_import)
+        execute_restore_import_button = QPushButton("Execute restore/import")
+        execute_restore_import_button.setObjectName("setup_execute_restore_import_button")
+        execute_restore_import_button.clicked.connect(self._on_execute_restore_import)
+        execute_restore_import_button.setEnabled(False)
+        execute_restore_import_button.setToolTip(_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP)
 
         setup_scroll = SetupConfigurationSurface(
             game_path_input=self._game_path_input,
@@ -836,6 +855,7 @@ class MainWindow(QMainWindow):
             export_backup_button=export_backup_button,
             inspect_backup_button=inspect_backup_button,
             plan_restore_import_button=plan_restore_import_button,
+            execute_restore_import_button=execute_restore_import_button,
             backup_bundle_inspection_summary_label=self._backup_bundle_inspection_summary_label,
             restore_import_planning_summary_label=self._restore_import_planning_summary_label,
             setup_output_box=self._setup_output_box,
@@ -1326,6 +1346,7 @@ class MainWindow(QMainWindow):
             self._compare_real_vs_sandbox_button,
             inspect_backup_button,
             plan_restore_import_button,
+            execute_restore_import_button,
             self._launch_vanilla_button,
             self._launch_smapi_button,
             self._launch_sandbox_dev_button,
@@ -1337,6 +1358,8 @@ class MainWindow(QMainWindow):
         self._refresh_responsive_panel_bounds()
         self._refresh_staged_package_preview()
         self._refresh_install_operation_selector()
+        self._execute_restore_import_button = execute_restore_import_button
+        self._refresh_restore_import_execution_state()
 
     def _load_startup_state(self) -> None:
         state = self._shell_service.load_startup_config()
@@ -1711,6 +1734,7 @@ class MainWindow(QMainWindow):
             self._set_status("Backup export cancelled.")
             return
 
+        self._clear_restore_import_plan_state(reset_summary=False)
         self._run_background_operation(
             operation_name="Backup export",
             running_label="Backup export",
@@ -1741,6 +1765,7 @@ class MainWindow(QMainWindow):
             self._set_status("Backup bundle inspection cancelled.")
             return
 
+        self._clear_restore_import_plan_state(reset_summary=False)
         self._run_background_operation(
             operation_name="Backup bundle inspection",
             running_label="Backup bundle inspection",
@@ -1773,6 +1798,7 @@ class MainWindow(QMainWindow):
             self._set_status("Restore/import planning cancelled.")
             return
 
+        self._clear_restore_import_plan_state(reset_summary=True)
         self._run_background_operation(
             operation_name="Restore/import planning",
             running_label="Restore/import planning",
@@ -1791,9 +1817,84 @@ class MainWindow(QMainWindow):
         result: RestoreImportPlanningResult,
     ) -> None:
         planning_text = build_restore_import_planning_text(result)
+        self._current_restore_import_planning_result = result
+        self._current_restore_import_execution_review = (
+            self._shell_service.review_restore_import_execution(result)
+        )
         self._restore_import_planning_summary_label.setText(result.message)
         self._restore_import_planning_summary_label.setToolTip(planning_text)
         self._set_setup_output_and_details_text(planning_text)
+        self._refresh_restore_import_execution_state()
+        self._set_status(result.message)
+
+    def _on_execute_restore_import(self) -> None:
+        planning_result = self._current_restore_import_planning_result
+        if planning_result is None:
+            message = "Run Plan restore/import first."
+            self._set_setup_output_text(message)
+            self._set_status(message)
+            return
+
+        review = self._shell_service.review_restore_import_execution(planning_result)
+        self._current_restore_import_execution_review = review
+        self._refresh_restore_import_execution_state()
+        if not review.allowed:
+            self._set_setup_output_text(review.message)
+            self._set_status(review.message)
+            return
+
+        review_lines = [
+            "Restore/import will write only clearly missing content into the current configured destinations.",
+            "",
+            f"Missing mod folders to restore: {review.executable_mod_count}",
+            f"Missing config artifacts to restore: {review.executable_config_count}",
+            f"Config artifacts already covered by restored mod folders: {review.covered_config_count}",
+            f"Review entries left untouched: {review.review_entry_count}",
+            f"Blocked entries left untouched: {review.blocked_entry_count}",
+            f"Deferred non-execution bundle items: {review.deferred_item_count}",
+            "",
+            "No local content will be merged or overwritten in this stage.",
+            "",
+            "Continue with restore/import execution?",
+        ]
+        if review.warnings:
+            review_lines.extend(("", "Warnings:"))
+            review_lines.extend(f"- {warning}" for warning in review.warnings)
+        confirmation_text = "\n".join(review_lines)
+        decision = QMessageBox.question(
+            self,
+            "Execute restore/import?",
+            confirmation_text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if decision != QMessageBox.StandardButton.Yes:
+            self._set_status("Restore/import execution cancelled.")
+            return
+
+        self._run_background_operation(
+            operation_name="Restore/import execution",
+            running_label="Restore/import execution",
+            started_status="Restoring clearly missing bundle content into the current configured destinations...",
+            error_title="Restore/import execution failed",
+            task_fn=lambda: self._shell_service.execute_restore_import(
+                planning_result,
+                confirm_execution=True,
+            ),
+            on_success=self._on_execute_restore_import_completed,
+            on_failure=self._set_setup_output_text,
+        )
+
+    def _on_execute_restore_import_completed(
+        self,
+        result: RestoreImportExecutionResult,
+    ) -> None:
+        execution_text = build_restore_import_execution_result_text(result)
+        self._restore_import_planning_summary_label.setText(result.message)
+        self._restore_import_planning_summary_label.setToolTip(execution_text)
+        self._set_setup_output_and_details_text(execution_text)
+        self._clear_restore_import_plan_state(reset_summary=False)
+        self._refresh_restore_import_execution_state()
         self._set_status(result.message)
 
     def _on_launch_vanilla(self) -> None:
@@ -3425,6 +3526,7 @@ class MainWindow(QMainWindow):
         self._discovery_query_input.setEnabled(enabled)
         self._refresh_sandbox_dev_launch_state()
         self._refresh_inventory_sandbox_sync_action_state()
+        self._refresh_restore_import_execution_state()
 
     def _set_details_text(self, text: str) -> None:
         self._findings_box.setPlainText(text)
@@ -3485,6 +3587,35 @@ class MainWindow(QMainWindow):
         self._launch_sandbox_dev_button.setToolTip(
             tooltip if button_enabled else readiness.message
         )
+
+    def _clear_restore_import_plan_state(self, *, reset_summary: bool) -> None:
+        self._current_restore_import_planning_result = None
+        self._current_restore_import_execution_review = None
+        if reset_summary:
+            self._restore_import_planning_summary_label.setText(
+                _NO_RESTORE_IMPORT_PLANNING_SUMMARY_TEXT
+            )
+            self._restore_import_planning_summary_label.setToolTip(
+                _NO_RESTORE_IMPORT_PLANNING_SUMMARY_TEXT
+            )
+
+    def _refresh_restore_import_execution_state(self) -> None:
+        button = getattr(self, "_execute_restore_import_button", None)
+        if button is None:
+            return
+        if self._active_operation_name is not None:
+            button.setEnabled(False)
+            button.setToolTip("Wait for the current background operation to finish.")
+            return
+
+        review = self._current_restore_import_execution_review
+        if review is None:
+            button.setEnabled(False)
+            button.setToolTip(_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP)
+            return
+
+        button.setEnabled(review.allowed)
+        button.setToolTip(review.message)
 
     def _set_recovery_output_text(self, text: str) -> None:
         self._set_details_text(text)
@@ -3692,6 +3823,10 @@ class MainWindow(QMainWindow):
         self._set_plan_review_summary_text(_NO_PLAN_REVIEW_SUMMARY_TEXT)
         self._set_plan_review_explanation_text(_NO_PLAN_REVIEW_EXPLANATION_TEXT)
         self._set_plan_facts_text(_NO_PLAN_FACTS_TEXT)
+
+    def _invalidate_restore_import_plan(self, *_: object) -> None:
+        self._clear_restore_import_plan_state(reset_summary=True)
+        self._refresh_restore_import_execution_state()
 
     def _on_watched_path_changed(self, *_: object) -> None:
         self._known_watched_zip_paths = tuple()

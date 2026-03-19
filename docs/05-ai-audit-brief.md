@@ -18,9 +18,9 @@ The goal is not to restate the whole codebase. The goal is to give enough high-s
 - Entry point: `sdvmm-ui` -> [`src/sdvmm/app/main.py`](/Users/darth/Projects/stardew-mod-manager/src/sdvmm/app/main.py)
 - Current validation baseline:
   - `.\.venv\Scripts\python.exe -m pytest tests\unit -q`
-  - latest verified result in this thread: `468 passed, 1 skipped`
+  - latest verified result in this thread: `486 passed, 1 skipped`
   - UI startup smoke also passes offscreen
-- Shipped baseline in this brief: `0.6.1` (includes real-vs-sandbox compare visibility baseline, backup-bundle inspection baseline, read-only restore/import planning baseline, and open-folder conveniences baseline)
+- Shipped baseline in this brief: `0.8.0` (includes real-vs-sandbox compare visibility baseline, config-aware backup export, backup-bundle inspection baseline, restore/import planning baseline, first restore/import execution baseline, and open-folder conveniences baseline)
 - Product posture:
   - local-first
   - safe-by-default
@@ -54,8 +54,8 @@ The app is no longer just a scanner. It now has a coherent local workflow:
 The product is not feature-complete for public release, but it is materially beyond prototype state.
 
 The near-term product direction now explicitly includes a mod-development workflow, not only general end-user mod management.
-The current private-testing build includes the first multi-zip intake step, second watcher-path intake convenience, a visibility-first real-vs-sandbox compare baseline, read-only backup-bundle inspection, read-only restore/import planning, and explicit open-folder conveniences for the key configured workflow folders, while intentionally stopping short of blind multi-package planning/install behavior, compare-driven write shortcuts, and restore/apply behavior.
-It now also includes practical session persistence ergonomics and explicit local backup export, which makes restore/import execution the next honest workflow step.
+The current private-testing build includes the first multi-zip intake step, second watcher-path intake convenience, a visibility-first real-vs-sandbox compare baseline, config-aware backup export, backup-bundle inspection, restore/import planning, first restore/import execution for clearly missing content, and explicit open-folder conveniences for the key configured workflow folders, while intentionally stopping short of blind multi-package planning/install behavior, compare-driven write shortcuts, and overwrite/merge restore behavior.
+It now also includes practical session persistence ergonomics and explicit local backup export with mod-config snapshot coverage, which makes restore/import conflict handling the next honest workflow step.
 
 ## Current Architecture
 
@@ -128,13 +128,13 @@ The UI is still dense, but further generic decomposition is no longer the highes
 
 ## Current Weak Spots
 
-### 1. Backup / restore / migration foundation is only partially established
+### 1. Backup / restore / migration foundation is now real but still intentionally narrow
 
-State is durable and atomic, and the app now has explicit backup export, read-only bundle inspection, and read-only restore/import planning, but restore/apply ergonomics are not yet established.
+State is durable and atomic, and the app now has explicit config-aware backup export, bundle inspection, restore/import planning, and a first restore/import execution path for clearly missing content, but overwrite/merge restore ergonomics are not yet established.
 
 The next question is:
 
-> What restore/import execution baseline should exist now that export, inspection, and planning already exist?
+> What conflict-handling baseline should exist now that restore/import execution already covers clearly missing content?
 
 ### 2. Sandbox promotion policy is intentionally conservative
 
@@ -157,13 +157,13 @@ The next unresolved product question remains:
 
 > How should the app improve promotion speed and clarity now that preview + archive-aware replace already exists, without making live promotion feel casual or opaque?
 
-### 3. Restore/apply ergonomics are still the main migration gap
+### 3. Restore conflict handling is now the main migration gap
 
-The app now has explicit open-folder conveniences for the main configured workflow paths, but the export/inspection/planning chain still stops short of any managed restore/apply path.
+The app now has explicit open-folder conveniences for the main configured workflow paths, and the export/inspection/planning/execution chain now includes bundled mod-config coverage, but it still stops short of overwrite/merge restore behavior for conflicting local content.
 
 The next question is:
 
-> What is the smallest restore/import execution baseline that preserves the same trust level as the current export/inspection/planning chain?
+> What is the smallest restore/import conflict-handling baseline that preserves the same trust level as the current execution path?
 
 ### 4. `MainWindow` is still the densest integration point
 
@@ -272,9 +272,9 @@ Implemented for `0.4.0`:
   - ambiguous match
 - compare is intentionally visibility-first in this stage (no compare-driven write behavior)
 
-#### 8. Backup Bundle Inspection + Restore/Import Planning + Open-Folder Baseline
+#### 8. Backup Bundle Inspection + Restore/Import Planning + Execution + Open-Folder Baseline
 
-Implemented for `0.5.0` / `0.6.0` / `0.6.1`:
+Implemented through `0.8.0`:
 
 - explicit local backup export baseline for migration/recovery groundwork
 - explicit read-only inspection of exported backup bundle folders
@@ -282,19 +282,21 @@ Implemented for `0.5.0` / `0.6.0` / `0.6.1`:
 - structural usability reporting for future restore/import work
 - explicit read-only restore/import planning against the current local machine
 - safe later / needs review / blocked planning visibility
+- explicit restore/import execution for clearly missing mod folders and supported config artifacts into the currently configured destinations
+- rollback of already-restored paths from the current run if execution fails mid-way
 - explicit open-folder actions for real Mods, sandbox Mods, both archive roots, and both watched-download paths
-- no restore/apply behavior in this baseline
+- no overwrite/merge restore behavior in this baseline
 
 ### Next likely phases (real-world usability first)
 
-#### 9. Restore/Import Execution Baseline
-
-- ship the first apply path now that restore/import planning is trustworthy
-- preserve explicit, reviewable, safety-first semantics
-
-#### 10. Steam Prelaunch Best-Effort Behavior
+#### 9. Steam Prelaunch Best-Effort Behavior
 
 - pragmatic Steam-aware launch assistance without promising guaranteed automation
+
+#### 10. Restore/Import Conflict/Overwrite Follow-up
+
+- extend restore/import only after explicit review semantics for conflicting local content are designed
+- keep the current no-overwrite baseline trustworthy
 
 #### 11. Compare Follow-up (deferred after baseline ship)
 
@@ -323,6 +325,7 @@ The current recommendation is to prioritize real-world usability and trust ergon
 
 - restore/import execution
 - Steam-aware launch reliability
+- restore/import conflict handling
 - then broader polish/refactor work
 
 Question:

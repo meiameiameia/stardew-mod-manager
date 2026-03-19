@@ -254,6 +254,13 @@ RestoreImportPlanningModState = Literal[
     "destination_not_ready",
     "ambiguous_match",
 ]
+RestoreImportPlanningConfigState = Literal[
+    "missing_locally",
+    "same_content",
+    "different_content",
+    "bundle_unusable",
+    "destination_not_ready",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +277,9 @@ class RestoreImportPlanningItem:
     safe_mod_count: int = 0
     review_mod_count: int = 0
     blocked_mod_count: int = 0
+    safe_config_count: int = 0
+    review_config_count: int = 0
+    blocked_config_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +291,16 @@ class RestoreImportPlanningModEntry:
     bundle_version: str | None
     local_version: str | None
     state: RestoreImportPlanningModState
+    local_target_path: Path | None = None
+    note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreImportPlanningConfigEntry:
+    bundle_item_key: str
+    bundle_item_label: str
+    relative_path: Path
+    state: RestoreImportPlanningConfigState
     local_target_path: Path | None = None
     note: str | None = None
 
@@ -298,6 +318,39 @@ class RestoreImportPlanningResult:
     review_mod_count: int
     blocked_mod_count: int
     message: str
+    config_entries: tuple[RestoreImportPlanningConfigEntry, ...] = tuple()
+    safe_config_count: int = 0
+    review_config_count: int = 0
+    blocked_config_count: int = 0
+    warnings: tuple[str, ...] = tuple()
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreImportExecutionReview:
+    allowed: bool
+    message: str
+    executable_mod_count: int
+    executable_config_count: int
+    covered_config_count: int = 0
+    review_entry_count: int = 0
+    blocked_entry_count: int = 0
+    deferred_item_count: int = 0
+    requires_explicit_confirmation: bool = True
+    warnings: tuple[str, ...] = tuple()
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreImportExecutionResult:
+    bundle_path: Path
+    restored_mod_paths: tuple[Path, ...]
+    restored_config_paths: tuple[Path, ...]
+    restored_mod_count: int
+    restored_config_count: int
+    covered_config_count: int = 0
+    skipped_review_entry_count: int = 0
+    skipped_blocked_entry_count: int = 0
+    deferred_item_count: int = 0
+    message: str = ""
     warnings: tuple[str, ...] = tuple()
 
 
