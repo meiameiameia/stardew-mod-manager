@@ -77,6 +77,7 @@ from sdvmm.app.shell_service import (
     SandboxModsSyncResult,
     build_backup_bundle_inspection_text,
     build_backup_bundle_export_text,
+    build_restore_import_planning_text,
     build_mods_compare_text,
 )
 from sdvmm.domain.models import (
@@ -103,6 +104,7 @@ from sdvmm.domain.models import (
     ModsInventory,
     PackageInspectionBatchEntry,
     PackageInspectionBatchResult,
+    RestoreImportPlanningResult,
     SmapiUpdateStatus,
     SandboxInstallPlan,
 )
@@ -600,6 +602,14 @@ class MainWindow(QMainWindow):
         )
         self._backup_bundle_inspection_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._backup_bundle_inspection_summary_label)
+        self._restore_import_planning_summary_label = QLabel(
+            "Plan restore/import to compare a backup bundle against this machine without changing local files."
+        )
+        self._restore_import_planning_summary_label.setObjectName(
+            "setup_restore_import_planning_summary_label"
+        )
+        self._restore_import_planning_summary_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._restore_import_planning_summary_label)
 
         self._status_strip_group = GlobalStatusStrip()
         self._status_strip_label = self._status_strip_group.current_status_label
@@ -780,6 +790,9 @@ class MainWindow(QMainWindow):
         inspect_backup_button = QPushButton("Inspect backup bundle")
         inspect_backup_button.setObjectName("setup_inspect_backup_button")
         inspect_backup_button.clicked.connect(self._on_inspect_backup_bundle)
+        plan_restore_import_button = QPushButton("Plan restore/import")
+        plan_restore_import_button.setObjectName("setup_plan_restore_import_button")
+        plan_restore_import_button.clicked.connect(self._on_plan_restore_import)
 
         setup_scroll = SetupConfigurationSurface(
             game_path_input=self._game_path_input,
@@ -798,7 +811,9 @@ class MainWindow(QMainWindow):
             detect_environment_button=detect_environment_button,
             export_backup_button=export_backup_button,
             inspect_backup_button=inspect_backup_button,
+            plan_restore_import_button=plan_restore_import_button,
             backup_bundle_inspection_summary_label=self._backup_bundle_inspection_summary_label,
+            restore_import_planning_summary_label=self._restore_import_planning_summary_label,
         )
         setup_scroll.setObjectName("setup_workspace_tab")
         self._setup_group = setup_scroll.setup_group
@@ -1270,6 +1285,7 @@ class MainWindow(QMainWindow):
             self._delete_archived_button,
             self._compare_real_vs_sandbox_button,
             inspect_backup_button,
+            plan_restore_import_button,
             self._launch_vanilla_button,
             self._launch_smapi_button,
             self._launch_sandbox_dev_button,
@@ -1643,6 +1659,38 @@ class MainWindow(QMainWindow):
             build_backup_bundle_inspection_text(result)
         )
         self._set_details_text(build_backup_bundle_inspection_text(result))
+        self._set_status(result.message)
+
+    def _on_plan_restore_import(self) -> None:
+        bundle_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select backup bundle folder",
+            self._mods_path_input.text() or str(self._shell_service.state_file.parent),
+        )
+        if not bundle_path:
+            self._set_status("Restore/import planning cancelled.")
+            return
+
+        self._run_background_operation(
+            operation_name="Restore/import planning",
+            running_label="Restore/import planning",
+            started_status="Planning restore/import from backup bundle...",
+            error_title="Restore/import planning failed",
+            task_fn=lambda: self._shell_service.plan_restore_import_from_backup_bundle(
+                bundle_path_text=bundle_path,
+                **self._current_operational_config_inputs(),
+            ),
+            on_success=self._on_restore_import_planning_completed,
+        )
+
+    def _on_restore_import_planning_completed(
+        self,
+        result: RestoreImportPlanningResult,
+    ) -> None:
+        planning_text = build_restore_import_planning_text(result)
+        self._restore_import_planning_summary_label.setText(result.message)
+        self._restore_import_planning_summary_label.setToolTip(planning_text)
+        self._set_details_text(planning_text)
         self._set_status(result.message)
 
     def _on_launch_vanilla(self) -> None:

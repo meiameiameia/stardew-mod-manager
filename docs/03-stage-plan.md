@@ -1,6 +1,6 @@
 # Roadmap
 
-## Product direction after `0.5.0`
+## Product direction after `0.6.0`
 
 The app is now a local-first Stardew Valley mod workflow manager with a sandbox-first safety model.
 
@@ -8,7 +8,7 @@ Its strongest lane is:
 
 - safe local workflow
 - dev-loop trust around sandbox launch, sync, promotion, and compare
-- migration trust through local backup export and backup-bundle inspection
+- migration trust through local backup export, backup-bundle inspection, and restore/import planning
 
 It is not trying to become, in the near term:
 
@@ -16,7 +16,7 @@ It is not trying to become, in the near term:
 - a broad profile or instance manager
 - a broad shell-polish project divorced from workflow value
 
-## Shipped through `0.5.0`
+## Shipped through `0.6.0`
 
 ### Core workflow and safety baseline
 
@@ -67,6 +67,8 @@ Shipped:
 - explicit read-only inspection of exported backup bundle folders
 - manifest/version/item-status visibility before any restore behavior exists
 - structural usability reporting for future restore/import work
+- explicit read-only restore/import planning against the current local machine
+- clear planning states for safe later vs needs review vs blocked
 - no restore/apply behavior in this baseline
 
 ### Information architecture simplification (paused)
@@ -81,31 +83,25 @@ Still paused because workflow completion and trust are higher-value than more de
 
 ## Near-term priorities
 
-### 1. Restore/import planning baseline
-
-- turn shipped backup export + bundle inspection into a concrete restore/import planning surface
-- show what would map where before any local files are changed
-- expose conflicts, missing content, and trust boundaries clearly
-
-Why this is first:
-
-- export and inspection already exist, so planning is the next honest step
-- migration trust is now one of the product's strongest lanes
-- users need a believable path from "I backed this up" to "I can understand how I would recover it"
-
-### 2. Open-folder conveniences
+### 1. Open-folder conveniences
 
 - add narrow local convenience actions that reduce friction in everyday workflow
 - prefer actions that support trust and orientation, such as opening the relevant mods/archive/export folders
 - keep these conveniences explicit and local rather than automating decisions
 
-### 3. Restore/import execution baseline
+### 2. Restore/import execution baseline
 
-- add the first restore/apply path only after restore/import planning is visible and trustworthy
+- add the first restore/apply path now that restore/import planning is visible and trustworthy
 - keep execution explicit, reviewable, and non-destructive by default where possible
 - preserve real-vs-sandbox safety semantics
 
-### 4. Steam prelaunch best-effort behavior
+Why this is next:
+
+- export, inspection, and planning now exist as a coherent trust chain
+- execution is the next product step that turns migration trust into practical recovery
+- it should still follow smaller local ergonomics wins where those reduce setup friction without changing safety semantics
+
+### 3. Steam prelaunch best-effort behavior
 
 - support best-effort launch behavior that works with Steam ownership constraints without implying guaranteed automation
 - keep launch intent explicit and sandbox-safe

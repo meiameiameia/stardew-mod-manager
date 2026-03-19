@@ -21,6 +21,10 @@ from sdvmm.domain.models import (
     AppConfig,
     BackupBundleInspectionItem,
     BackupBundleInspectionResult,
+    RestoreImportPlanningItem,
+    RestoreImportPlanningItemState,
+    RestoreImportPlanningModEntry,
+    RestoreImportPlanningResult,
     DependencyPreflightFinding,
     DownloadsIntakeResult,
     DownloadsWatchPollResult,
@@ -318,6 +322,20 @@ class _BackupBundleSourceResolution:
     path: Path | None
     missing_status: Literal["not_present", "not_configured", "configured_missing"]
     note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RestoreImportPlanningLocalTargets:
+    app_state_path: Path
+    install_history_path: Path
+    recovery_history_path: Path
+    update_source_intent_overlay_path: Path
+    real_mods_path: Path | None
+    sandbox_mods_path: Path | None
+    real_archive_path: Path | None
+    sandbox_archive_path: Path | None
+    bundle_config: AppConfig | None
+    bundle_config_warning: str | None = None
 
 
 _ACTIONABLE_INTAKE_CLASSIFICATIONS = {
@@ -640,6 +658,43 @@ class AppShellService:
             manifest_path=manifest_path,
             summary_path=summary_path,
             raw_manifest=raw_manifest,
+        )
+
+    def plan_restore_import_from_backup_bundle(
+        self,
+        *,
+        bundle_path_text: str,
+        game_path_text: str,
+        mods_dir_text: str,
+        sandbox_mods_path_text: str,
+        sandbox_archive_path_text: str,
+        watched_downloads_path_text: str,
+        secondary_watched_downloads_path_text: str = "",
+        real_archive_path_text: str = "",
+        nexus_api_key_text: str = "",
+        scan_target: ScanTargetKind,
+        install_target: InstallTargetKind = INSTALL_TARGET_SANDBOX_MODS,
+        existing_config: AppConfig | None,
+    ) -> RestoreImportPlanningResult:
+        del watched_downloads_path_text
+        del secondary_watched_downloads_path_text
+        del nexus_api_key_text
+        del scan_target
+        del install_target
+
+        inspection = self.inspect_backup_bundle(bundle_path_text=bundle_path_text)
+        local_targets = self._build_restore_import_planning_local_targets(
+            game_path_text=game_path_text,
+            mods_dir_text=mods_dir_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            real_archive_path_text=real_archive_path_text,
+            existing_config=existing_config,
+            inspection=inspection,
+        )
+        return _build_restore_import_planning_result(
+            inspection=inspection,
+            local_targets=local_targets,
         )
 
     def inspect_install_recovery_by_operation_id(
@@ -3761,6 +3816,137 @@ class AppShellService:
             )
         return path
 
+    def _build_restore_import_planning_local_targets(
+        self,
+        *,
+        game_path_text: str,
+        mods_dir_text: str,
+        sandbox_mods_path_text: str,
+        sandbox_archive_path_text: str,
+        real_archive_path_text: str,
+        existing_config: AppConfig | None,
+        inspection: BackupBundleInspectionResult,
+    ) -> _RestoreImportPlanningLocalTargets:
+        game_path = self._resolve_restore_import_game_path(
+            game_path_text=game_path_text,
+            existing_config=existing_config,
+        )
+        real_mods_path = self._resolve_restore_import_real_mods_path(
+            mods_dir_text=mods_dir_text,
+            game_path=game_path,
+            existing_config=existing_config,
+        )
+        sandbox_mods_path = self._resolve_restore_import_optional_path(
+            sandbox_mods_path_text,
+            fallback=(existing_config.sandbox_mods_path if existing_config is not None else None),
+        )
+        real_archive_path = self._resolve_restore_import_archive_path(
+            archive_path_text=real_archive_path_text,
+            fallback=(existing_config.real_archive_path if existing_config is not None else None),
+            destination_mods_path=real_mods_path,
+            default_archive_dir_name=_DEFAULT_REAL_ARCHIVE_DIRNAME,
+        )
+        sandbox_archive_path = self._resolve_restore_import_archive_path(
+            archive_path_text=sandbox_archive_path_text,
+            fallback=(
+                existing_config.sandbox_archive_path if existing_config is not None else None
+            ),
+            destination_mods_path=sandbox_mods_path,
+            default_archive_dir_name=_DEFAULT_SANDBOX_ARCHIVE_DIRNAME,
+        )
+        bundle_config, bundle_config_warning = self._load_backup_bundle_config_snapshot(
+            inspection
+        )
+        return _RestoreImportPlanningLocalTargets(
+            app_state_path=self._state_file,
+            install_history_path=self._install_operation_history_file,
+            recovery_history_path=self._recovery_execution_history_file,
+            update_source_intent_overlay_path=self._update_source_intent_overlay_file,
+            real_mods_path=real_mods_path,
+            sandbox_mods_path=sandbox_mods_path,
+            real_archive_path=real_archive_path,
+            sandbox_archive_path=sandbox_archive_path,
+            bundle_config=bundle_config,
+            bundle_config_warning=bundle_config_warning,
+        )
+
+    @staticmethod
+    def _resolve_restore_import_game_path(
+        *,
+        game_path_text: str,
+        existing_config: AppConfig | None,
+    ) -> Path | None:
+        raw_value = game_path_text.strip()
+        if raw_value:
+            return Path(raw_value).expanduser()
+        if existing_config is not None:
+            return existing_config.game_path
+        return None
+
+    @staticmethod
+    def _resolve_restore_import_real_mods_path(
+        *,
+        mods_dir_text: str,
+        game_path: Path | None,
+        existing_config: AppConfig | None,
+    ) -> Path | None:
+        raw_value = mods_dir_text.strip()
+        if raw_value:
+            return Path(raw_value).expanduser()
+        if existing_config is not None:
+            return existing_config.mods_path
+        if game_path is not None:
+            return derive_mods_path(game_path)
+        return None
+
+    @staticmethod
+    def _resolve_restore_import_optional_path(
+        path_text: str,
+        *,
+        fallback: Path | None,
+    ) -> Path | None:
+        raw_value = path_text.strip()
+        if raw_value:
+            return Path(raw_value).expanduser()
+        return fallback
+
+    @staticmethod
+    def _resolve_restore_import_archive_path(
+        *,
+        archive_path_text: str,
+        fallback: Path | None,
+        destination_mods_path: Path | None,
+        default_archive_dir_name: str,
+    ) -> Path | None:
+        raw_value = archive_path_text.strip()
+        if raw_value:
+            return Path(raw_value).expanduser()
+        if fallback is not None:
+            return fallback
+        if destination_mods_path is not None:
+            return AppShellService.default_archive_path_for_destination(
+                destination_mods_path=destination_mods_path,
+                default_archive_dir_name=default_archive_dir_name,
+            )
+        return None
+
+    @staticmethod
+    def _load_backup_bundle_config_snapshot(
+        inspection: BackupBundleInspectionResult,
+    ) -> tuple[AppConfig | None, str | None]:
+        app_state_item = next(
+            (item for item in inspection.items if item.key == "app_state"),
+            None,
+        )
+        if app_state_item is None or app_state_item.structure_state != "present":
+            return None, None
+
+        config_path = inspection.bundle_path / app_state_item.relative_path
+        try:
+            return load_app_config(config_path), None
+        except AppStateStoreError as exc:
+            return None, f"Bundle app-state snapshot could not be parsed: {exc}"
+
     @staticmethod
     def _resolve_existing_export_source(
         path: Path | None,
@@ -4281,6 +4467,609 @@ def _parse_backup_bundle_not_included(raw_manifest: dict[str, object]) -> tuple[
     return tuple(value for value in values if isinstance(value, str) and value.strip())
 
 
+def _build_restore_import_planning_result(
+    *,
+    inspection: BackupBundleInspectionResult,
+    local_targets: _RestoreImportPlanningLocalTargets,
+) -> RestoreImportPlanningResult:
+    warnings = list(inspection.warnings)
+    if local_targets.bundle_config_warning:
+        warnings.append(local_targets.bundle_config_warning)
+
+    planned_items: list[RestoreImportPlanningItem] = []
+    mod_entries: list[RestoreImportPlanningModEntry] = []
+    for item in inspection.items:
+        planned_item, planned_mod_entries, item_warnings = _build_restore_import_planning_item(
+            inspection=inspection,
+            item=item,
+            local_targets=local_targets,
+        )
+        planned_items.append(planned_item)
+        mod_entries.extend(planned_mod_entries)
+        warnings.extend(item_warnings)
+
+    item_state_counts = Counter(item.state for item in planned_items)
+    mod_state_counts = Counter(
+        _restore_import_mod_state_bucket(entry.state) for entry in mod_entries
+    )
+    message = _restore_import_planning_summary_message(
+        inspection=inspection,
+        safe_item_count=item_state_counts.get("safe_to_restore_later", 0),
+        review_item_count=item_state_counts.get("needs_review", 0),
+        blocked_item_count=item_state_counts.get("blocked", 0),
+        safe_mod_count=mod_state_counts.get("safe_to_restore_later", 0),
+        review_mod_count=mod_state_counts.get("needs_review", 0),
+        blocked_mod_count=mod_state_counts.get("blocked", 0),
+    )
+    return RestoreImportPlanningResult(
+        bundle_path=inspection.bundle_path,
+        inspection=inspection,
+        items=tuple(planned_items),
+        mod_entries=tuple(mod_entries),
+        safe_item_count=item_state_counts.get("safe_to_restore_later", 0),
+        review_item_count=item_state_counts.get("needs_review", 0),
+        blocked_item_count=item_state_counts.get("blocked", 0),
+        safe_mod_count=mod_state_counts.get("safe_to_restore_later", 0),
+        review_mod_count=mod_state_counts.get("needs_review", 0),
+        blocked_mod_count=mod_state_counts.get("blocked", 0),
+        message=message,
+        warnings=_dedupe_text_lines(warnings),
+    )
+
+
+def _build_restore_import_planning_item(
+    *,
+    inspection: BackupBundleInspectionResult,
+    item: BackupBundleInspectionItem,
+    local_targets: _RestoreImportPlanningLocalTargets,
+) -> tuple[
+    RestoreImportPlanningItem,
+    tuple[RestoreImportPlanningModEntry, ...],
+    tuple[str, ...],
+]:
+    local_target_path = _restore_import_local_target_for_item(item.key, local_targets)
+    if item.declared_status != "copied":
+        message = (
+            f"This bundle does not include {item.label.lower()} "
+            f"({item.declared_status.replace('_', ' ')})."
+        )
+        return (
+            RestoreImportPlanningItem(
+                key=item.key,
+                label=item.label,
+                state="blocked",
+                message=message,
+                bundle_relative_path=item.relative_path,
+                local_target_path=local_target_path,
+                bundle_declared_status=item.declared_status,
+                bundle_structure_state=item.structure_state,
+                note=item.note,
+            ),
+            tuple(),
+            tuple(),
+        )
+
+    if item.structure_state == "missing_expected":
+        return (
+            RestoreImportPlanningItem(
+                key=item.key,
+                label=item.label,
+                state="blocked",
+                message=f"{item.label} is structurally missing or unusable in this bundle.",
+                bundle_relative_path=item.relative_path,
+                local_target_path=local_target_path,
+                bundle_declared_status=item.declared_status,
+                bundle_structure_state=item.structure_state,
+                note=item.note,
+            ),
+            tuple(),
+            tuple(),
+        )
+
+    if item.kind == "directory" and item.key in {"real_mods", "sandbox_mods"}:
+        return _build_restore_import_mod_directory_plan(
+            inspection=inspection,
+            item=item,
+            local_target_path=local_target_path,
+        )
+
+    if item.kind == "directory" and item.key in {"real_archive", "sandbox_archive"}:
+        return _build_restore_import_archive_directory_plan(
+            inspection=inspection,
+            item=item,
+            local_target_path=local_target_path,
+        )
+
+    return _build_restore_import_file_item_plan(
+        item=item,
+        local_target_path=local_target_path,
+        local_targets=local_targets,
+    )
+
+
+def _build_restore_import_file_item_plan(
+    *,
+    item: BackupBundleInspectionItem,
+    local_target_path: Path | None,
+    local_targets: _RestoreImportPlanningLocalTargets,
+) -> tuple[
+    RestoreImportPlanningItem,
+    tuple[RestoreImportPlanningModEntry, ...],
+    tuple[str, ...],
+]:
+    warnings: list[str] = []
+    state: RestoreImportPlanningItemState
+    message: str
+    note = item.note
+
+    if item.structure_state == "unexpected_present":
+        state = "needs_review"
+        message = (
+            f"{item.label} is present in the bundle, but its manifest state needs review."
+        )
+    elif local_target_path is None:
+        state = "blocked"
+        message = f"No local destination is defined for {item.label.lower()}."
+    elif item.key == "app_state":
+        if local_targets.bundle_config_warning is not None:
+            state = "blocked"
+            message = "Bundle app-state snapshot is present but not readable for restore/import planning."
+        else:
+            mismatch_note = _summarize_bundle_config_mismatches(
+                bundle_config=local_targets.bundle_config,
+                local_targets=local_targets,
+            )
+            if mismatch_note:
+                note = mismatch_note if note is None else f"{note} | {mismatch_note}"
+                state = "needs_review"
+                message = (
+                    "Bundle app-state snapshot uses different Mods/archive paths than the current local setup."
+                )
+            elif local_target_path.exists():
+                state = "needs_review"
+                message = "Local app state already exists and would need review before any restore/import."
+            else:
+                state = "safe_to_restore_later"
+                message = "Bundle app-state snapshot is available for later restore/import."
+    elif local_target_path.exists():
+        state = "needs_review"
+        message = f"Local {item.label.lower()} already exists and would need merge/replace review later."
+    else:
+        state = "safe_to_restore_later"
+        message = f"{item.label} is available in the bundle and currently missing locally."
+
+    if item.structure_state == "unexpected_present":
+        warnings.append(
+            f"{item.label} is present in the bundle even though the manifest did not mark it copied."
+        )
+
+    return (
+        RestoreImportPlanningItem(
+            key=item.key,
+            label=item.label,
+            state=state,
+            message=message,
+            bundle_relative_path=item.relative_path,
+            local_target_path=local_target_path,
+            bundle_declared_status=item.declared_status,
+            bundle_structure_state=item.structure_state,
+            note=note,
+        ),
+        tuple(),
+        tuple(warnings),
+    )
+
+
+def _build_restore_import_archive_directory_plan(
+    *,
+    inspection: BackupBundleInspectionResult,
+    item: BackupBundleInspectionItem,
+    local_target_path: Path | None,
+) -> tuple[
+    RestoreImportPlanningItem,
+    tuple[RestoreImportPlanningModEntry, ...],
+    tuple[str, ...],
+]:
+    bundle_directory = inspection.bundle_path / item.relative_path
+    archive_entry_count = _count_directory_children(bundle_directory)
+    state: RestoreImportPlanningItemState
+    if local_target_path is None:
+        state = "blocked"
+        message = f"No current destination is configured for {item.label.lower()}."
+    elif not _restore_import_directory_target_is_ready(local_target_path):
+        state = "blocked"
+        message = f"Current destination for {item.label.lower()} is not ready on this machine."
+    elif local_target_path.exists():
+        state = "needs_review"
+        message = (
+            f"{item.label} contains {archive_entry_count} bundled entr"
+            f"{'y' if archive_entry_count == 1 else 'ies'}, and the local archive root already exists."
+        )
+    else:
+        state = "safe_to_restore_later"
+        message = (
+            f"{item.label} contains {archive_entry_count} bundled entr"
+            f"{'y' if archive_entry_count == 1 else 'ies'} and the local archive root is currently missing."
+        )
+
+    if item.structure_state == "unexpected_present":
+        state = "needs_review"
+        message = (
+            f"{item.label} is present in the bundle, but its manifest state needs review."
+        )
+
+    return (
+        RestoreImportPlanningItem(
+            key=item.key,
+            label=item.label,
+            state=state,
+            message=message,
+            bundle_relative_path=item.relative_path,
+            local_target_path=local_target_path,
+            bundle_declared_status=item.declared_status,
+            bundle_structure_state=item.structure_state,
+            note=item.note,
+        ),
+        tuple(),
+        tuple(),
+    )
+
+
+def _build_restore_import_mod_directory_plan(
+    *,
+    inspection: BackupBundleInspectionResult,
+    item: BackupBundleInspectionItem,
+    local_target_path: Path | None,
+) -> tuple[
+    RestoreImportPlanningItem,
+    tuple[RestoreImportPlanningModEntry, ...],
+    tuple[str, ...],
+]:
+    bundle_directory = inspection.bundle_path / item.relative_path
+    warnings: list[str] = []
+    bundle_inventory, bundle_error = _scan_inventory_for_restore_planning(bundle_directory)
+    if bundle_inventory is None:
+        entry = RestoreImportPlanningModEntry(
+            bundle_item_key=item.key,
+            bundle_item_label=item.label,
+            name=item.label,
+            unique_id="<bundle-unusable>",
+            bundle_version=None,
+            local_version=None,
+            state="bundle_unusable",
+            local_target_path=local_target_path,
+            note=bundle_error or "Bundle content could not be scanned.",
+        )
+        return (
+            RestoreImportPlanningItem(
+                key=item.key,
+                label=item.label,
+                state="blocked",
+                message=f"{item.label} could not be scanned from this bundle.",
+                bundle_relative_path=item.relative_path,
+                local_target_path=local_target_path,
+                bundle_declared_status=item.declared_status,
+                bundle_structure_state=item.structure_state,
+                note=item.note or bundle_error,
+                blocked_mod_count=1,
+            ),
+            (entry,),
+            tuple(error for error in (bundle_error,) if error),
+        )
+
+    local_inventory: ModsInventory | None = None
+    local_inventory_error: str | None = None
+    if local_target_path is None:
+        local_inventory_error = f"No current destination is configured for {item.label.lower()}."
+    elif not _restore_import_directory_target_is_ready(local_target_path):
+        local_inventory_error = f"Current destination for {item.label.lower()} is not ready on this machine."
+    else:
+        local_inventory, local_inventory_error = _scan_inventory_for_restore_planning(
+            local_target_path
+        )
+
+    if bundle_inventory.parse_warnings:
+        warnings.append(
+            f"{item.label} bundle scan reported {len(bundle_inventory.parse_warnings)} parse warning(s)."
+        )
+    if bundle_inventory.duplicate_unique_ids:
+        warnings.append(
+            f"{item.label} bundle scan found duplicate UniqueIDs that need review."
+        )
+    if local_inventory is not None and local_inventory.parse_warnings:
+        warnings.append(
+            f"Current local {item.label.lower()} scan reported {len(local_inventory.parse_warnings)} parse warning(s)."
+        )
+    if local_inventory is not None and local_inventory.duplicate_unique_ids:
+        warnings.append(
+            f"Current local {item.label.lower()} scan found duplicate UniqueIDs that need review."
+        )
+    if local_inventory_error:
+        warnings.append(local_inventory_error)
+
+    planned_mod_entries = _build_restore_import_mod_entries(
+        bundle_item_key=item.key,
+        bundle_item_label=item.label,
+        bundle_inventory=bundle_inventory,
+        local_inventory=local_inventory,
+        local_target_path=local_target_path,
+        local_inventory_error=local_inventory_error,
+    )
+    mod_state_counts = Counter(
+        _restore_import_mod_state_bucket(entry.state) for entry in planned_mod_entries
+    )
+    state = _restore_import_item_state_from_mod_entries(planned_mod_entries)
+    message = _restore_import_mod_directory_message(
+        label=item.label,
+        state=state,
+        safe_count=mod_state_counts.get("safe_to_restore_later", 0),
+        review_count=mod_state_counts.get("needs_review", 0),
+        blocked_count=mod_state_counts.get("blocked", 0),
+    )
+    return (
+        RestoreImportPlanningItem(
+            key=item.key,
+            label=item.label,
+            state=state,
+            message=message,
+            bundle_relative_path=item.relative_path,
+            local_target_path=local_target_path,
+            bundle_declared_status=item.declared_status,
+            bundle_structure_state=item.structure_state,
+            note=item.note,
+            safe_mod_count=mod_state_counts.get("safe_to_restore_later", 0),
+            review_mod_count=mod_state_counts.get("needs_review", 0),
+            blocked_mod_count=mod_state_counts.get("blocked", 0),
+        ),
+        planned_mod_entries,
+        tuple(warnings),
+    )
+
+
+def _build_restore_import_mod_entries(
+    *,
+    bundle_item_key: str,
+    bundle_item_label: str,
+    bundle_inventory: ModsInventory,
+    local_inventory: ModsInventory | None,
+    local_target_path: Path | None,
+    local_inventory_error: str | None,
+) -> tuple[RestoreImportPlanningModEntry, ...]:
+    bundle_duplicates = {
+        canonicalize_unique_id(finding.unique_id)
+        for finding in bundle_inventory.duplicate_unique_ids
+    }
+    local_duplicates = (
+        {
+            canonicalize_unique_id(finding.unique_id)
+            for finding in local_inventory.duplicate_unique_ids
+        }
+        if local_inventory is not None
+        else set()
+    )
+    local_mods_by_unique_id: dict[str, list[InstalledMod]] = {}
+    if local_inventory is not None:
+        for mod in local_inventory.mods:
+            local_mods_by_unique_id.setdefault(canonicalize_unique_id(mod.unique_id), []).append(mod)
+
+    entries: list[RestoreImportPlanningModEntry] = []
+    for bundle_mod in sorted(
+        bundle_inventory.mods,
+        key=lambda item: (canonicalize_unique_id(item.unique_id), item.name.casefold()),
+    ):
+        unique_key = canonicalize_unique_id(bundle_mod.unique_id)
+        local_matches = local_mods_by_unique_id.get(unique_key, [])
+        if local_inventory_error is not None:
+            state = "destination_not_ready"
+            local_version = None
+            note = local_inventory_error
+        elif unique_key in bundle_duplicates or unique_key in local_duplicates or len(local_matches) > 1:
+            state = "ambiguous_match"
+            local_version = None
+            note = "UniqueID matching is ambiguous and needs manual review."
+        elif not local_matches:
+            state = "missing_locally"
+            local_version = None
+            note = "Present in bundle but missing locally."
+        else:
+            local_match = local_matches[0]
+            local_version = local_match.version
+            if bundle_mod.version == local_match.version:
+                state = "same_version"
+                note = "Local destination already has the same version."
+            else:
+                state = "different_version"
+                note = (
+                    f"Bundle version {bundle_mod.version} differs from local version {local_match.version}."
+                )
+
+        entries.append(
+            RestoreImportPlanningModEntry(
+                bundle_item_key=bundle_item_key,
+                bundle_item_label=bundle_item_label,
+                name=bundle_mod.name,
+                unique_id=bundle_mod.unique_id,
+                bundle_version=bundle_mod.version,
+                local_version=local_version,
+                state=state,
+                local_target_path=local_target_path,
+                note=note,
+            )
+        )
+    return tuple(entries)
+
+
+def _scan_inventory_for_restore_planning(
+    mods_path: Path,
+) -> tuple[ModsInventory | None, str | None]:
+    try:
+        if not mods_path.exists():
+            return None, f"Directory does not exist: {mods_path}"
+        if not mods_path.is_dir():
+            return None, f"Path is not a directory: {mods_path}"
+        return scan_mods_directory(mods_path), None
+    except OSError as exc:
+        return None, f"Could not scan directory {mods_path}: {exc}"
+
+
+def _restore_import_local_target_for_item(
+    key: str,
+    local_targets: _RestoreImportPlanningLocalTargets,
+) -> Path | None:
+    if key == "app_state":
+        return local_targets.app_state_path
+    if key == "install_history":
+        return local_targets.install_history_path
+    if key == "recovery_history":
+        return local_targets.recovery_history_path
+    if key == "update_source_intent_overlay":
+        return local_targets.update_source_intent_overlay_path
+    if key == "real_mods":
+        return local_targets.real_mods_path
+    if key == "sandbox_mods":
+        return local_targets.sandbox_mods_path
+    if key == "real_archive":
+        return local_targets.real_archive_path
+    if key == "sandbox_archive":
+        return local_targets.sandbox_archive_path
+    return None
+
+
+def _restore_import_item_state_from_mod_entries(
+    entries: tuple[RestoreImportPlanningModEntry, ...],
+) -> RestoreImportPlanningItemState:
+    if any(
+        _restore_import_mod_state_bucket(entry.state) == "blocked" for entry in entries
+    ):
+        return "blocked"
+    if any(
+        _restore_import_mod_state_bucket(entry.state) == "needs_review" for entry in entries
+    ):
+        return "needs_review"
+    return "safe_to_restore_later"
+
+
+def _restore_import_mod_state_bucket(state: str) -> RestoreImportPlanningItemState:
+    if state in {"missing_locally", "same_version"}:
+        return "safe_to_restore_later"
+    if state in {"different_version", "ambiguous_match"}:
+        return "needs_review"
+    return "blocked"
+
+
+def _restore_import_mod_directory_message(
+    *,
+    label: str,
+    state: RestoreImportPlanningItemState,
+    safe_count: int,
+    review_count: int,
+    blocked_count: int,
+) -> str:
+    if state == "blocked":
+        return (
+            f"{label} planning is blocked: {blocked_count} blocked, "
+            f"{review_count} need review, {safe_count} look safe."
+        )
+    if state == "needs_review":
+        return (
+            f"{label} planning found review points: {review_count} need review, "
+            f"{safe_count} look safe."
+        )
+    return f"{label} planning looks straightforward: {safe_count} safe, 0 blocked."
+
+
+def _restore_import_planning_summary_message(
+    *,
+    inspection: BackupBundleInspectionResult,
+    safe_item_count: int,
+    review_item_count: int,
+    blocked_item_count: int,
+    safe_mod_count: int,
+    review_mod_count: int,
+    blocked_mod_count: int,
+) -> str:
+    if not inspection.items:
+        return "Restore/import planning could not compare this bundle because the manifest is missing or unreadable."
+    if blocked_item_count > 0 or blocked_mod_count > 0:
+        return (
+            "Restore/import planning found blocked or unavailable items that are not restorable from this bundle yet or need local setup first."
+        )
+    if review_item_count > 0 or review_mod_count > 0:
+        return (
+            f"Restore/import planning complete: {safe_item_count} item(s) look straightforward, "
+            f"{review_item_count} item(s) need review."
+        )
+    return (
+        f"Restore/import planning complete: {safe_item_count} item(s) and "
+        f"{safe_mod_count} bundled mod row(s) look straightforward."
+    )
+
+
+def _summarize_bundle_config_mismatches(
+    *,
+    bundle_config: AppConfig | None,
+    local_targets: _RestoreImportPlanningLocalTargets,
+) -> str | None:
+    if bundle_config is None:
+        return None
+
+    mismatches: list[str] = []
+    if local_targets.real_mods_path is not None and bundle_config.mods_path != local_targets.real_mods_path:
+        mismatches.append("real Mods path differs from the current local setup")
+    if (
+        bundle_config.sandbox_mods_path != local_targets.sandbox_mods_path
+        and not (
+            bundle_config.sandbox_mods_path is None and local_targets.sandbox_mods_path is None
+        )
+    ):
+        mismatches.append("sandbox Mods path differs from the current local setup")
+    if (
+        bundle_config.real_archive_path != local_targets.real_archive_path
+        and not (
+            bundle_config.real_archive_path is None and local_targets.real_archive_path is None
+        )
+    ):
+        mismatches.append("real archive path differs from the current local setup")
+    if (
+        bundle_config.sandbox_archive_path != local_targets.sandbox_archive_path
+        and not (
+            bundle_config.sandbox_archive_path is None
+            and local_targets.sandbox_archive_path is None
+        )
+    ):
+        mismatches.append("sandbox archive path differs from the current local setup")
+    if not mismatches:
+        return None
+    return "Bundle config mismatch: " + "; ".join(mismatches) + "."
+
+
+def _restore_import_directory_target_is_ready(path: Path) -> bool:
+    if path.exists():
+        return path.is_dir()
+    return path.parent.exists() and path.parent.is_dir()
+
+
+def _count_directory_children(path: Path) -> int:
+    if not path.exists() or not path.is_dir():
+        return 0
+    try:
+        return sum(1 for _ in path.iterdir())
+    except OSError:
+        return 0
+
+
+def _dedupe_text_lines(values: Iterable[str]) -> tuple[str, ...]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = value.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        deduped.append(text)
+    return tuple(deduped)
+
+
 def _paths_deterministically_match(path_a: Path, path_b: Path) -> bool:
     left = path_a.expanduser()
     right = path_b.expanduser()
@@ -4663,6 +5452,27 @@ def _remove_path_for_promotion_rollback(path: Path) -> None:
     path.unlink()
 
 
+def _restore_import_item_state_label(state: str) -> str:
+    labels = {
+        "safe_to_restore_later": "Safe later",
+        "needs_review": "Needs review",
+        "blocked": "Blocked",
+    }
+    return labels.get(state, state.replace("_", " ").title())
+
+
+def _restore_import_mod_state_label(state: str) -> str:
+    labels = {
+        "missing_locally": "Missing locally",
+        "same_version": "Same version",
+        "different_version": "Different version",
+        "bundle_unusable": "Bundle unusable",
+        "destination_not_ready": "Destination not ready",
+        "ambiguous_match": "Ambiguous",
+    }
+    return labels.get(state, state.replace("_", " ").title())
+
+
 def build_mods_compare_text(result: ModsCompareResult) -> str:
     counts = Counter(entry.state for entry in result.entries)
     lines = [
@@ -4696,6 +5506,55 @@ def build_mods_compare_text(result: ModsCompareResult) -> str:
             f"- {entry.name} [{_mods_compare_state_label(entry.state)}] "
             f"real={real_version} sandbox={sandbox_version}{note}"
         )
+    return "\n".join(lines)
+
+
+def build_restore_import_planning_text(result: RestoreImportPlanningResult) -> str:
+    mod_entries_by_item: dict[str, list[RestoreImportPlanningModEntry]] = {}
+    for entry in result.mod_entries:
+        mod_entries_by_item.setdefault(entry.bundle_item_key, []).append(entry)
+
+    lines = [
+        "Stardew Mod Manager restore/import planning",
+        f"Bundle folder: {result.bundle_path}",
+        f"Inspection summary: {result.inspection.message}",
+        f"Planning summary: {result.message}",
+        (
+            "Matching rule: bundled real/sandbox mod folders are matched to the current local "
+            "destination by canonicalized UniqueID."
+        ),
+        "Safe later: bundle content is missing locally or already matches locally.",
+        "Needs review: local versions differ, config differs, or local data already exists.",
+        "Blocked: bundle content is structurally unusable, not included, or the local destination is not ready.",
+        f"Item summary: safe {result.safe_item_count}, review {result.review_item_count}, blocked {result.blocked_item_count}",
+        f"Bundled mod rows: safe {result.safe_mod_count}, review {result.review_mod_count}, blocked {result.blocked_mod_count}",
+    ]
+
+    if result.warnings:
+        lines.extend(("", "Warnings:"))
+        lines.extend(f"- {warning}" for warning in result.warnings)
+
+    if result.items:
+        lines.extend(("", "Planned items:"))
+        for item in result.items:
+            local_target = str(item.local_target_path) if item.local_target_path is not None else "<none>"
+            note_text = f" | {item.note}" if item.note else ""
+            lines.append(
+                f"- {item.label} [{_restore_import_item_state_label(item.state)}]: "
+                f"{item.message} | bundle={item.bundle_relative_path} | local={local_target}{note_text}"
+            )
+            for entry in mod_entries_by_item.get(item.key, []):
+                local_version = entry.local_version or "-"
+                bundle_version = entry.bundle_version or "-"
+                mod_note = f" | {entry.note}" if entry.note else ""
+                lines.append(
+                    f"  - {entry.name} ({entry.unique_id}) "
+                    f"[{_restore_import_mod_state_label(entry.state)}] "
+                    f"bundle={bundle_version} local={local_version}{mod_note}"
+                )
+    else:
+        lines.extend(("", "Planned items:", "- No readable bundle items were available for planning."))
+
     return "\n".join(lines)
 
 

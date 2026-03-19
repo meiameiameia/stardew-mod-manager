@@ -241,6 +241,66 @@ class BackupBundleInspectionResult:
     intentionally_not_included: tuple[str, ...] = tuple()
 
 
+RestoreImportPlanningItemState = Literal[
+    "safe_to_restore_later",
+    "needs_review",
+    "blocked",
+]
+RestoreImportPlanningModState = Literal[
+    "missing_locally",
+    "same_version",
+    "different_version",
+    "bundle_unusable",
+    "destination_not_ready",
+    "ambiguous_match",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreImportPlanningItem:
+    key: str
+    label: str
+    state: RestoreImportPlanningItemState
+    message: str
+    bundle_relative_path: Path
+    local_target_path: Path | None
+    bundle_declared_status: BackupBundleDeclaredStatus
+    bundle_structure_state: BackupBundleStructureState
+    note: str | None = None
+    safe_mod_count: int = 0
+    review_mod_count: int = 0
+    blocked_mod_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreImportPlanningModEntry:
+    bundle_item_key: str
+    bundle_item_label: str
+    name: str
+    unique_id: str
+    bundle_version: str | None
+    local_version: str | None
+    state: RestoreImportPlanningModState
+    local_target_path: Path | None = None
+    note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreImportPlanningResult:
+    bundle_path: Path
+    inspection: BackupBundleInspectionResult
+    items: tuple[RestoreImportPlanningItem, ...]
+    mod_entries: tuple[RestoreImportPlanningModEntry, ...]
+    safe_item_count: int
+    review_item_count: int
+    blocked_item_count: int
+    safe_mod_count: int
+    review_mod_count: int
+    blocked_mod_count: int
+    message: str
+    warnings: tuple[str, ...] = tuple()
+
+
 UpdateSourceIntentState = Literal[
     "local_private_mod",
     "no_tracking",

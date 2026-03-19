@@ -64,6 +64,9 @@ from sdvmm.domain.models import PackageInspectionBatchResult
 from sdvmm.domain.models import PackageModEntry
 from sdvmm.domain.models import PackageFinding
 from sdvmm.domain.models import PackageInspectionResult
+from sdvmm.domain.models import RestoreImportPlanningItem
+from sdvmm.domain.models import RestoreImportPlanningModEntry
+from sdvmm.domain.models import RestoreImportPlanningResult
 from sdvmm.domain.models import RecoveryExecutionRecord
 from sdvmm.domain.models import SandboxInstallPlan
 from sdvmm.domain.models import SandboxInstallPlanEntry
@@ -2077,6 +2080,7 @@ def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: Mai
         "setup_detect_environment_button",
         "setup_export_backup_button",
         "setup_inspect_backup_button",
+        "setup_plan_restore_import_button",
     )
 
     for name in input_names:
@@ -2259,6 +2263,137 @@ def test_main_window_inspect_backup_bundle_cancel_sets_status_without_running(
 
     assert captured == []
     assert main_window._status_strip_label.text() == "Backup bundle inspection cancelled."
+
+
+def test_main_window_plan_restore_import_runs_service_and_updates_output(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle_path = tmp_path / "Exports" / "sdvmm-backup-20260318-130000Z"
+    bundle_path.mkdir(parents=True)
+    manifest_path = bundle_path / "manifest.json"
+    summary_path = bundle_path / "README.txt"
+    inspection = BackupBundleInspectionResult(
+        bundle_path=bundle_path,
+        manifest_path=manifest_path,
+        summary_path=summary_path,
+        bundle_format="sdvmm-local-backup",
+        format_version=1,
+        created_at_utc="2026-03-18T13:00:00Z",
+        items=(
+            BackupBundleInspectionItem(
+                key="real_mods",
+                label="Real Mods directory",
+                kind="directory",
+                declared_status="copied",
+                relative_path=Path("mods") / "real-mods",
+                structure_state="present",
+            ),
+        ),
+        structurally_usable=True,
+        message="Backup bundle looks structurally usable for future restore/import.",
+    )
+    result = RestoreImportPlanningResult(
+        bundle_path=bundle_path,
+        inspection=inspection,
+        items=(
+            RestoreImportPlanningItem(
+                key="real_mods",
+                label="Real Mods directory",
+                state="needs_review",
+                message="Real Mods directory planning found review points: 1 need review, 0 look safe.",
+                bundle_relative_path=Path("mods") / "real-mods",
+                local_target_path=Path(r"C:\Local\Mods"),
+                bundle_declared_status="copied",
+                bundle_structure_state="present",
+                review_mod_count=1,
+            ),
+        ),
+        mod_entries=(
+            RestoreImportPlanningModEntry(
+                bundle_item_key="real_mods",
+                bundle_item_label="Real Mods directory",
+                name="Real Alpha",
+                unique_id="Sample.RealAlpha",
+                bundle_version="1.0.0",
+                local_version="2.0.0",
+                state="different_version",
+                local_target_path=Path(r"C:\Local\Mods"),
+                note="Bundle version 1.0.0 differs from local version 2.0.0.",
+            ),
+        ),
+        safe_item_count=0,
+        review_item_count=1,
+        blocked_item_count=0,
+        safe_mod_count=0,
+        review_mod_count=1,
+        blocked_mod_count=0,
+        message="Restore/import planning complete: 0 item(s) look straightforward, 1 item(s) need review.",
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QFileDialog.getExistingDirectory",
+        lambda *args, **kwargs: str(bundle_path),
+    )
+
+    def fake_plan_restore_import_from_backup_bundle(
+        **kwargs: object,
+    ) -> RestoreImportPlanningResult:
+        captured["service_kwargs"] = kwargs
+        return result
+
+    def fake_run_background_operation(**kwargs: object) -> None:
+        captured["operation_name"] = kwargs["operation_name"]
+        task_result = kwargs["task_fn"]()
+        kwargs["on_success"](task_result)
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "plan_restore_import_from_backup_bundle",
+        fake_plan_restore_import_from_backup_bundle,
+    )
+    monkeypatch.setattr(main_window, "_run_background_operation", fake_run_background_operation)
+
+    main_window._on_plan_restore_import()
+
+    assert captured["operation_name"] == "Restore/import planning"
+    assert captured["service_kwargs"] == {
+        "bundle_path_text": str(bundle_path),
+        **main_window._current_operational_config_inputs(),
+    }
+    assert (
+        main_window._status_strip_label.text()
+        == "Restore/import planning complete: 0 item(s) look straightforward, 1 item(s) need review."
+    )
+    assert (
+        main_window._restore_import_planning_summary_label.text()
+        == "Restore/import planning complete: 0 item(s) look straightforward, 1 item(s) need review."
+    )
+    assert "restore/import planning" in main_window._findings_box.toPlainText().casefold()
+    assert str(bundle_path) in main_window._findings_box.toPlainText()
+
+
+def test_main_window_plan_restore_import_cancel_sets_status_without_running(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[str] = []
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QFileDialog.getExistingDirectory",
+        lambda *args, **kwargs: "",
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda **kwargs: captured.append(str(kwargs["operation_name"])),
+    )
+
+    main_window._on_plan_restore_import()
+
+    assert captured == []
+    assert main_window._status_strip_label.text() == "Restore/import planning cancelled."
 
 
 def test_main_window_start_watch_uses_both_watched_paths_and_updates_status(

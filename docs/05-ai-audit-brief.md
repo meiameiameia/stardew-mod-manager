@@ -18,9 +18,9 @@ The goal is not to restate the whole codebase. The goal is to give enough high-s
 - Entry point: `sdvmm-ui` -> [`src/sdvmm/app/main.py`](/Users/darth/Projects/stardew-mod-manager/src/sdvmm/app/main.py)
 - Current validation baseline:
   - `.\.venv\Scripts\python.exe -m pytest tests\unit -q`
-  - latest verified result in this thread: `457 passed, 1 skipped`
+  - latest verified result in this thread: `468 passed, 1 skipped`
   - UI startup smoke also passes offscreen
-- Shipped baseline in this brief: `0.5.0` (includes real-vs-sandbox compare visibility baseline and backup-bundle inspection baseline)
+- Shipped baseline in this brief: `0.6.0` (includes real-vs-sandbox compare visibility baseline, backup-bundle inspection baseline, and read-only restore/import planning baseline)
 - Product posture:
   - local-first
   - safe-by-default
@@ -54,8 +54,8 @@ The app is no longer just a scanner. It now has a coherent local workflow:
 The product is not feature-complete for public release, but it is materially beyond prototype state.
 
 The near-term product direction now explicitly includes a mod-development workflow, not only general end-user mod management.
-The current private-testing build includes the first multi-zip intake step, second watcher-path intake convenience, a visibility-first real-vs-sandbox compare baseline, and read-only backup-bundle inspection, while intentionally stopping short of blind multi-package planning/install behavior, compare-driven write shortcuts, and restore/apply behavior.
-It now also includes practical session persistence ergonomics and explicit local backup export, which makes restore/import planning the next honest workflow step.
+The current private-testing build includes the first multi-zip intake step, second watcher-path intake convenience, a visibility-first real-vs-sandbox compare baseline, read-only backup-bundle inspection, and read-only restore/import planning, while intentionally stopping short of blind multi-package planning/install behavior, compare-driven write shortcuts, and restore/apply behavior.
+It now also includes practical session persistence ergonomics and explicit local backup export, which makes restore/import execution the next honest workflow step.
 
 ## Current Architecture
 
@@ -130,11 +130,11 @@ The UI is still dense, but further generic decomposition is no longer the highes
 
 ### 1. Backup / restore / migration foundation is only partially established
 
-State is durable and atomic, and the app now has explicit backup export plus read-only bundle inspection, but restore/import planning and apply ergonomics are not yet established.
+State is durable and atomic, and the app now has explicit backup export, read-only bundle inspection, and read-only restore/import planning, but restore/apply ergonomics are not yet established.
 
 The next question is:
 
-> What restore/import planning baseline should exist now that export plus bundle inspection already exist?
+> What restore/import execution baseline should exist now that export, inspection, and planning already exist?
 
 ### 2. Sandbox promotion policy is intentionally conservative
 
@@ -272,38 +272,35 @@ Implemented for `0.4.0`:
   - ambiguous match
 - compare is intentionally visibility-first in this stage (no compare-driven write behavior)
 
-#### 8. Backup Bundle Inspection Baseline
+#### 8. Backup Bundle Inspection + Restore/Import Planning Baseline
 
-Implemented for `0.5.0`:
+Implemented for `0.5.0` / `0.6.0`:
 
 - explicit local backup export baseline for migration/recovery groundwork
 - explicit read-only inspection of exported backup bundle folders
 - manifest/version/item-status visibility before any restore behavior exists
 - structural usability reporting for future restore/import work
+- explicit read-only restore/import planning against the current local machine
+- safe later / needs review / blocked planning visibility
 - no restore/apply behavior in this baseline
 
 ### Next likely phases (real-world usability first)
 
-#### 9. Restore/Import Planning Baseline
-
-- build on shipped export + inspection by showing what a restore/import would do before any writes happen
-- make bundle usability, conflicts, and destination mapping understandable
-
-#### 10. Open-Folder Conveniences
+#### 9. Open-Folder Conveniences
 
 - add explicit local folder-opening actions where they reduce daily friction
 - keep these conveniences narrow and workflow-owned
 
-#### 11. Restore/Import Execution Baseline
+#### 10. Restore/Import Execution Baseline
 
-- ship the first apply path only after restore/import planning is trustworthy
+- ship the first apply path now that restore/import planning is trustworthy
 - preserve explicit, reviewable, safety-first semantics
 
-#### 12. Steam Prelaunch Best-Effort Behavior
+#### 11. Steam Prelaunch Best-Effort Behavior
 
 - pragmatic Steam-aware launch assistance without promising guaranteed automation
 
-#### 13. Compare Follow-up (deferred after baseline ship)
+#### 12. Compare Follow-up (deferred after baseline ship)
 
 - possible richer compare ergonomics after safety semantics are explicitly approved
 - keep baseline compare visibility trustworthy and avoid implicit write shortcuts
@@ -328,7 +325,6 @@ An external model should specifically challenge these points:
 
 The current recommendation is to prioritize real-world usability and trust ergonomics first:
 
-- restore/import planning
 - open-folder convenience
 - restore/import execution
 - Steam-aware launch reliability
@@ -361,7 +357,7 @@ Question:
 
 Question:
 
-> Given that the intended near-term audience includes mod developers and careful local users, what sequence best balances trust and speed: restore/import planning first, open-folder conveniences second, restore/import execution third, and broader compare/launch conveniences later?
+> Given that the intended near-term audience includes mod developers and careful local users, what sequence best balances trust and speed: open-folder conveniences first, restore/import execution second, and broader compare/launch conveniences later?
 
 ### E. When should multi-package planning be allowed?
 

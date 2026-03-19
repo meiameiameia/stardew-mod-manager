@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
+import shutil
 from zipfile import ZipFile
 from typing import Literal
 
@@ -35,6 +36,8 @@ from sdvmm.domain.models import (
     PackageFinding,
     PackageWarning,
     RemoteModLink,
+    RestoreImportPlanningItem,
+    RestoreImportPlanningResult,
     SandboxInstallPlan,
     SandboxInstallPlanEntry,
     SmapiLogReport,
@@ -589,6 +592,257 @@ def test_inspect_backup_bundle_reports_missing_expected_copied_content(tmp_path:
     assert inspection.items[0].key == "app_state"
     assert inspection.items[0].structure_state == "missing_expected"
     assert any("marked copied" in warning for warning in inspection.warnings)
+
+
+def test_plan_restore_import_from_backup_bundle_reports_missing_local_mods(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / "state" / "app-state.json"
+    service = AppShellService(state_file=state_file)
+    exports_root = tmp_path / "Exports"
+    exports_root.mkdir()
+
+    bundle_game = tmp_path / "BundleGame"
+    bundle_real_mods = tmp_path / "BundleRealMods"
+    bundle_sandbox_mods = tmp_path / "BundleSandboxMods"
+    bundle_real_archive = tmp_path / "BundleRealArchive"
+    bundle_sandbox_archive = tmp_path / "BundleSandboxArchive"
+    _create_launchable_game_install(bundle_game)
+    _create_mod(bundle_real_mods, "RealAlpha", "Sample.RealAlpha", version="1.0.0")
+    _create_mod(
+        bundle_sandbox_mods,
+        "SandboxBeta",
+        "Sample.SandboxBeta",
+        version="2.0.0",
+    )
+    bundle_real_archive.mkdir()
+    bundle_sandbox_archive.mkdir()
+
+    bundle_config = AppConfig(
+        game_path=bundle_game,
+        mods_path=bundle_real_mods,
+        app_data_path=tmp_path / "BundleAppData",
+        sandbox_mods_path=bundle_sandbox_mods,
+        sandbox_archive_path=bundle_sandbox_archive,
+        real_archive_path=bundle_real_archive,
+    )
+
+    exported = service.export_backup_bundle(
+        destination_root_text=str(exports_root),
+        game_path_text=str(bundle_game),
+        mods_dir_text=str(bundle_real_mods),
+        sandbox_mods_path_text=str(bundle_sandbox_mods),
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text=str(bundle_real_archive),
+        sandbox_archive_path_text=str(bundle_sandbox_archive),
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        existing_config=bundle_config,
+    )
+
+    local_game = tmp_path / "LocalGame"
+    local_real_mods = tmp_path / "LocalRealMods"
+    local_sandbox_mods = tmp_path / "LocalSandboxMods"
+    local_real_archive = tmp_path / "LocalRealArchive"
+    local_sandbox_archive = tmp_path / "LocalSandboxArchive"
+    _create_launchable_game_install(local_game)
+    local_real_mods.mkdir()
+    _create_mod(
+        local_sandbox_mods,
+        "SandboxBeta",
+        "Sample.SandboxBeta",
+        version="2.0.0",
+    )
+    local_real_archive.mkdir()
+    local_sandbox_archive.mkdir()
+
+    result = service.plan_restore_import_from_backup_bundle(
+        bundle_path_text=str(exported.bundle_path),
+        game_path_text=str(local_game),
+        mods_dir_text=str(local_real_mods),
+        sandbox_mods_path_text=str(local_sandbox_mods),
+        sandbox_archive_path_text=str(local_sandbox_archive),
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text=str(local_real_archive),
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        existing_config=None,
+    )
+
+    entries_by_unique_id = {entry.unique_id: entry for entry in result.mod_entries}
+    items_by_key = {item.key: item for item in result.items}
+
+    assert entries_by_unique_id["Sample.RealAlpha"].state == "missing_locally"
+    assert entries_by_unique_id["Sample.SandboxBeta"].state == "same_version"
+    assert items_by_key["real_mods"].state == "safe_to_restore_later"
+    assert items_by_key["sandbox_mods"].state == "safe_to_restore_later"
+    assert result.safe_mod_count == 2
+    assert result.blocked_mod_count == 0
+
+
+def test_plan_restore_import_from_backup_bundle_reports_version_conflicts(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / "state" / "app-state.json"
+    service = AppShellService(state_file=state_file)
+    exports_root = tmp_path / "Exports"
+    exports_root.mkdir()
+
+    bundle_game = tmp_path / "BundleGame"
+    bundle_real_mods = tmp_path / "BundleRealMods"
+    bundle_sandbox_mods = tmp_path / "BundleSandboxMods"
+    bundle_real_archive = tmp_path / "BundleRealArchive"
+    bundle_sandbox_archive = tmp_path / "BundleSandboxArchive"
+    _create_launchable_game_install(bundle_game)
+    _create_mod(bundle_real_mods, "RealAlpha", "Sample.RealAlpha", version="1.0.0")
+    bundle_sandbox_mods.mkdir()
+    bundle_real_archive.mkdir()
+    bundle_sandbox_archive.mkdir()
+
+    bundle_config = AppConfig(
+        game_path=bundle_game,
+        mods_path=bundle_real_mods,
+        app_data_path=tmp_path / "BundleAppData",
+        sandbox_mods_path=bundle_sandbox_mods,
+        sandbox_archive_path=bundle_sandbox_archive,
+        real_archive_path=bundle_real_archive,
+    )
+
+    exported = service.export_backup_bundle(
+        destination_root_text=str(exports_root),
+        game_path_text=str(bundle_game),
+        mods_dir_text=str(bundle_real_mods),
+        sandbox_mods_path_text=str(bundle_sandbox_mods),
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text=str(bundle_real_archive),
+        sandbox_archive_path_text=str(bundle_sandbox_archive),
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        existing_config=bundle_config,
+    )
+
+    local_game = tmp_path / "LocalGame"
+    local_real_mods = tmp_path / "LocalRealMods"
+    local_sandbox_mods = tmp_path / "LocalSandboxMods"
+    local_real_archive = tmp_path / "LocalRealArchive"
+    local_sandbox_archive = tmp_path / "LocalSandboxArchive"
+    _create_launchable_game_install(local_game)
+    _create_mod(local_real_mods, "RealAlpha", "Sample.RealAlpha", version="2.0.0")
+    local_sandbox_mods.mkdir()
+    local_real_archive.mkdir()
+    local_sandbox_archive.mkdir()
+
+    result = service.plan_restore_import_from_backup_bundle(
+        bundle_path_text=str(exported.bundle_path),
+        game_path_text=str(local_game),
+        mods_dir_text=str(local_real_mods),
+        sandbox_mods_path_text=str(local_sandbox_mods),
+        sandbox_archive_path_text=str(local_sandbox_archive),
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text=str(local_real_archive),
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        existing_config=None,
+    )
+
+    items_by_key = {item.key: item for item in result.items}
+    conflict_entry = next(
+        entry for entry in result.mod_entries if entry.unique_id == "Sample.RealAlpha"
+    )
+
+    assert conflict_entry.state == "different_version"
+    assert conflict_entry.bundle_version == "1.0.0"
+    assert conflict_entry.local_version == "2.0.0"
+    assert items_by_key["real_mods"].state == "needs_review"
+    assert result.review_mod_count >= 1
+
+
+def test_plan_restore_import_from_backup_bundle_reports_structurally_incomplete_content(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / "state" / "app-state.json"
+    service = AppShellService(state_file=state_file)
+    exports_root = tmp_path / "Exports"
+    exports_root.mkdir()
+
+    bundle_game = tmp_path / "BundleGame"
+    bundle_real_mods = tmp_path / "BundleRealMods"
+    bundle_sandbox_mods = tmp_path / "BundleSandboxMods"
+    bundle_real_archive = tmp_path / "BundleRealArchive"
+    bundle_sandbox_archive = tmp_path / "BundleSandboxArchive"
+    _create_launchable_game_install(bundle_game)
+    _create_mod(bundle_real_mods, "RealAlpha", "Sample.RealAlpha", version="1.0.0")
+    bundle_sandbox_mods.mkdir()
+    bundle_real_archive.mkdir()
+    bundle_sandbox_archive.mkdir()
+
+    bundle_config = AppConfig(
+        game_path=bundle_game,
+        mods_path=bundle_real_mods,
+        app_data_path=tmp_path / "BundleAppData",
+        sandbox_mods_path=bundle_sandbox_mods,
+        sandbox_archive_path=bundle_sandbox_archive,
+        real_archive_path=bundle_real_archive,
+    )
+
+    exported = service.export_backup_bundle(
+        destination_root_text=str(exports_root),
+        game_path_text=str(bundle_game),
+        mods_dir_text=str(bundle_real_mods),
+        sandbox_mods_path_text=str(bundle_sandbox_mods),
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text=str(bundle_real_archive),
+        sandbox_archive_path_text=str(bundle_sandbox_archive),
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        existing_config=bundle_config,
+    )
+    missing_bundle_real_mods = exported.bundle_path / "mods" / "real-mods"
+    assert missing_bundle_real_mods.exists() is True
+    shutil.rmtree(missing_bundle_real_mods)
+
+    local_game = tmp_path / "LocalGame"
+    local_real_mods = tmp_path / "LocalRealMods"
+    local_sandbox_mods = tmp_path / "LocalSandboxMods"
+    local_real_archive = tmp_path / "LocalRealArchive"
+    local_sandbox_archive = tmp_path / "LocalSandboxArchive"
+    _create_launchable_game_install(local_game)
+    local_real_mods.mkdir()
+    local_sandbox_mods.mkdir()
+    local_real_archive.mkdir()
+    local_sandbox_archive.mkdir()
+
+    result = service.plan_restore_import_from_backup_bundle(
+        bundle_path_text=str(exported.bundle_path),
+        game_path_text=str(local_game),
+        mods_dir_text=str(local_real_mods),
+        sandbox_mods_path_text=str(local_sandbox_mods),
+        sandbox_archive_path_text=str(local_sandbox_archive),
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text=str(local_real_archive),
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        existing_config=None,
+    )
+
+    items_by_key = {item.key: item for item in result.items}
+
+    assert result.inspection.structurally_usable is False
+    assert items_by_key["real_mods"].state == "blocked"
+    assert "structurally missing or unusable" in items_by_key["real_mods"].message
+    assert any("missing or has the wrong type" in warning for warning in result.warnings)
 
 
 def test_scan_rejects_missing_mods_path(tmp_path: Path) -> None:

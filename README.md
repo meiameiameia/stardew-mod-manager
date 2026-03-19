@@ -18,7 +18,7 @@ Current maturity is best described as:
 Current workflow emphasis:
 - safe local mod workflow over broad platform-management ambitions
 - sandbox-first mod development and validation
-- migration trust through explicit local backup/export inspection
+- migration trust through explicit local backup/export inspection and restore/import planning
 - explicit, user-triggered movement between sandbox and real Mods
 - no hidden mirroring or blind overwrite of live Mods
 - explicit batch package inspection with single-package staging for planning
@@ -93,7 +93,10 @@ Live Mods safety expectations:
   - explicit export-first backup bundle creation for migration/recovery groundwork
   - inspect exported backup bundles without modifying local data
   - surface manifest format/version, included items, missing expected content, and structural usability
-  - keep restore/import deferred while making backup bundles understandable first
+- **Restore/import planning baseline**
+  - compare a selected backup bundle against the current local setup without changing local files
+  - classify what looks safe to restore later, what needs review, and what is blocked or not usable from the current bundle
+  - keep restore/apply behavior deferred while making destination mapping and conflicts understandable first
 
 ## Manual source guidance
 
@@ -169,7 +172,7 @@ You can still run focused suites when iterating:
 .\.venv\Scripts\python.exe -m pytest tests\unit\test_main_window_gui_regression.py -q
 ```
 
-### 4) Build Windows portable folder (`0.5.0`)
+### 4) Build Windows portable folder (`0.6.0`)
 
 Packaging baseline in this repo uses **PyInstaller one-folder** output because it is the smallest practical Windows desktop packaging path here without introducing installer/signing work.
 
@@ -188,13 +191,13 @@ Build the portable folder:
 Output folder:
 
 ```text
-dist\stardew-mod-manager-0.5.0-windows-portable\
+dist\stardew-mod-manager-0.6.0-windows-portable\
 ```
 
 Launch the packaged app:
 
 ```powershell
-.\dist\stardew-mod-manager-0.5.0-windows-portable\Stardew Mod Manager.exe
+.\dist\stardew-mod-manager-0.6.0-windows-portable\Stardew Mod Manager.exe
 ```
 
 Current caveats:
@@ -212,9 +215,8 @@ Current caveats:
 - no profiles/instances workflow
 - no packaging/installer/release hardening yet
 - no cross-platform polish emphasis yet (Windows workflow is the primary dev path)
-- restore/import workflow is still deferred; the current backup foundation now includes export plus read-only bundle inspection
+- restore/import execution is still deferred; the current backup foundation now includes export, read-only bundle inspection, and read-only restore/import planning
 - near-term usability priorities are now:
-  - restore/import planning baseline
   - open-folder conveniences
   - restore/import execution baseline
   - Steam prelaunch best-effort behavior
@@ -229,4 +231,5 @@ Current caveats:
 - `Export backup bundle` creates a local folder snapshot using the current validated setup values, not just the last saved `app-state.json`
 - the export bundle can include app state/config, install/recovery history, update-source intent overlay, real/sandbox Mods, and app-managed archive roots when they exist
 - `Inspect backup bundle` reads an exported bundle and reports structure/usability without applying restore changes
-- the backup foundation is intentionally inspectable and non-destructive; restore/import UX is not implemented yet
+- `Plan restore/import` compares a selected backup bundle against the current local machine and reports what looks safe later, what needs review, and what is blocked
+- the backup foundation is intentionally inspectable and non-destructive; restore/apply UX is not implemented yet
