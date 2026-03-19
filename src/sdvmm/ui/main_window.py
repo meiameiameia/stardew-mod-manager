@@ -770,12 +770,24 @@ class MainWindow(QMainWindow):
         browse_game_button.clicked.connect(self._on_browse_game)
         browse_mods_button = QPushButton("Browse Mods")
         browse_mods_button.clicked.connect(self._on_browse)
+        open_mods_button = QPushButton("Open Mods")
+        open_mods_button.setObjectName("setup_open_mods_button")
+        open_mods_button.clicked.connect(self._on_open_real_mods_folder)
         browse_sandbox_button = QPushButton("Browse sandbox")
         browse_sandbox_button.clicked.connect(self._on_browse_sandbox_mods)
+        open_sandbox_button = QPushButton("Open sandbox")
+        open_sandbox_button.setObjectName("setup_open_sandbox_mods_button")
+        open_sandbox_button.clicked.connect(self._on_open_sandbox_mods_folder)
         browse_sandbox_archive_button = QPushButton("Browse archive")
         browse_sandbox_archive_button.clicked.connect(self._on_browse_sandbox_archive)
+        open_sandbox_archive_button = QPushButton("Open archive")
+        open_sandbox_archive_button.setObjectName("setup_open_sandbox_archive_button")
+        open_sandbox_archive_button.clicked.connect(self._on_open_sandbox_archive_folder)
         browse_real_archive_button = QPushButton("Browse real archive")
         browse_real_archive_button.clicked.connect(self._on_browse_real_archive)
+        open_real_archive_button = QPushButton("Open archive")
+        open_real_archive_button.setObjectName("setup_open_real_archive_button")
+        open_real_archive_button.clicked.connect(self._on_open_real_archive_folder)
         check_nexus_button = QPushButton("Check Nexus")
         check_nexus_button.clicked.connect(self._on_check_nexus_connection)
         save_button = QPushButton("Save config")
@@ -803,9 +815,13 @@ class MainWindow(QMainWindow):
             nexus_api_key_input=self._nexus_api_key_input,
             browse_game_button=browse_game_button,
             browse_mods_button=browse_mods_button,
+            open_mods_button=open_mods_button,
             browse_sandbox_button=browse_sandbox_button,
+            open_sandbox_button=open_sandbox_button,
             browse_sandbox_archive_button=browse_sandbox_archive_button,
+            open_sandbox_archive_button=open_sandbox_archive_button,
             browse_real_archive_button=browse_real_archive_button,
+            open_real_archive_button=open_real_archive_button,
             check_nexus_button=check_nexus_button,
             save_button=save_button,
             detect_environment_button=detect_environment_button,
@@ -1041,6 +1057,11 @@ class MainWindow(QMainWindow):
         browse_downloads_button.clicked.connect(self._on_browse_watched_downloads)
         _set_secondary_button_style(browse_downloads_button)
         watcher_layout.addWidget(browse_downloads_button, 0, 2)
+        open_downloads_button = QPushButton("Open")
+        open_downloads_button.setObjectName("setup_open_watched_downloads_button")
+        open_downloads_button.clicked.connect(self._on_open_watched_downloads_folder)
+        _set_secondary_button_style(open_downloads_button)
+        watcher_layout.addWidget(open_downloads_button, 0, 3)
         watcher_layout.addWidget(QLabel("Watched downloads path 2 (optional)"), 1, 0)
         watcher_layout.addWidget(self._secondary_watched_downloads_path_input, 1, 1)
         browse_secondary_downloads_button = QPushButton("Browse path 2")
@@ -1049,12 +1070,21 @@ class MainWindow(QMainWindow):
         )
         _set_secondary_button_style(browse_secondary_downloads_button)
         watcher_layout.addWidget(browse_secondary_downloads_button, 1, 2)
+        open_secondary_downloads_button = QPushButton("Open")
+        open_secondary_downloads_button.setObjectName(
+            "setup_open_secondary_watched_downloads_button"
+        )
+        open_secondary_downloads_button.clicked.connect(
+            self._on_open_secondary_watched_downloads_folder
+        )
+        _set_secondary_button_style(open_secondary_downloads_button)
+        watcher_layout.addWidget(open_secondary_downloads_button, 1, 3)
         watcher_scope_label = QLabel(
             "Both watcher paths feed the same detected packages list."
         )
         watcher_scope_label.setWordWrap(True)
         _set_auxiliary_label_style(watcher_scope_label)
-        watcher_layout.addWidget(watcher_scope_label, 2, 1, 1, 3)
+        watcher_layout.addWidget(watcher_scope_label, 2, 1, 1, 4)
         watch_actions = QHBoxLayout()
         start_watch_button = QPushButton("Start watch")
         start_watch_button.clicked.connect(self._on_start_watch)
@@ -1065,7 +1095,7 @@ class MainWindow(QMainWindow):
         _set_secondary_button_style(stop_watch_button)
         watch_actions.addWidget(stop_watch_button)
         watch_actions.addStretch(1)
-        watcher_layout.addLayout(watch_actions, 0, 3, 2, 1)
+        watcher_layout.addLayout(watch_actions, 0, 4, 2, 1)
         intake_layout.addWidget(watcher_group)
 
         inspection_result_group = QGroupBox("Inspection Results")
@@ -1571,6 +1601,61 @@ class MainWindow(QMainWindow):
         )
         if selected:
             self._secondary_watched_downloads_path_input.setText(selected)
+
+    def _open_configured_folder(self, *, field_label: str, path_text: str) -> None:
+        try:
+            folder_path = self._shell_service.resolve_configured_folder_for_open(
+                field_label=field_label,
+                path_text=path_text,
+            )
+        except AppShellError as exc:
+            QMessageBox.critical(self, "Open folder failed", str(exc))
+            self._set_status(str(exc))
+            return
+
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder_path))):
+            message = f"Could not open {field_label}: {folder_path}"
+            QMessageBox.critical(self, "Open folder failed", message)
+            self._set_status(message)
+            return
+
+        self._set_status(f"Opened {field_label}: {folder_path}")
+
+    def _on_open_real_mods_folder(self) -> None:
+        self._open_configured_folder(
+            field_label="Real Mods folder",
+            path_text=self._mods_path_input.text(),
+        )
+
+    def _on_open_sandbox_mods_folder(self) -> None:
+        self._open_configured_folder(
+            field_label="Sandbox Mods folder",
+            path_text=self._sandbox_mods_path_input.text(),
+        )
+
+    def _on_open_real_archive_folder(self) -> None:
+        self._open_configured_folder(
+            field_label="Real archive folder",
+            path_text=self._real_archive_path_input.text(),
+        )
+
+    def _on_open_sandbox_archive_folder(self) -> None:
+        self._open_configured_folder(
+            field_label="Sandbox archive folder",
+            path_text=self._sandbox_archive_path_input.text(),
+        )
+
+    def _on_open_watched_downloads_folder(self) -> None:
+        self._open_configured_folder(
+            field_label="Watched downloads path 1",
+            path_text=self._watched_downloads_path_input.text(),
+        )
+
+    def _on_open_secondary_watched_downloads_folder(self) -> None:
+        self._open_configured_folder(
+            field_label="Watched downloads path 2",
+            path_text=self._secondary_watched_downloads_path_input.text(),
+        )
 
     def _on_save_config(self) -> None:
         try:

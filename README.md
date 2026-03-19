@@ -97,6 +97,10 @@ Live Mods safety expectations:
   - compare a selected backup bundle against the current local setup without changing local files
   - classify what looks safe to restore later, what needs review, and what is blocked or not usable from the current bundle
   - keep restore/apply behavior deferred while making destination mapping and conflicts understandable first
+- **Open-folder conveniences baseline**
+  - explicit open-folder actions for the key configured workflow locations
+  - quick access to real Mods, sandbox Mods, both archive roots, and both watched-download folders
+  - honest feedback when a path is unconfigured, missing, or cannot be opened
 
 ## Manual source guidance
 
@@ -172,7 +176,7 @@ You can still run focused suites when iterating:
 .\.venv\Scripts\python.exe -m pytest tests\unit\test_main_window_gui_regression.py -q
 ```
 
-### 4) Build Windows portable folder (`0.6.0`)
+### 4) Build Windows portable folder (`0.6.1`)
 
 Packaging baseline in this repo uses **PyInstaller one-folder** output because it is the smallest practical Windows desktop packaging path here without introducing installer/signing work.
 
@@ -191,13 +195,13 @@ Build the portable folder:
 Output folder:
 
 ```text
-dist\stardew-mod-manager-0.6.0-windows-portable\
+dist\stardew-mod-manager-0.6.1-windows-portable\
 ```
 
 Launch the packaged app:
 
 ```powershell
-.\dist\stardew-mod-manager-0.6.0-windows-portable\Stardew Mod Manager.exe
+.\dist\stardew-mod-manager-0.6.1-windows-portable\Stardew Mod Manager.exe
 ```
 
 Current caveats:
@@ -217,7 +221,6 @@ Current caveats:
 - no cross-platform polish emphasis yet (Windows workflow is the primary dev path)
 - restore/import execution is still deferred; the current backup foundation now includes export, read-only bundle inspection, and read-only restore/import planning
 - near-term usability priorities are now:
-  - open-folder conveniences
   - restore/import execution baseline
   - Steam prelaunch best-effort behavior
 - compare follow-up remains deferred until the current visibility-first baseline has been used enough to justify compare-driven conveniences

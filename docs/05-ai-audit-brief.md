@@ -20,7 +20,7 @@ The goal is not to restate the whole codebase. The goal is to give enough high-s
   - `.\.venv\Scripts\python.exe -m pytest tests\unit -q`
   - latest verified result in this thread: `468 passed, 1 skipped`
   - UI startup smoke also passes offscreen
-- Shipped baseline in this brief: `0.6.0` (includes real-vs-sandbox compare visibility baseline, backup-bundle inspection baseline, and read-only restore/import planning baseline)
+- Shipped baseline in this brief: `0.6.1` (includes real-vs-sandbox compare visibility baseline, backup-bundle inspection baseline, read-only restore/import planning baseline, and open-folder conveniences baseline)
 - Product posture:
   - local-first
   - safe-by-default
@@ -54,7 +54,7 @@ The app is no longer just a scanner. It now has a coherent local workflow:
 The product is not feature-complete for public release, but it is materially beyond prototype state.
 
 The near-term product direction now explicitly includes a mod-development workflow, not only general end-user mod management.
-The current private-testing build includes the first multi-zip intake step, second watcher-path intake convenience, a visibility-first real-vs-sandbox compare baseline, read-only backup-bundle inspection, and read-only restore/import planning, while intentionally stopping short of blind multi-package planning/install behavior, compare-driven write shortcuts, and restore/apply behavior.
+The current private-testing build includes the first multi-zip intake step, second watcher-path intake convenience, a visibility-first real-vs-sandbox compare baseline, read-only backup-bundle inspection, read-only restore/import planning, and explicit open-folder conveniences for the key configured workflow folders, while intentionally stopping short of blind multi-package planning/install behavior, compare-driven write shortcuts, and restore/apply behavior.
 It now also includes practical session persistence ergonomics and explicit local backup export, which makes restore/import execution the next honest workflow step.
 
 ## Current Architecture
@@ -157,13 +157,13 @@ The next unresolved product question remains:
 
 > How should the app improve promotion speed and clarity now that preview + archive-aware replace already exists, without making live promotion feel casual or opaque?
 
-### 3. Open-folder and local convenience ergonomics are still light
+### 3. Restore/apply ergonomics are still the main migration gap
 
-The app is now strong on explicit workflow semantics, but everyday local movement around Mods, archives, and export bundles still costs more clicks than it should.
+The app now has explicit open-folder conveniences for the main configured workflow paths, but the export/inspection/planning chain still stops short of any managed restore/apply path.
 
 The next question is:
 
-> Which explicit open-folder conveniences add real daily value without turning the app into a shell-automation tangle?
+> What is the smallest restore/import execution baseline that preserves the same trust level as the current export/inspection/planning chain?
 
 ### 4. `MainWindow` is still the densest integration point
 
@@ -272,9 +272,9 @@ Implemented for `0.4.0`:
   - ambiguous match
 - compare is intentionally visibility-first in this stage (no compare-driven write behavior)
 
-#### 8. Backup Bundle Inspection + Restore/Import Planning Baseline
+#### 8. Backup Bundle Inspection + Restore/Import Planning + Open-Folder Baseline
 
-Implemented for `0.5.0` / `0.6.0`:
+Implemented for `0.5.0` / `0.6.0` / `0.6.1`:
 
 - explicit local backup export baseline for migration/recovery groundwork
 - explicit read-only inspection of exported backup bundle folders
@@ -282,25 +282,21 @@ Implemented for `0.5.0` / `0.6.0`:
 - structural usability reporting for future restore/import work
 - explicit read-only restore/import planning against the current local machine
 - safe later / needs review / blocked planning visibility
+- explicit open-folder actions for real Mods, sandbox Mods, both archive roots, and both watched-download paths
 - no restore/apply behavior in this baseline
 
 ### Next likely phases (real-world usability first)
 
-#### 9. Open-Folder Conveniences
-
-- add explicit local folder-opening actions where they reduce daily friction
-- keep these conveniences narrow and workflow-owned
-
-#### 10. Restore/Import Execution Baseline
+#### 9. Restore/Import Execution Baseline
 
 - ship the first apply path now that restore/import planning is trustworthy
 - preserve explicit, reviewable, safety-first semantics
 
-#### 11. Steam Prelaunch Best-Effort Behavior
+#### 10. Steam Prelaunch Best-Effort Behavior
 
 - pragmatic Steam-aware launch assistance without promising guaranteed automation
 
-#### 12. Compare Follow-up (deferred after baseline ship)
+#### 11. Compare Follow-up (deferred after baseline ship)
 
 - possible richer compare ergonomics after safety semantics are explicitly approved
 - keep baseline compare visibility trustworthy and avoid implicit write shortcuts
@@ -325,7 +321,6 @@ An external model should specifically challenge these points:
 
 The current recommendation is to prioritize real-world usability and trust ergonomics first:
 
-- open-folder convenience
 - restore/import execution
 - Steam-aware launch reliability
 - then broader polish/refactor work
@@ -357,7 +352,7 @@ Question:
 
 Question:
 
-> Given that the intended near-term audience includes mod developers and careful local users, what sequence best balances trust and speed: open-folder conveniences first, restore/import execution second, and broader compare/launch conveniences later?
+> Given that the intended near-term audience includes mod developers and careful local users, what sequence best balances trust and speed: restore/import execution first, then broader compare/launch conveniences later?
 
 ### E. When should multi-package planning be allowed?
 

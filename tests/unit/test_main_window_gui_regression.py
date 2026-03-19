@@ -2081,6 +2081,12 @@ def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: Mai
         "setup_export_backup_button",
         "setup_inspect_backup_button",
         "setup_plan_restore_import_button",
+        "setup_open_mods_button",
+        "setup_open_sandbox_mods_button",
+        "setup_open_real_archive_button",
+        "setup_open_sandbox_archive_button",
+        "setup_open_watched_downloads_button",
+        "setup_open_secondary_watched_downloads_button",
     )
 
     for name in input_names:
@@ -2394,6 +2400,179 @@ def test_main_window_plan_restore_import_cancel_sets_status_without_running(
 
     assert captured == []
     assert main_window._status_strip_label.text() == "Restore/import planning cancelled."
+
+
+@pytest.mark.parametrize(
+    ("handler_name", "input_name", "field_label", "button_name"),
+    (
+        (
+            "_on_open_real_mods_folder",
+            "setup_mods_path_input",
+            "Real Mods folder",
+            "setup_open_mods_button",
+        ),
+        (
+            "_on_open_sandbox_mods_folder",
+            "setup_sandbox_mods_input",
+            "Sandbox Mods folder",
+            "setup_open_sandbox_mods_button",
+        ),
+        (
+            "_on_open_real_archive_folder",
+            "setup_real_archive_input",
+            "Real archive folder",
+            "setup_open_real_archive_button",
+        ),
+        (
+            "_on_open_sandbox_archive_folder",
+            "setup_sandbox_archive_input",
+            "Sandbox archive folder",
+            "setup_open_sandbox_archive_button",
+        ),
+        (
+            "_on_open_watched_downloads_folder",
+            "setup_watched_downloads_input",
+            "Watched downloads path 1",
+            "setup_open_watched_downloads_button",
+        ),
+        (
+            "_on_open_secondary_watched_downloads_folder",
+            "setup_secondary_watched_downloads_input",
+            "Watched downloads path 2",
+            "setup_open_secondary_watched_downloads_button",
+        ),
+    ),
+)
+def test_main_window_open_folder_actions_delegate_and_update_status(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    handler_name: str,
+    input_name: str,
+    field_label: str,
+    button_name: str,
+) -> None:
+    target_path = tmp_path / button_name
+    target_path.mkdir()
+    path_input = main_window.findChild(QLineEdit, input_name)
+    assert path_input is not None
+    path_input.setText(str(target_path))
+    open_button = main_window.findChild(QPushButton, button_name)
+    assert open_button is not None
+
+    captured: dict[str, object] = {}
+    critical_messages: list[str] = []
+
+    def fake_resolve_configured_folder_for_open(
+        *,
+        field_label: str,
+        path_text: str,
+    ) -> Path:
+        captured["service"] = (field_label, path_text)
+        return target_path
+
+    def fake_open_url(url: object) -> bool:
+        captured["opened_url"] = url
+        return True
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "resolve_configured_folder_for_open",
+        fake_resolve_configured_folder_for_open,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.QDesktopServices.openUrl", fake_open_url)
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.critical",
+        lambda *args, **kwargs: critical_messages.append(str(args[2])),
+    )
+
+    getattr(main_window, handler_name)()
+
+    assert captured["service"] == (field_label, str(target_path))
+    assert Path(captured["opened_url"].toLocalFile()) == target_path
+    assert critical_messages == []
+    assert main_window._status_strip_label.text() == f"Opened {field_label}: {target_path}"
+
+
+@pytest.mark.parametrize(
+    ("handler_name", "field_label", "error_message"),
+    (
+        (
+            "_on_open_real_mods_folder",
+            "Real Mods folder",
+            "Real Mods folder is not configured.",
+        ),
+        (
+            "_on_open_secondary_watched_downloads_folder",
+            "Watched downloads path 2",
+            r"Watched downloads path 2 does not exist: C:\missing\watch-2",
+        ),
+    ),
+)
+def test_main_window_open_folder_actions_surface_service_errors(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    handler_name: str,
+    field_label: str,
+    error_message: str,
+) -> None:
+    critical_messages: list[str] = []
+    open_calls: list[object] = []
+
+    def fake_resolve_configured_folder_for_open(
+        *,
+        field_label: str,
+        path_text: str,
+    ) -> Path:
+        raise AppShellError(error_message)
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "resolve_configured_folder_for_open",
+        fake_resolve_configured_folder_for_open,
+    )
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QDesktopServices.openUrl",
+        lambda url: open_calls.append(url) or True,
+    )
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.critical",
+        lambda *args, **kwargs: critical_messages.append(str(args[2])),
+    )
+
+    getattr(main_window, handler_name)()
+
+    assert open_calls == []
+    assert critical_messages == [error_message]
+    assert main_window._status_strip_label.text() == error_message
+
+
+def test_main_window_open_folder_action_reports_open_failure(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target_path = tmp_path / "Mods"
+    target_path.mkdir()
+    main_window._mods_path_input.setText(str(target_path))
+    critical_messages: list[str] = []
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "resolve_configured_folder_for_open",
+        lambda **kwargs: target_path,
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.QDesktopServices.openUrl", lambda url: False)
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.critical",
+        lambda *args, **kwargs: critical_messages.append(str(args[2])),
+    )
+
+    main_window._on_open_real_mods_folder()
+
+    expected_message = f"Could not open Real Mods folder: {target_path}"
+    assert critical_messages == [expected_message]
+    assert main_window._status_strip_label.text() == expected_message
 
 
 def test_main_window_start_watch_uses_both_watched_paths_and_updates_status(

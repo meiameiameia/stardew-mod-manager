@@ -1,6 +1,6 @@
 # Roadmap
 
-## Product direction after `0.6.0`
+## Product direction after `0.6.1`
 
 The app is now a local-first Stardew Valley mod workflow manager with a sandbox-first safety model.
 
@@ -16,7 +16,7 @@ It is not trying to become, in the near term:
 - a broad profile or instance manager
 - a broad shell-polish project divorced from workflow value
 
-## Shipped through `0.6.0`
+## Shipped through `0.6.1`
 
 ### Core workflow and safety baseline
 
@@ -69,6 +69,7 @@ Shipped:
 - structural usability reporting for future restore/import work
 - explicit read-only restore/import planning against the current local machine
 - clear planning states for safe later vs needs review vs blocked
+- explicit open-folder actions for the key configured workflow folders
 - no restore/apply behavior in this baseline
 
 ### Information architecture simplification (paused)
@@ -83,13 +84,7 @@ Still paused because workflow completion and trust are higher-value than more de
 
 ## Near-term priorities
 
-### 1. Open-folder conveniences
-
-- add narrow local convenience actions that reduce friction in everyday workflow
-- prefer actions that support trust and orientation, such as opening the relevant mods/archive/export folders
-- keep these conveniences explicit and local rather than automating decisions
-
-### 2. Restore/import execution baseline
+### 1. Restore/import execution baseline
 
 - add the first restore/apply path now that restore/import planning is visible and trustworthy
 - keep execution explicit, reviewable, and non-destructive by default where possible
@@ -99,9 +94,9 @@ Why this is next:
 
 - export, inspection, and planning now exist as a coherent trust chain
 - execution is the next product step that turns migration trust into practical recovery
-- it should still follow smaller local ergonomics wins where those reduce setup friction without changing safety semantics
+- open-folder friction is now addressed in the shipped baseline, so execution is the next trust-critical gap
 
-### 3. Steam prelaunch best-effort behavior
+### 2. Steam prelaunch best-effort behavior
 
 - support best-effort launch behavior that works with Steam ownership constraints without implying guaranteed automation
 - keep launch intent explicit and sandbox-safe
