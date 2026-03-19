@@ -1,6 +1,6 @@
 # Roadmap
 
-## Product direction after `0.6.1`
+## Product direction after `0.8.0`
 
 The app is now a local-first Stardew Valley mod workflow manager with a sandbox-first safety model.
 
@@ -16,7 +16,7 @@ It is not trying to become, in the near term:
 - a broad profile or instance manager
 - a broad shell-polish project divorced from workflow value
 
-## Shipped through `0.6.1`
+## Shipped through `0.8.0`
 
 ### Core workflow and safety baseline
 
@@ -64,13 +64,16 @@ Shipped:
   - ambiguous match for duplicate/unclear UniqueID grouping
 - compare remains visibility-first in this stage (no compare-driven writes)
 - explicit backup export baseline for local migration/recovery groundwork
+- config-aware backup export baseline for common per-mod config artifacts inside installed Mods trees
 - explicit read-only inspection of exported backup bundle folders
 - manifest/version/item-status visibility before any restore behavior exists
 - structural usability reporting for future restore/import work
 - explicit read-only restore/import planning against the current local machine
 - clear planning states for safe later vs needs review vs blocked
+- config-aware planning visibility for bundled config artifacts (`missing locally`, `same content`, `different content`, `blocked`)
+- explicit restore/import execution into the currently configured destinations for clearly missing mod content and supported config artifacts
+- no overwrite/merge restore behavior in this baseline; conflicting and ambiguous content remains review-only
 - explicit open-folder actions for the key configured workflow folders
-- no restore/apply behavior in this baseline
 
 ### Information architecture simplification (paused)
 
@@ -84,23 +87,23 @@ Still paused because workflow completion and trust are higher-value than more de
 
 ## Near-term priorities
 
-### 1. Restore/import execution baseline
-
-- add the first restore/apply path now that restore/import planning is visible and trustworthy
-- keep execution explicit, reviewable, and non-destructive by default where possible
-- preserve real-vs-sandbox safety semantics
-
-Why this is next:
-
-- export, inspection, and planning now exist as a coherent trust chain
-- execution is the next product step that turns migration trust into practical recovery
-- open-folder friction is now addressed in the shipped baseline, so execution is the next trust-critical gap
-
-### 2. Steam prelaunch best-effort behavior
+### 1. Steam prelaunch best-effort behavior
 
 - support best-effort launch behavior that works with Steam ownership constraints without implying guaranteed automation
 - keep launch intent explicit and sandbox-safe
 - surface when fallback/manual launch is required
+
+### 2. Restore/import conflict/overwrite follow-up
+
+- keep the shipped execution baseline narrow and trustworthy
+- design the next restore step around explicit review for conflicting local content
+- do not introduce blind overwrite or merge shortcuts
+
+Why this is next:
+
+- restore/import now has a coherent trust chain: export, config coverage, inspection, planning, and first execution
+- the remaining restore gap is conflict handling, not basic missing-content recovery
+- Steam-aware launch behavior is the next daily-use friction point outside the migration track
 
 ## Later or deferred
 

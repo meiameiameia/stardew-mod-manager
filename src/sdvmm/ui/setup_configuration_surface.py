@@ -40,6 +40,7 @@ class SetupConfigurationSurface(QScrollArea):
         export_backup_button: QPushButton,
         inspect_backup_button: QPushButton,
         plan_restore_import_button: QPushButton,
+        execute_restore_import_button: QPushButton,
         backup_bundle_inspection_summary_label: QLabel,
         restore_import_planning_summary_label: QLabel,
         setup_output_box: QPlainTextEdit,
@@ -97,6 +98,7 @@ class SetupConfigurationSurface(QScrollArea):
             export_backup_button,
             inspect_backup_button,
             plan_restore_import_button,
+            execute_restore_import_button,
         )
         for index, button in enumerate(action_buttons):
             setup_actions_layout.addWidget(button, index // 3, index % 3)

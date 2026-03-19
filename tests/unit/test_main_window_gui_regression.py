@@ -65,6 +65,9 @@ from sdvmm.domain.models import PackageModEntry
 from sdvmm.domain.models import PackageFinding
 from sdvmm.domain.models import PackageInspectionResult
 from sdvmm.domain.models import RestoreImportPlanningItem
+from sdvmm.domain.models import RestoreImportPlanningConfigEntry
+from sdvmm.domain.models import RestoreImportExecutionReview
+from sdvmm.domain.models import RestoreImportExecutionResult
 from sdvmm.domain.models import RestoreImportPlanningModEntry
 from sdvmm.domain.models import RestoreImportPlanningResult
 from sdvmm.domain.models import RecoveryExecutionRecord
@@ -2096,6 +2099,7 @@ def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: Mai
         "setup_export_backup_button",
         "setup_inspect_backup_button",
         "setup_plan_restore_import_button",
+        "setup_execute_restore_import_button",
         "setup_open_mods_button",
         "setup_open_sandbox_mods_button",
         "setup_open_real_archive_button",
@@ -2250,6 +2254,15 @@ def test_main_window_inspect_backup_bundle_runs_service_and_updates_output(
                 relative_path=Path("manager-state") / "app-state.json",
                 structure_state="present",
             ),
+            BackupBundleInspectionItem(
+                key="real_mod_configs",
+                label="Real Mods config snapshot",
+                kind="directory",
+                declared_status="copied",
+                relative_path=Path("mod-config") / "real-mods",
+                structure_state="present",
+                note="2 config artifact(s) from 1 mod folder(s).",
+            ),
         ),
         structurally_usable=True,
         message="Backup bundle looks structurally usable for future restore/import.",
@@ -2293,6 +2306,7 @@ def test_main_window_inspect_backup_bundle_runs_service_and_updates_output(
         main_window._backup_bundle_inspection_summary_label.text()
         == "Backup bundle looks structurally usable for future restore/import."
     )
+    assert "real mods config snapshot" in main_window._setup_output_box.toPlainText().casefold()
     assert "backup bundle inspection" in main_window._setup_output_box.toPlainText().casefold()
     assert str(bundle_path) in main_window._setup_output_box.toPlainText()
     assert "backup bundle inspection" in main_window._findings_box.toPlainText().casefold()
@@ -2364,6 +2378,17 @@ def test_main_window_plan_restore_import_runs_service_and_updates_output(
                 bundle_structure_state="present",
                 review_mod_count=1,
             ),
+            RestoreImportPlanningItem(
+                key="real_mod_configs",
+                label="Real Mods config snapshot",
+                state="needs_review",
+                message="Real Mods config snapshot planning found review points: 1 need review, 0 look safe.",
+                bundle_relative_path=Path("mod-config") / "real-mods",
+                local_target_path=Path(r"C:\Local\Mods"),
+                bundle_declared_status="copied",
+                bundle_structure_state="present",
+                review_config_count=1,
+            ),
         ),
         mod_entries=(
             RestoreImportPlanningModEntry(
@@ -2378,13 +2403,26 @@ def test_main_window_plan_restore_import_runs_service_and_updates_output(
                 note="Bundle version 1.0.0 differs from local version 2.0.0.",
             ),
         ),
+        config_entries=(
+            RestoreImportPlanningConfigEntry(
+                bundle_item_key="real_mod_configs",
+                bundle_item_label="Real Mods config snapshot",
+                relative_path=Path("RealAlpha") / "config.json",
+                state="different_content",
+                local_target_path=Path(r"C:\Local\Mods\RealAlpha\config.json"),
+                note="Local config artifact differs from the bundled content.",
+            ),
+        ),
         safe_item_count=0,
-        review_item_count=1,
+        review_item_count=2,
         blocked_item_count=0,
         safe_mod_count=0,
         review_mod_count=1,
         blocked_mod_count=0,
-        message="Restore/import planning complete: 0 item(s) look straightforward, 1 item(s) need review.",
+        safe_config_count=0,
+        review_config_count=1,
+        blocked_config_count=0,
+        message="Restore/import planning complete: 0 item(s) look straightforward, 2 item(s) need review.",
     )
     captured: dict[str, object] = {}
 
@@ -2420,12 +2458,13 @@ def test_main_window_plan_restore_import_runs_service_and_updates_output(
     }
     assert (
         main_window._status_strip_label.text()
-        == "Restore/import planning complete: 0 item(s) look straightforward, 1 item(s) need review."
+        == "Restore/import planning complete: 0 item(s) look straightforward, 2 item(s) need review."
     )
     assert (
         main_window._restore_import_planning_summary_label.text()
-        == "Restore/import planning complete: 0 item(s) look straightforward, 1 item(s) need review."
+        == "Restore/import planning complete: 0 item(s) look straightforward, 2 item(s) need review."
     )
+    assert "config realalpha\\config.json" in main_window._setup_output_box.toPlainText().casefold()
     assert "restore/import planning" in main_window._setup_output_box.toPlainText().casefold()
     assert str(bundle_path) in main_window._setup_output_box.toPlainText()
     assert "restore/import planning" in main_window._findings_box.toPlainText().casefold()
@@ -2451,6 +2490,337 @@ def test_main_window_plan_restore_import_cancel_sets_status_without_running(
 
     assert captured == []
     assert main_window._status_strip_label.text() == "Restore/import planning cancelled."
+
+
+def test_main_window_execute_restore_import_requires_current_plan(
+    main_window: MainWindow,
+) -> None:
+    execute_button = main_window.findChild(QPushButton, "setup_execute_restore_import_button")
+    assert execute_button is not None
+    assert execute_button.isEnabled() is False
+
+    main_window._on_execute_restore_import()
+
+    assert main_window._status_strip_label.text() == "Run Plan restore/import first."
+    assert main_window._setup_output_box.toPlainText() == "Run Plan restore/import first."
+
+
+def test_main_window_plan_restore_import_enables_execute_button_when_review_allows(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle_path = tmp_path / "Exports" / "sdvmm-backup-20260318-131500Z"
+    bundle_path.mkdir(parents=True)
+    manifest_path = bundle_path / "manifest.json"
+    summary_path = bundle_path / "README.txt"
+    inspection = BackupBundleInspectionResult(
+        bundle_path=bundle_path,
+        manifest_path=manifest_path,
+        summary_path=summary_path,
+        bundle_format="sdvmm-local-backup",
+        format_version=1,
+        created_at_utc="2026-03-18T13:15:00Z",
+        items=(
+            BackupBundleInspectionItem(
+                key="real_mods",
+                label="Real Mods directory",
+                kind="directory",
+                declared_status="copied",
+                relative_path=Path("mods") / "real-mods",
+                structure_state="present",
+            ),
+        ),
+        structurally_usable=True,
+        message="Backup bundle looks structurally usable for future restore/import.",
+    )
+    result = RestoreImportPlanningResult(
+        bundle_path=bundle_path,
+        inspection=inspection,
+        items=(
+            RestoreImportPlanningItem(
+                key="real_mods",
+                label="Real Mods directory",
+                state="safe_to_restore_later",
+                message="Real Mods directory planning looks straightforward: 1 safe, 0 blocked.",
+                bundle_relative_path=Path("mods") / "real-mods",
+                local_target_path=Path(r"C:\Local\Mods"),
+                bundle_declared_status="copied",
+                bundle_structure_state="present",
+                safe_mod_count=1,
+            ),
+        ),
+        mod_entries=(
+            RestoreImportPlanningModEntry(
+                bundle_item_key="real_mods",
+                bundle_item_label="Real Mods directory",
+                name="Real Alpha",
+                unique_id="Sample.RealAlpha",
+                bundle_version="1.0.0",
+                local_version=None,
+                state="missing_locally",
+                local_target_path=Path(r"C:\Local\Mods"),
+                note="Present in bundle but missing locally.",
+            ),
+        ),
+        config_entries=tuple(),
+        safe_item_count=1,
+        review_item_count=0,
+        blocked_item_count=0,
+        safe_mod_count=1,
+        review_mod_count=0,
+        blocked_mod_count=0,
+        safe_config_count=0,
+        review_config_count=0,
+        blocked_config_count=0,
+        message="Restore/import planning complete: 1 item(s) and 1 bundled mod row(s) plus 0 config artifact(s) look straightforward.",
+    )
+    review = RestoreImportExecutionReview(
+        allowed=True,
+        message="Restore/import is ready to copy 1 missing mod folder(s) and 0 missing config artifact(s) into the current configured destinations. Existing local content will not be merged or overwritten.",
+        executable_mod_count=1,
+        executable_config_count=0,
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QFileDialog.getExistingDirectory",
+        lambda *args, **kwargs: str(bundle_path),
+    )
+
+    def fake_plan_restore_import_from_backup_bundle(**kwargs: object) -> RestoreImportPlanningResult:
+        captured["service_kwargs"] = kwargs
+        return result
+
+    def fake_run_background_operation(**kwargs: object) -> None:
+        captured["operation_name"] = kwargs["operation_name"]
+        task_result = kwargs["task_fn"]()
+        kwargs["on_success"](task_result)
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "plan_restore_import_from_backup_bundle",
+        fake_plan_restore_import_from_backup_bundle,
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "review_restore_import_execution",
+        lambda planning_result: review,
+    )
+    monkeypatch.setattr(main_window, "_run_background_operation", fake_run_background_operation)
+
+    main_window._on_plan_restore_import()
+
+    execute_button = main_window.findChild(QPushButton, "setup_execute_restore_import_button")
+    assert execute_button is not None
+    assert captured["operation_name"] == "Restore/import planning"
+    assert execute_button.isEnabled() is True
+    assert "ready to copy 1 missing mod folder" in execute_button.toolTip()
+
+
+def test_main_window_execute_restore_import_runs_service_and_updates_output(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle_path = tmp_path / "Exports" / "sdvmm-backup-20260318-140000Z"
+    bundle_path.mkdir(parents=True)
+    manifest_path = bundle_path / "manifest.json"
+    summary_path = bundle_path / "README.txt"
+    inspection = BackupBundleInspectionResult(
+        bundle_path=bundle_path,
+        manifest_path=manifest_path,
+        summary_path=summary_path,
+        bundle_format="sdvmm-local-backup",
+        format_version=1,
+        created_at_utc="2026-03-18T14:00:00Z",
+        items=(
+            BackupBundleInspectionItem(
+                key="real_mods",
+                label="Real Mods directory",
+                kind="directory",
+                declared_status="copied",
+                relative_path=Path("mods") / "real-mods",
+                structure_state="present",
+            ),
+        ),
+        structurally_usable=True,
+        message="Backup bundle looks structurally usable for future restore/import.",
+    )
+    planning_result = RestoreImportPlanningResult(
+        bundle_path=bundle_path,
+        inspection=inspection,
+        items=(
+            RestoreImportPlanningItem(
+                key="real_mods",
+                label="Real Mods directory",
+                state="safe_to_restore_later",
+                message="Real Mods directory planning looks straightforward: 1 safe, 0 blocked.",
+                bundle_relative_path=Path("mods") / "real-mods",
+                local_target_path=Path(r"C:\Local\Mods"),
+                bundle_declared_status="copied",
+                bundle_structure_state="present",
+                safe_mod_count=1,
+            ),
+        ),
+        mod_entries=(
+            RestoreImportPlanningModEntry(
+                bundle_item_key="real_mods",
+                bundle_item_label="Real Mods directory",
+                name="Real Alpha",
+                unique_id="Sample.RealAlpha",
+                bundle_version="1.0.0",
+                local_version=None,
+                state="missing_locally",
+                local_target_path=Path(r"C:\Local\Mods"),
+                note="Present in bundle but missing locally.",
+            ),
+        ),
+        config_entries=tuple(),
+        safe_item_count=1,
+        review_item_count=0,
+        blocked_item_count=0,
+        safe_mod_count=1,
+        review_mod_count=0,
+        blocked_mod_count=0,
+        safe_config_count=0,
+        review_config_count=0,
+        blocked_config_count=0,
+        message="Restore/import planning complete: 1 item(s) and 1 bundled mod row(s) plus 0 config artifact(s) look straightforward.",
+    )
+    review = RestoreImportExecutionReview(
+        allowed=True,
+        message="Restore/import is ready to copy 1 missing mod folder(s) and 0 missing config artifact(s) into the current configured destinations. Existing local content will not be merged or overwritten.",
+        executable_mod_count=1,
+        executable_config_count=0,
+    )
+    execution_result = RestoreImportExecutionResult(
+        bundle_path=bundle_path,
+        restored_mod_paths=(Path(r"C:\Local\Mods\RealAlpha"),),
+        restored_config_paths=tuple(),
+        restored_mod_count=1,
+        restored_config_count=0,
+        message="Restore/import execution completed: 1 mod folder(s) and 0 config artifact(s) restored.",
+    )
+    captured: dict[str, object] = {}
+
+    main_window._current_restore_import_planning_result = planning_result
+    main_window._current_restore_import_execution_review = review
+    main_window._refresh_restore_import_execution_state()
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "review_restore_import_execution",
+        lambda planning_result: review,
+    )
+
+    def fake_execute_restore_import(
+        planning: RestoreImportPlanningResult,
+        *,
+        confirm_execution: bool = False,
+    ) -> RestoreImportExecutionResult:
+        captured["execute_args"] = (planning, confirm_execution)
+        return execution_result
+
+    def fake_run_background_operation(**kwargs: object) -> None:
+        captured["operation_name"] = kwargs["operation_name"]
+        task_result = kwargs["task_fn"]()
+        kwargs["on_success"](task_result)
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "execute_restore_import",
+        fake_execute_restore_import,
+    )
+    monkeypatch.setattr(main_window, "_run_background_operation", fake_run_background_operation)
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    main_window._on_execute_restore_import()
+
+    assert captured["operation_name"] == "Restore/import execution"
+    assert captured["execute_args"] == (planning_result, True)
+    assert (
+        main_window._status_strip_label.text()
+        == "Restore/import execution completed: 1 mod folder(s) and 0 config artifact(s) restored."
+    )
+    assert "restore/import execution" in main_window._setup_output_box.toPlainText().casefold()
+    assert r"C:\Local\Mods\RealAlpha" in main_window._setup_output_box.toPlainText()
+    execute_button = main_window.findChild(QPushButton, "setup_execute_restore_import_button")
+    assert execute_button is not None
+    assert execute_button.isEnabled() is False
+
+
+def test_main_window_execute_restore_import_cancel_preserves_no_write(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle_path = tmp_path / "Exports" / "sdvmm-backup-20260318-141000Z"
+    bundle_path.mkdir(parents=True)
+    manifest_path = bundle_path / "manifest.json"
+    summary_path = bundle_path / "README.txt"
+    inspection = BackupBundleInspectionResult(
+        bundle_path=bundle_path,
+        manifest_path=manifest_path,
+        summary_path=summary_path,
+        bundle_format="sdvmm-local-backup",
+        format_version=1,
+        created_at_utc="2026-03-18T14:10:00Z",
+        items=tuple(),
+        structurally_usable=True,
+        message="Backup bundle looks structurally usable for future restore/import.",
+    )
+    planning_result = RestoreImportPlanningResult(
+        bundle_path=bundle_path,
+        inspection=inspection,
+        items=tuple(),
+        mod_entries=tuple(),
+        config_entries=tuple(),
+        safe_item_count=0,
+        review_item_count=0,
+        blocked_item_count=0,
+        safe_mod_count=0,
+        review_mod_count=0,
+        blocked_mod_count=0,
+        safe_config_count=0,
+        review_config_count=0,
+        blocked_config_count=0,
+        message="Restore/import planning complete.",
+    )
+    review = RestoreImportExecutionReview(
+        allowed=True,
+        message="Restore/import is ready to copy 1 missing mod folder(s) and 0 missing config artifact(s) into the current configured destinations. Existing local content will not be merged or overwritten.",
+        executable_mod_count=1,
+        executable_config_count=0,
+    )
+    called: list[bool] = []
+
+    main_window._current_restore_import_planning_result = planning_result
+    main_window._current_restore_import_execution_review = review
+    main_window._refresh_restore_import_execution_state()
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "review_restore_import_execution",
+        lambda planning_result: review,
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "execute_restore_import",
+        lambda *args, **kwargs: called.append(True),
+    )
+    monkeypatch.setattr(
+        "sdvmm.ui.main_window.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.No,
+    )
+
+    main_window._on_execute_restore_import()
+
+    assert called == []
+    assert main_window._status_strip_label.text() == "Restore/import execution cancelled."
 
 
 @pytest.mark.parametrize(
