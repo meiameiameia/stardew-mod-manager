@@ -166,7 +166,12 @@ _NO_PLAN_FACTS_TEXT = (
 _NO_RESTORE_IMPORT_PLANNING_SUMMARY_TEXT = (
     "Plan restore/import to compare a backup bundle against this machine without changing local files."
 )
-_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP = "Plan restore/import first."
+_NO_ACTIVE_BACKUP_BUNDLE_TEXT = (
+    "Active backup bundle: none selected. Inspect or plan a bundle to reuse it across restore steps."
+)
+_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP = (
+    "Inspect or plan a backup bundle first."
+)
 
 
 class MainWindow(QMainWindow):
@@ -191,6 +196,8 @@ class MainWindow(QMainWindow):
         self._current_recovery_inspection: InstallRecoveryInspectionResult | None = None
         self._current_restore_import_planning_result: RestoreImportPlanningResult | None = None
         self._current_restore_import_execution_review: RestoreImportExecutionReview | None = None
+        self._active_backup_bundle_path: Path | None = None
+        self._active_backup_bundle_context_label_text = "none yet"
         self._guided_update_unique_ids: tuple[str, ...] = tuple()
         self._last_environment_status: GameEnvironmentStatus | None = None
         self._last_smapi_log_report: SmapiLogReport | None = None
@@ -627,6 +634,10 @@ class MainWindow(QMainWindow):
         )
         self._restore_import_planning_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._restore_import_planning_summary_label)
+        self._active_backup_bundle_label = QLabel(_NO_ACTIVE_BACKUP_BUNDLE_TEXT)
+        self._active_backup_bundle_label.setObjectName("setup_active_backup_bundle_label")
+        self._active_backup_bundle_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._active_backup_bundle_label)
 
         self._status_strip_group = GlobalStatusStrip()
         self._status_strip_label = self._status_strip_group.current_status_label
@@ -856,6 +867,7 @@ class MainWindow(QMainWindow):
             inspect_backup_button=inspect_backup_button,
             plan_restore_import_button=plan_restore_import_button,
             execute_restore_import_button=execute_restore_import_button,
+            active_backup_bundle_label=self._active_backup_bundle_label,
             backup_bundle_inspection_summary_label=self._backup_bundle_inspection_summary_label,
             restore_import_planning_summary_label=self._restore_import_planning_summary_label,
             setup_output_box=self._setup_output_box,
@@ -1359,6 +1371,7 @@ class MainWindow(QMainWindow):
         self._refresh_staged_package_preview()
         self._refresh_install_operation_selector()
         self._execute_restore_import_button = execute_restore_import_button
+        self._refresh_active_backup_bundle_context()
         self._refresh_restore_import_execution_state()
 
     def _load_startup_state(self) -> None:
@@ -1756,15 +1769,15 @@ class MainWindow(QMainWindow):
         )
 
     def _on_inspect_backup_bundle(self) -> None:
-        bundle_path = QFileDialog.getExistingDirectory(
-            self,
-            "Select backup bundle folder",
-            self._mods_path_input.text() or str(self._shell_service.state_file.parent),
-        )
+        bundle_path = self._prompt_for_backup_bundle_path()
         if not bundle_path:
             self._set_status("Backup bundle inspection cancelled.")
             return
 
+        self._set_active_backup_bundle_context(
+            bundle_path,
+            label_text="selected",
+        )
         self._clear_restore_import_plan_state(reset_summary=False)
         self._run_background_operation(
             operation_name="Backup bundle inspection",
@@ -1772,7 +1785,7 @@ class MainWindow(QMainWindow):
             started_status="Inspecting backup bundle...",
             error_title="Backup bundle inspection failed",
             task_fn=lambda: self._shell_service.inspect_backup_bundle(
-                bundle_path_text=bundle_path,
+                bundle_path_text=str(bundle_path),
             ),
             on_success=self._on_backup_bundle_inspection_completed,
             on_failure=self._set_setup_output_text,
@@ -1783,33 +1796,26 @@ class MainWindow(QMainWindow):
         result: BackupBundleInspectionResult,
     ) -> None:
         inspection_text = build_backup_bundle_inspection_text(result)
+        self._set_active_backup_bundle_context(
+            result.bundle_path,
+            label_text="inspected",
+        )
         self._backup_bundle_inspection_summary_label.setText(result.message)
         self._backup_bundle_inspection_summary_label.setToolTip(inspection_text)
         self._set_setup_output_and_details_text(inspection_text)
         self._set_status(result.message)
 
     def _on_plan_restore_import(self) -> None:
-        bundle_path = QFileDialog.getExistingDirectory(
-            self,
-            "Select backup bundle folder",
-            self._mods_path_input.text() or str(self._shell_service.state_file.parent),
+        bundle_path = self._resolve_active_or_prompted_backup_bundle_path(
+            cancel_status="Restore/import planning cancelled.",
         )
         if not bundle_path:
-            self._set_status("Restore/import planning cancelled.")
             return
 
-        self._clear_restore_import_plan_state(reset_summary=True)
-        self._run_background_operation(
-            operation_name="Restore/import planning",
-            running_label="Restore/import planning",
-            started_status="Planning restore/import from backup bundle...",
-            error_title="Restore/import planning failed",
-            task_fn=lambda: self._shell_service.plan_restore_import_from_backup_bundle(
-                bundle_path_text=bundle_path,
-                **self._current_operational_config_inputs(),
-            ),
+        self._start_restore_import_planning_for_bundle(
+            bundle_path,
+            started_status="Planning restore/import from the current backup bundle...",
             on_success=self._on_restore_import_planning_completed,
-            on_failure=self._set_setup_output_text,
         )
 
     def _on_restore_import_planning_completed(
@@ -1821,6 +1827,10 @@ class MainWindow(QMainWindow):
         self._current_restore_import_execution_review = (
             self._shell_service.review_restore_import_execution(result)
         )
+        self._set_active_backup_bundle_context(
+            result.bundle_path,
+            label_text="planned",
+        )
         self._restore_import_planning_summary_label.setText(result.message)
         self._restore_import_planning_summary_label.setToolTip(planning_text)
         self._set_setup_output_and_details_text(planning_text)
@@ -1828,13 +1838,37 @@ class MainWindow(QMainWindow):
         self._set_status(result.message)
 
     def _on_execute_restore_import(self) -> None:
-        planning_result = self._current_restore_import_planning_result
-        if planning_result is None:
-            message = "Run Plan restore/import first."
-            self._set_setup_output_text(message)
-            self._set_status(message)
+        bundle_path = self._resolve_active_or_prompted_backup_bundle_path(
+            cancel_status="Restore/import execution cancelled.",
+        )
+        if bundle_path is None:
             return
 
+        planning_result = self._current_restore_import_planning_result
+        if planning_result is None or planning_result.bundle_path != bundle_path:
+            self._start_restore_import_planning_for_bundle(
+                bundle_path,
+                started_status=(
+                    "Refreshing restore/import review from the current backup bundle..."
+                ),
+                on_success=self._on_restore_import_planning_then_execute_completed,
+                reset_summary=False,
+            )
+            return
+
+        self._continue_restore_import_execution(planning_result)
+
+    def _on_restore_import_planning_then_execute_completed(
+        self,
+        result: RestoreImportPlanningResult,
+    ) -> None:
+        self._on_restore_import_planning_completed(result)
+        self._continue_restore_import_execution(result)
+
+    def _continue_restore_import_execution(
+        self,
+        planning_result: RestoreImportPlanningResult,
+    ) -> None:
         review = self._shell_service.review_restore_import_execution(planning_result)
         self._current_restore_import_execution_review = review
         self._refresh_restore_import_execution_state()
@@ -1900,6 +1934,10 @@ class MainWindow(QMainWindow):
         self._restore_import_planning_summary_label.setToolTip(execution_text)
         self._set_setup_output_and_details_text(execution_text)
         self._clear_restore_import_plan_state(reset_summary=False)
+        self._set_active_backup_bundle_context(
+            result.bundle_path,
+            label_text="executed",
+        )
         self._refresh_restore_import_execution_state()
         self._set_status(result.message)
 
@@ -3605,6 +3643,82 @@ class MainWindow(QMainWindow):
                 _NO_RESTORE_IMPORT_PLANNING_SUMMARY_TEXT
             )
 
+    def _prompt_for_backup_bundle_path(self) -> Path | None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Select backup bundle folder",
+            self._backup_bundle_dialog_start_dir(),
+        )
+        if not selected:
+            return None
+        return Path(selected)
+
+    def _backup_bundle_dialog_start_dir(self) -> str:
+        if self._active_backup_bundle_path is not None:
+            return str(self._active_backup_bundle_path)
+        return self._mods_path_input.text() or str(self._shell_service.state_file.parent)
+
+    def _resolve_active_or_prompted_backup_bundle_path(
+        self,
+        *,
+        cancel_status: str,
+    ) -> Path | None:
+        if self._active_backup_bundle_path is not None:
+            return self._active_backup_bundle_path
+
+        bundle_path = self._prompt_for_backup_bundle_path()
+        if bundle_path is None:
+            self._set_status(cancel_status)
+            return None
+        self._set_active_backup_bundle_context(bundle_path, label_text="selected")
+        return bundle_path
+
+    def _set_active_backup_bundle_context(
+        self,
+        bundle_path: Path | None,
+        *,
+        label_text: str,
+    ) -> None:
+        self._active_backup_bundle_path = bundle_path
+        self._active_backup_bundle_context_label_text = label_text if bundle_path is not None else "none yet"
+        self._refresh_active_backup_bundle_context()
+        self._refresh_restore_import_execution_state()
+
+    def _refresh_active_backup_bundle_context(self) -> None:
+        if self._active_backup_bundle_path is None:
+            self._active_backup_bundle_label.setText(_NO_ACTIVE_BACKUP_BUNDLE_TEXT)
+            self._active_backup_bundle_label.setToolTip(_NO_ACTIVE_BACKUP_BUNDLE_TEXT)
+            return
+
+        path_text = str(self._active_backup_bundle_path)
+        context_label = self._active_backup_bundle_context_label_text
+        self._active_backup_bundle_label.setText(
+            f"Active backup bundle ({context_label}): {_compact_path_text(path_text, max_length=84)}"
+        )
+        self._active_backup_bundle_label.setToolTip(path_text)
+
+    def _start_restore_import_planning_for_bundle(
+        self,
+        bundle_path: Path,
+        *,
+        started_status: str,
+        on_success: Callable[[RestoreImportPlanningResult], None],
+        reset_summary: bool = True,
+    ) -> None:
+        self._clear_restore_import_plan_state(reset_summary=reset_summary)
+        self._run_background_operation(
+            operation_name="Restore/import planning",
+            running_label="Restore/import planning",
+            started_status=started_status,
+            error_title="Restore/import planning failed",
+            task_fn=lambda: self._shell_service.plan_restore_import_from_backup_bundle(
+                bundle_path_text=str(bundle_path),
+                **self._current_operational_config_inputs(),
+            ),
+            on_success=on_success,
+            on_failure=self._set_setup_output_text,
+        )
+
     def _refresh_restore_import_execution_state(self) -> None:
         button = getattr(self, "_execute_restore_import_button", None)
         if button is None:
@@ -3616,8 +3730,14 @@ class MainWindow(QMainWindow):
 
         review = self._current_restore_import_execution_review
         if review is None:
-            button.setEnabled(False)
-            button.setToolTip(_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP)
+            if self._active_backup_bundle_path is not None:
+                button.setEnabled(True)
+                button.setToolTip(
+                    "Use the current backup bundle to refresh restore/import review and continue to execution."
+                )
+            else:
+                button.setEnabled(False)
+                button.setToolTip(_NO_RESTORE_IMPORT_EXECUTION_TOOLTIP)
             return
 
         button.setEnabled(review.allowed)

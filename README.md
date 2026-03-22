@@ -109,6 +109,9 @@ Live Mods safety expectations:
   - conflict handling is explicit and review-first
   - conflicting local content is handled through archive-aware mod-folder replacement, not file merge
   - ambiguous or structurally blocked restore cases still do not execute
+- **Backup flow continuity fix**
+  - inspect, plan, and execute now reuse the current active backup bundle context instead of repeatedly asking for the same folder
+  - the active bundle is shown in Setup so restore/import actions stay explicit about which bundle they will use
 - **Config-aware backup baseline**
   - backup export now carries common per-mod config artifacts found inside installed real/sandbox Mods trees
   - bundle inspection reports config snapshot coverage explicitly
@@ -195,7 +198,7 @@ You can still run focused suites when iterating:
 .\.venv\Scripts\python.exe -m pytest tests\unit\test_main_window_gui_regression.py -q
 ```
 
-### 4) Build Windows portable folder (`0.9.0`)
+### 4) Build Windows portable folder (`0.9.1`)
 
 Packaging baseline in this repo uses **PyInstaller one-folder** output because it is the smallest practical Windows desktop packaging path here without introducing installer/signing work.
 
@@ -214,13 +217,13 @@ Build the portable folder:
 Output folder:
 
 ```text
-dist\stardew-mod-manager-0.9.0-windows-portable\
+dist\stardew-mod-manager-0.9.1-windows-portable\
 ```
 
 Launch the packaged app:
 
 ```powershell
-.\dist\stardew-mod-manager-0.9.0-windows-portable\Stardew Mod Manager.exe
+.\dist\stardew-mod-manager-0.9.1-windows-portable\Stardew Mod Manager.exe
 ```
 
 Current caveats:
@@ -253,6 +256,6 @@ Current caveats:
 - the export bundle can include app state/config, install/recovery history, update-source intent overlay, real/sandbox Mods, and app-managed archive roots when they exist
 - export now also includes common per-mod config artifacts found inside installed Mods trees under `mod-config\real-mods\...` and `mod-config\sandbox-mods\...`
 - `Inspect backup bundle` reads an exported bundle and reports structure/usability without applying restore changes
-- `Plan restore/import` compares a selected backup bundle against the current local machine and reports what looks safe later, what needs review, and what is blocked, including config artifact visibility
-- `Execute restore/import` now restores clearly missing content and reviewed conflict cases into the current configured destinations
+- `Plan restore/import` compares the current active backup bundle against the current local machine and reports what looks safe later, what needs review, and what is blocked, including config artifact visibility
+- `Execute restore/import` now restores clearly missing content and reviewed conflict cases into the current configured destinations, reusing the current active bundle context when available
 - reviewed conflicts use archive-aware mod-folder replacement; file-level merge behavior for conflicting local content is still intentionally not implemented
