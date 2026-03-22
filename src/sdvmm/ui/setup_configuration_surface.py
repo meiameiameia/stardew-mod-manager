@@ -41,6 +41,7 @@ class SetupConfigurationSurface(QScrollArea):
         inspect_backup_button: QPushButton,
         plan_restore_import_button: QPushButton,
         execute_restore_import_button: QPushButton,
+        active_backup_bundle_label: QLabel,
         backup_bundle_inspection_summary_label: QLabel,
         restore_import_planning_summary_label: QLabel,
         setup_output_box: QPlainTextEdit,
@@ -105,8 +106,9 @@ class SetupConfigurationSurface(QScrollArea):
         for column in range(3):
             setup_actions_layout.setColumnStretch(column, 1)
         setup_layout.addWidget(setup_actions_widget, 6, 0, 1, 4)
-        setup_layout.addWidget(backup_bundle_inspection_summary_label, 7, 0, 1, 4)
-        setup_layout.addWidget(restore_import_planning_summary_label, 8, 0, 1, 4)
+        setup_layout.addWidget(active_backup_bundle_label, 7, 0, 1, 4)
+        setup_layout.addWidget(backup_bundle_inspection_summary_label, 8, 0, 1, 4)
+        setup_layout.addWidget(restore_import_planning_summary_label, 9, 0, 1, 4)
         setup_layout.setColumnStretch(1, 1)
 
         setup_output_group = QGroupBox("Setup detail")
