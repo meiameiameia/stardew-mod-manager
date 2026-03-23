@@ -185,6 +185,7 @@ ModsCompareState = Literal[
 @dataclass(frozen=True, slots=True)
 class ModsCompareEntry:
     match_key: str
+    unique_id: str
     name: str
     state: ModsCompareState
     real_mod: InstalledMod | None

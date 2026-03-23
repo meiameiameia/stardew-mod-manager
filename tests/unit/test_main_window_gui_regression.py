@@ -5900,6 +5900,9 @@ def test_main_window_compare_surface_has_expected_structure(
     context_tabs = main_window._context_tabs
     compare_tab = main_window.findChild(QWidget, "compare_tab")
     compare_button = main_window.findChild(QPushButton, "compare_run_button")
+    compare_filter_combo = main_window.findChild(QComboBox, "compare_category_filter_combo")
+    compare_copy_button = main_window.findChild(QPushButton, "compare_copy_identity_button")
+    compare_help_label = main_window.findChild(QLabel, "compare_category_help_label")
     compare_table = main_window.findChild(QTableWidget, "compare_results_table")
     compare_summary = main_window.findChild(QLabel, "compare_summary_label")
     compare_output_group = main_window.findChild(QGroupBox, "compare_output_group")
@@ -5908,6 +5911,9 @@ def test_main_window_compare_surface_has_expected_structure(
     assert isinstance(context_tabs, QTabWidget)
     assert compare_tab is not None
     assert compare_button is not None
+    assert compare_filter_combo is not None
+    assert compare_copy_button is not None
+    assert compare_help_label is not None
     assert compare_table is not None
     assert compare_summary is not None
     assert compare_output_group is not None
@@ -5916,8 +5922,14 @@ def test_main_window_compare_surface_has_expected_structure(
     assert "Compare" in tab_labels
     assert context_tabs.indexOf(compare_tab) >= 0
     assert main_window._compare_real_vs_sandbox_button is compare_button
+    assert main_window._compare_category_filter_combo is compare_filter_combo
+    assert main_window._compare_copy_identity_button is compare_copy_button
+    assert main_window._compare_category_help_label is compare_help_label
     assert main_window._compare_results_table is compare_table
     assert main_window._compare_summary_label is compare_summary
+    assert compare_filter_combo.currentText() == "Actionable drift"
+    assert compare_copy_button.isEnabled() is False
+    assert "Ambiguous match means duplicate folders share one UniqueID" in compare_help_label.text()
     assert compare_table.isHidden() is True
     assert compare_output_group.isHidden() is True
     compare_layout = compare_tab.layout()
@@ -6007,6 +6019,7 @@ def test_main_window_compare_action_renders_real_vs_sandbox_drift(
         entries=(
             ModsCompareEntry(
                 match_key="sample.realonly",
+                unique_id="Sample.RealOnly",
                 name="Real Only",
                 state="only_in_real",
                 real_mod=InstalledMod(
@@ -6021,6 +6034,7 @@ def test_main_window_compare_action_renders_real_vs_sandbox_drift(
             ),
             ModsCompareEntry(
                 match_key="sample.sandboxonly",
+                unique_id="Sample.SandboxOnly",
                 name="Sandbox Only",
                 state="only_in_sandbox",
                 real_mod=None,
@@ -6035,6 +6049,7 @@ def test_main_window_compare_action_renders_real_vs_sandbox_drift(
             ),
             ModsCompareEntry(
                 match_key="sample.same",
+                unique_id="Sample.Same",
                 name="Same Mod",
                 state="same_version",
                 real_mod=InstalledMod(
@@ -6056,6 +6071,7 @@ def test_main_window_compare_action_renders_real_vs_sandbox_drift(
             ),
             ModsCompareEntry(
                 match_key="sample.mismatch",
+                unique_id="Sample.Mismatch",
                 name="Mismatch Mod",
                 state="version_mismatch",
                 real_mod=InstalledMod(
@@ -6077,6 +6093,7 @@ def test_main_window_compare_action_renders_real_vs_sandbox_drift(
             ),
             ModsCompareEntry(
                 match_key="sample.ambiguous",
+                unique_id="Sample.Ambiguous",
                 name="Ambiguous Mod",
                 state="ambiguous_match",
                 real_mod=InstalledMod(
@@ -6146,13 +6163,19 @@ def test_main_window_compare_action_renders_real_vs_sandbox_drift(
         "existing_config": None,
     }
     assert main_window._compare_results_table.rowCount() == 5
+    assert _visible_row_count(main_window._compare_results_table) == 4
+    same_row = _find_mod_row(main_window._compare_results_table, "Same Mod")
+    assert same_row >= 0
+    assert main_window._compare_results_table.isRowHidden(same_row) is True
     assert "1 only in real" in main_window._compare_summary_label.text()
     assert "1 only in sandbox" in main_window._compare_summary_label.text()
     assert "1 same version" in main_window._compare_summary_label.text()
     assert "1 version mismatch" in main_window._compare_summary_label.text()
     assert "1 ambiguous" in main_window._compare_summary_label.text()
+    assert "Showing actionable drift by default." in main_window._compare_summary_label.text()
     assert main_window._compare_results_table.item(0, 0) is not None
     assert "Real vs sandbox Mods compare" in main_window._findings_box.toPlainText()
+    assert "Category guide:" in main_window._findings_box.toPlainText()
     rendered_rows = {
         main_window._compare_results_table.item(row, 0).text(): (
             main_window._compare_results_table.item(row, 1).text(),
@@ -6176,6 +6199,84 @@ def test_main_window_compare_action_renders_real_vs_sandbox_drift(
         main_window._status_strip_label.text()
         == "Compare complete: 5 row(s) across real and sandbox Mods."
     )
+
+
+def test_main_window_compare_filter_and_copy_identity_controls_work(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    result = ModsCompareResult(
+        real_mods_path=Path(r"C:\Game\Mods"),
+        sandbox_mods_path=Path(r"C:\Sandbox\Mods"),
+        real_inventory=_mods_inventory(),
+        sandbox_inventory=_mods_inventory(),
+        entries=(
+            ModsCompareEntry(
+                match_key="sample.same",
+                unique_id="Sample.Same",
+                name="Same Mod",
+                state="same_version",
+                real_mod=InstalledMod(
+                    unique_id="Sample.Same",
+                    name="Same Mod",
+                    version="1.1.0",
+                    folder_path=Path(r"C:\Game\Mods\SameMod"),
+                    manifest_path=Path(r"C:\Game\Mods\SameMod\manifest.json"),
+                    dependencies=tuple(),
+                ),
+                sandbox_mod=InstalledMod(
+                    unique_id="Sample.Same",
+                    name="Same Mod",
+                    version="1.1.0",
+                    folder_path=Path(r"C:\Sandbox\Mods\SameMod"),
+                    manifest_path=Path(r"C:\Sandbox\Mods\SameMod\manifest.json"),
+                    dependencies=tuple(),
+                ),
+            ),
+            ModsCompareEntry(
+                match_key="sample.mismatch",
+                unique_id="Sample.Mismatch",
+                name="Mismatch Mod",
+                state="version_mismatch",
+                real_mod=InstalledMod(
+                    unique_id="Sample.Mismatch",
+                    name="Mismatch Mod",
+                    version="1.0.0",
+                    folder_path=Path(r"C:\Game\Mods\MismatchMod"),
+                    manifest_path=Path(r"C:\Game\Mods\MismatchMod\manifest.json"),
+                    dependencies=tuple(),
+                ),
+                sandbox_mod=InstalledMod(
+                    unique_id="Sample.Mismatch",
+                    name="Mismatch Mod",
+                    version="2.0.0",
+                    folder_path=Path(r"C:\Sandbox\Mods\MismatchMod"),
+                    manifest_path=Path(r"C:\Sandbox\Mods\MismatchMod\manifest.json"),
+                    dependencies=tuple(),
+                ),
+            ),
+        ),
+    )
+
+    main_window._on_compare_real_and_sandbox_completed(result)
+    qapp.processEvents()
+
+    assert _visible_mod_names(main_window._compare_results_table) == ("Mismatch Mod",)
+
+    main_window._compare_category_filter_combo.setCurrentText("Same version")
+    qapp.processEvents()
+
+    assert _visible_mod_names(main_window._compare_results_table) == ("Same Mod",)
+
+    row = _find_mod_row(main_window._compare_results_table, "Same Mod")
+    assert row >= 0
+    main_window._compare_results_table.selectRow(row)
+    qapp.processEvents()
+
+    assert main_window._compare_copy_identity_button.isEnabled() is True
+    main_window._compare_copy_identity_button.click()
+
+    assert QApplication.clipboard().text() == "Same Mod | Sample.Same"
 
 
 def test_main_window_discovery_render_updates_filter_stats_label(

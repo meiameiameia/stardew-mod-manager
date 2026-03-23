@@ -18,9 +18,9 @@ The goal is not to restate the whole codebase. The goal is to give enough high-s
 - Entry point: `sdvmm-ui` -> [`src/sdvmm/app/main.py`](/Users/darth/Projects/stardew-mod-manager/src/sdvmm/app/main.py)
 - Current validation baseline:
   - `.\.venv\Scripts\python.exe -m pytest tests\unit -q`
-  - latest verified result in this thread: `524 passed, 1 skipped`
+  - latest verified result in this thread: `526 passed, 1 skipped`
   - UI startup smoke also passes offscreen
-- Shipped baseline in this brief: `1.0.0` (the first stable user-facing release, including real-vs-sandbox compare visibility, config-aware backup export, folder/zip backup-bundle compatibility, backup-bundle inspection, restore/import planning, restore/import execution, restore conflict handling, open-folder conveniences, Steam prelaunch best-effort behavior with a persisted user-controlled toggle, and the v1 shell cleanup passes)
+- Shipped baseline in this brief: `1.1.0` (the first post-v1 workflow expansion, including compare follow-up ergonomics on top of the stable `1.0.0` baseline: actionable drift default, compare category filtering, inline category explanation, and copy mod name / UniqueID convenience)
 - Product posture:
   - local-first
   - safe-by-default
@@ -38,10 +38,10 @@ The app is no longer just a scanner. It now has a coherent local workflow:
 2. check update metadata
 3. open the selected mod's remote page manually
 4. download zip manually
-5. intake/inspect one or more selected zips
-6. review per-package batch inspection results
-7. stage one package into `Plan & Install`
-8. build an install plan
+5. choose one or more zip packages for intake
+6. inspect selected packages immediately
+7. let the current valid package become the Review target automatically, or choose one when multiple valid packages exist
+8. review current package and destination
 9. review/confirm execution
 10. record install history
 11. derive/review/execute recovery
@@ -54,7 +54,7 @@ The app is no longer just a scanner. It now has a coherent local workflow:
 The product is now at its first stable user-facing release baseline, while still intentionally leaving some post-v1 areas unfinished.
 
 The product direction now explicitly includes a mod-development workflow, not only general end-user mod management.
-The shipped `1.0.0` build includes the multi-zip intake step, second watcher-path intake convenience, a visibility-first real-vs-sandbox compare baseline, config-aware backup export, folder/zip backup-bundle support, backup-bundle inspection, restore/import planning, restore/import execution for clearly missing content, reviewed restore conflict handling through archive-aware mod-folder replacement, explicit open-folder conveniences for the key configured workflow folders, best-effort Steam prelaunch assistance with a persisted user-controlled toggle, and the v1 shell cleanup passes, while intentionally stopping short of blind multi-package planning/install behavior, compare-driven write shortcuts, file-level merge restore behavior, and background Steam management.
+The shipped `1.1.0` build includes the `1.0.0` baseline plus the first compare follow-up pass: actionable drift default, compare category filtering, inline explanation for compare states, and copy mod name / UniqueID convenience, while intentionally stopping short of compare-driven write shortcuts, blind multi-package planning/install behavior, file-level merge restore behavior, and background Steam management.
 
 ## Current Architecture
 
@@ -107,11 +107,11 @@ The strongest part of the app right now is the install/recovery foundation:
 
 The previously fragmented workflow has been tightened:
 
-- `Packages & Intake` stages into `Plan & Install`
-- `Packages & Intake` can now inspect multiple selected zips while preserving per-package visibility
+- `Packages` now starts intake/inspection directly for the normal zip-install path
+- `Packages` can inspect multiple selected zips while preserving per-package visibility
 - watcher intake can monitor two configured paths into the same detected-packages flow
-- `Plan & Install` owns planning/review/execution
-- recovery is local to the same workflow surface
+- `Review` owns install review/execution
+- `Recovery` is now its own dedicated workflow surface
 - install completion now links back into recovery selection
 - sandbox launch/sync/promotion now make the app directly useful for mod-development iteration, not just mod curation
 
@@ -119,9 +119,11 @@ The previously fragmented workflow has been tightened:
 
 The app has already corrected several structural UI mistakes:
 
-- primary controls were moved out of the bottom detail area
-- setup/configuration now lives in the main workspace instead of the bottom panel
-- the bottom area is now output-only
+- shared bottom console-style output is gone
+- the old left-side `Current detail` panel is also gone
+- setup/configuration now lives in the main workspace
+- local detail panels are now hidden until they have useful content
+- sparse tabs (`Compare`, `Archive`, `Recovery`) have been compacted to reduce empty-state drift
 
 The UI is still dense, but further generic decomposition is no longer the highest-value track.
 
@@ -156,13 +158,13 @@ The next unresolved product question remains:
 
 > How should the app improve promotion speed and clarity now that preview + archive-aware replace already exists, without making live promotion feel casual or opaque?
 
-### 3. Compare follow-up is now the next daily-use visibility gap
+### 3. Compare is now a stronger read-only drift surface, but still intentionally constrained
 
-The app now has explicit open-folder conveniences for the main configured workflow paths, a coherent export/inspection/planning/execution chain with bundled mod-config coverage and reviewed conflict handling, and best-effort Steam launch assistance with a persisted user-controlled toggle. The next remaining daily-use ergonomics question is how much further to take compare visibility without turning it into implicit write behavior.
+The app now has actionable-drift-first compare defaults, category filtering, inline category explanation, and compare-row copy convenience. The remaining question is how much further compare should go without turning into an implicit write surface.
 
 The next question is:
 
-> What is the smallest compare follow-up that improves real drift orientation and decision speed without creating compare-driven write shortcuts?
+> What compare improvements, if any, are still worth doing after `1.1.0` without creating compare-driven write shortcuts?
 
 ### 4. `MainWindow` is still the densest integration point
 
@@ -172,7 +174,7 @@ This is acceptable for now because product-facing workflow completion was correc
 
 ### 5. Desktop interaction density is improved, not solved
 
-The app is cleaner than before, but workflow surfaces are still dense. This is now a secondary concern behind sandbox dev-loop trust and live-write clarity.
+The app is cleaner than before, but workflow surfaces are still dense. The most likely post-v1 UI work is no longer general shell renaming; it is compact empty states, clearer launch ownership, and reducing the remaining “form-heavy” feel in high-frequency tabs.
 
 ### 6. Public-release readiness work has barely started
 
@@ -187,12 +189,12 @@ Notably still pending:
 
 ### 7. Multi-package planning is intentionally not solved yet
 
-The app can now inspect multiple zip files in one explicit batch, but it does not yet build or execute a true multi-package install plan.
+The app can now inspect multiple zip files in one explicit batch, and the normal single-package path is much more direct than before, but it still does not build or execute a true multi-package install plan.
 
 That limitation is intentional:
 
 - per-package inspection is already useful for private testing and download triage
-- the current planner remains clearer and safer when staging exactly one package at a time
+- the current planner remains clearer and safer when reviewing exactly one chosen package at a time
 - pushing straight into batch execution now would create review ambiguity
 
 ## Roadmap Status
@@ -214,7 +216,7 @@ That limitation is intentional:
 
 - selected update row -> remote page
 - manual download -> intake
-- intake staging -> `Plan & Install`
+- intake -> `Review`
 - local workflow output in owning tabs
 
 #### 3. Managed Live Mods Safety Baseline
@@ -249,13 +251,13 @@ Implemented for `0.3.0`/`0.3.1`:
 
 - multi-file zip selection in `Packages & Intake`
 - batch inspection with per-package result visibility
-- explicit single-package staging from the selected inspected package
+- automatic Review targeting for the normal single-package path
 - dual watcher paths feeding one intake detection flow
 - no blind batch planning/install
 
 Current recommendation:
 
-- use private testing to validate whether batch inspection + single-package staging feels clear enough before expanding planner semantics
+- use private testing to validate whether batch inspection + direct Review targeting feels clear enough before expanding planner semantics
 - preserve explicit plan review as a non-negotiable constraint for any later multi-package work
 
 #### 7. Real vs Sandbox Compare Baseline
@@ -273,7 +275,7 @@ Implemented for `0.4.0`:
 
 #### 8. Backup Bundle Inspection + Restore/Import Planning + Execution + Open-Folder Baseline
 
-Implemented through `1.0.0`:
+Implemented through `1.1.0`:
 
 - explicit local backup export baseline for migration/recovery groundwork
 - explicit read-only inspection of exported backup bundle folders
@@ -295,22 +297,23 @@ Implemented through `1.0.0`:
 
 ### Post-v1 likely phases (real-world usability first)
 
-#### 9. Compare Follow-up
-
-- revisit richer compare ergonomics after the restore/import baseline and launch behavior settle
-- keep compare visibility trustworthy and avoid implicit write shortcuts
-
-#### 10. Restore/Import File-Level Merge Follow-up
+#### 9. Restore/Import File-Level Merge Follow-up
 
 - keep the shipped conflict-resolution baseline folder-oriented and trustworthy
 - do not introduce file-level merge semantics until review, safety, and recovery semantics are explicitly designed
 - no casual overwrite shortcuts
 
+#### 10. Further Compare Ergonomics Only If They Stay Read-Only
+
+- treat `1.1.0` as the shipped compare-orientation baseline
+- only pursue future compare work if it improves decision speed without becoming a write surface
+- keep compare visibility trustworthy and avoid implicit write shortcuts
+
 ### Later planned phase
 
 #### 14. Information Architecture Follow-up
 
-The UI simplification track is now intentionally paused until sandbox-dev workflow trust work is no longer the main blocker.
+The broad shell simplification pass is now good enough through `1.1.0`. Post-v1 information architecture work should focus on compact empty states, launch-surface clarity, and reducing passive form density rather than reopening generic decomposition.
 
 #### 15. Visual Feedback and Polish
 
@@ -326,13 +329,13 @@ An external model should specifically challenge these points:
 
 The current recommendation is to prioritize real-world usability and trust ergonomics first:
 
-- compare follow-up now that restore/import and Steam-assisted launch are both shipped baselines
 - restore/import file-level merge follow-up only if safety semantics are designed clearly
+- any further compare work only if it remains clearly read-only and high value
 - then broader polish/refactor work
 
 Question:
 
-> Is it correct to keep compare follow-up and migration-trust follow-up ahead of more UI consolidation and polish?
+> Is it correct to keep migration-trust follow-up ahead of more UI consolidation and polish now that the first compare follow-up is already shipped?
 
 ### B. Should live promotion stay conservative longer?
 
@@ -347,7 +350,7 @@ The app now has:
 - a global status strip
 - tab-local workflow surfaces
 - selected-row guidance in `Inventory`
-- local detail surfaces instead of a shared bottom console
+- local detail surfaces that appear only when useful
 
 Question:
 
@@ -357,13 +360,25 @@ Question:
 
 Question:
 
-> Given that the intended near-term audience includes mod developers and careful local users, what sequence best balances trust and speed now: compare follow-up first, then any deeper restore/import merge semantics later?
+> Given that the intended near-term audience includes mod developers and careful local users, what sequence best balances trust and speed now that the first compare follow-up is already shipped?
 
 ### E. When should multi-package planning be allowed?
 
 Question:
 
-> What review surface and safety constraints would be required before moving from multi-zip batch inspection to a true multi-package staged plan?
+> What review surface and safety constraints would be required before moving from multi-zip batch inspection and direct single-package Review targeting to a true multi-package plan?
+
+### F. What are the highest-value post-v1 UX fixes?
+
+The app is now shipped, and the remaining visible issues are narrower:
+
+- compacting empty-state tabs so content feels intentionally grouped instead of sparse
+- making `Launch` feel like its own surface instead of “Inventory plus launch buttons”
+- reducing remaining density in `Review` and `Setup` without weakening safety semantics
+
+Question:
+
+> Which 3-5 smallest post-v1 UX increments would most improve daily-use clarity without reopening risky shell churn?
 
 ## Explicit Constraints for the External Audit
 
@@ -399,5 +414,5 @@ A useful audit response should include:
 - whether the sandbox dev-loop track is correctly prioritized
 - how preview + archive-aware replace should be introduced without weakening live-write trust
 - concrete suggestions for improving sandbox-dev ergonomics without weakening real-Mods safety
-- criteria for when the app is ready to resume later UI/UX consolidation work
+- criteria for which post-v1 UI/UX work is worth doing next versus leaving alone
 - the next 3-5 smallest safe increments, ordered by product value

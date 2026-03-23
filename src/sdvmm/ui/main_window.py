@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -152,6 +153,8 @@ _ROLE_MOD_FOLDER_PATH = int(Qt.ItemDataRole.UserRole) + 5
 _ROLE_ARCHIVE_INDEX = int(Qt.ItemDataRole.UserRole) + 6
 _ROLE_UPDATE_ACTIONABLE = int(Qt.ItemDataRole.UserRole) + 7
 _ROLE_UPDATE_BLOCK_REASON = int(Qt.ItemDataRole.UserRole) + 8
+_ROLE_COMPARE_STATE = int(Qt.ItemDataRole.UserRole) + 9
+_ROLE_COMPARE_UNIQUE_ID = int(Qt.ItemDataRole.UserRole) + 10
 
 _NO_PLAN_REVIEW_SUMMARY_TEXT = (
     "Review summary: no plan yet. Click Review install to inspect changes."
@@ -173,6 +176,13 @@ _NO_ACTIVE_BACKUP_BUNDLE_TEXT = (
 _NO_RESTORE_IMPORT_EXECUTION_TOOLTIP = (
     "Inspect or plan a backup bundle first."
 )
+_COMPARE_FILTER_ACTIONABLE = "actionable_drift"
+_COMPARE_FILTER_ONLY_IN_REAL = "only_in_real"
+_COMPARE_FILTER_ONLY_IN_SANDBOX = "only_in_sandbox"
+_COMPARE_FILTER_VERSION_MISMATCH = "version_mismatch"
+_COMPARE_FILTER_AMBIGUOUS = "ambiguous_match"
+_COMPARE_FILTER_SAME_VERSION = "same_version"
+_COMPARE_FILTER_ALL = "all_categories"
 
 
 class MainWindow(QMainWindow):
@@ -364,6 +374,60 @@ class MainWindow(QMainWindow):
         self._compare_summary_label.setToolTip(
             "Run compare after changing either Mods path or archive exclusion path."
         )
+        self._compare_category_filter_combo = QComboBox()
+        self._compare_category_filter_combo.setObjectName("compare_category_filter_combo")
+        self._compare_category_filter_combo.addItem(
+            "Actionable drift",
+            _COMPARE_FILTER_ACTIONABLE,
+        )
+        self._compare_category_filter_combo.addItem(
+            "Only in real",
+            _COMPARE_FILTER_ONLY_IN_REAL,
+        )
+        self._compare_category_filter_combo.addItem(
+            "Only in sandbox",
+            _COMPARE_FILTER_ONLY_IN_SANDBOX,
+        )
+        self._compare_category_filter_combo.addItem(
+            "Version mismatch",
+            _COMPARE_FILTER_VERSION_MISMATCH,
+        )
+        self._compare_category_filter_combo.addItem(
+            "Ambiguous match",
+            _COMPARE_FILTER_AMBIGUOUS,
+        )
+        self._compare_category_filter_combo.addItem(
+            "Same version",
+            _COMPARE_FILTER_SAME_VERSION,
+        )
+        self._compare_category_filter_combo.addItem(
+            "All categories",
+            _COMPARE_FILTER_ALL,
+        )
+        self._compare_category_filter_combo.setCurrentIndex(0)
+        self._compare_category_filter_combo.setToolTip(
+            "Actionable drift is the default view. Same-version rows stay hidden until you ask for them."
+        )
+        _configure_combo_box_readability(
+            self._compare_category_filter_combo,
+            minimum_contents_length=18,
+            sample_text="Version mismatch",
+        )
+        self._compare_copy_identity_button = QPushButton("Copy mod name / UniqueID")
+        self._compare_copy_identity_button.setObjectName("compare_copy_identity_button")
+        self._compare_copy_identity_button.setEnabled(False)
+        self._compare_copy_identity_button.setToolTip(
+            "Select a compare row first."
+        )
+        _set_secondary_button_style(self._compare_copy_identity_button)
+        self._compare_category_help_label = QLabel(
+            "Only in real / sandbox means the mod exists on one side only. "
+            "Version mismatch means the same UniqueID exists in both places with different versions. "
+            "Ambiguous match means duplicate folders share one UniqueID, so compare cannot identify one clean match."
+        )
+        self._compare_category_help_label.setObjectName("compare_category_help_label")
+        self._compare_category_help_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._compare_category_help_label)
         self._compare_results_table = QTableWidget(0, 5)
         self._compare_results_table.setObjectName("compare_results_table")
         self._compare_results_table.setHorizontalHeaderLabels(
@@ -376,6 +440,9 @@ class MainWindow(QMainWindow):
         self._compare_results_table.verticalHeader().setVisible(False)
         self._compare_results_table.setAlternatingRowColors(True)
         self._compare_results_table.setSortingEnabled(True)
+        self._compare_results_table.itemSelectionChanged.connect(
+            self._on_compare_selection_changed
+        )
         compare_header = self._compare_results_table.horizontalHeader()
         compare_header.setMinimumSectionSize(64)
         compare_header.setStretchLastSection(False)
@@ -1135,9 +1202,13 @@ class MainWindow(QMainWindow):
         compare_actions_layout.setContentsMargins(0, 0, 0, 0)
         compare_actions_layout.setSpacing(6)
         compare_actions_layout.addWidget(self._compare_real_vs_sandbox_button)
+        compare_actions_layout.addWidget(_context_caption("Show"))
+        compare_actions_layout.addWidget(self._compare_category_filter_combo)
+        compare_actions_layout.addWidget(self._compare_copy_identity_button)
         compare_actions_layout.addStretch(1)
         compare_layout.addWidget(compare_actions_widget)
         compare_layout.addWidget(self._compare_summary_label)
+        compare_layout.addWidget(self._compare_category_help_label)
         self._compare_results_table.setVisible(False)
         compare_layout.addWidget(self._compare_results_table)
         compare_output_group = QGroupBox("Compare detail")
@@ -1156,6 +1227,12 @@ class MainWindow(QMainWindow):
         compare_output_group.setVisible(False)
         compare_layout.addStretch(1)
         self._compare_real_vs_sandbox_button.clicked.connect(self._on_compare_real_and_sandbox)
+        self._compare_category_filter_combo.currentIndexChanged.connect(
+            self._apply_compare_results_filter
+        )
+        self._compare_copy_identity_button.clicked.connect(
+            self._on_copy_compare_row_identity
+        )
         context_tabs.addTab(compare_tab, "Compare")
 
         intake_tab = QWidget()
@@ -2248,6 +2325,26 @@ class MainWindow(QMainWindow):
         self._set_status(
             f"Compare complete: {len(result.entries)} row(s) across real and sandbox Mods."
         )
+
+    def _on_compare_selection_changed(self) -> None:
+        entry = self._selected_compare_entry()
+        has_selection = entry is not None
+        self._compare_copy_identity_button.setEnabled(has_selection)
+        if entry is None:
+            self._compare_copy_identity_button.setToolTip("Select a compare row first.")
+            return
+        self._compare_copy_identity_button.setToolTip(
+            f"Copy {entry.name} ({entry.unique_id}) to the clipboard."
+        )
+
+    def _on_copy_compare_row_identity(self) -> None:
+        entry = self._selected_compare_entry()
+        if entry is None:
+            self._set_status("Select a compare row to copy its mod name and UniqueID.")
+            return
+
+        QApplication.clipboard().setText(f"{entry.name} | {entry.unique_id}")
+        self._set_status(f"Copied compare row identity: {entry.name} ({entry.unique_id}).")
 
     def _on_inspect_zip(self) -> None:
         selected_paths = self._selected_zip_package_paths
@@ -3658,7 +3755,6 @@ class MainWindow(QMainWindow):
         self._on_archive_selection_changed()
 
     def _render_mods_compare_result(self, result: ModsCompareResult) -> None:
-        self._compare_results_table.setVisible(bool(result.entries))
         was_sorting = self._compare_results_table.isSortingEnabled()
         self._compare_results_table.setSortingEnabled(False)
         self._compare_results_table.setRowCount(len(result.entries))
@@ -3667,12 +3763,13 @@ class MainWindow(QMainWindow):
             real_version = entry.real_mod.version if entry.real_mod is not None else "-"
             sandbox_version = entry.sandbox_mod.version if entry.sandbox_mod is not None else "-"
             note_text = entry.note or "-"
-            self._compare_results_table.setItem(row, 0, QTableWidgetItem(entry.name))
-            self._compare_results_table.setItem(
-                row,
-                1,
-                QTableWidgetItem(_mods_compare_state_label(entry.state)),
-            )
+            name_item = QTableWidgetItem(entry.name)
+            name_item.setData(_ROLE_COMPARE_STATE, entry.state)
+            name_item.setData(_ROLE_COMPARE_UNIQUE_ID, entry.unique_id)
+            self._compare_results_table.setItem(row, 0, name_item)
+            state_item = QTableWidgetItem(_mods_compare_state_label(entry.state))
+            state_item.setData(_ROLE_COMPARE_STATE, entry.state)
+            self._compare_results_table.setItem(row, 1, state_item)
             self._compare_results_table.setItem(row, 2, QTableWidgetItem(real_version))
             self._compare_results_table.setItem(row, 3, QTableWidgetItem(sandbox_version))
             note_item = QTableWidgetItem(note_text)
@@ -3680,8 +3777,68 @@ class MainWindow(QMainWindow):
             self._compare_results_table.setItem(row, 4, note_item)
 
         self._compare_results_table.setSortingEnabled(was_sorting)
-        self._compare_summary_label.setText(_mods_compare_summary_text(result))
+        self._apply_compare_results_filter()
         self._compare_summary_label.setToolTip(build_mods_compare_text(result))
+
+    def _apply_compare_results_filter(self) -> None:
+        result = self._current_mods_compare_result
+        table = self._compare_results_table
+        filter_value = self._compare_category_filter_combo.currentData()
+        if result is None:
+            table.setVisible(False)
+            self._compare_copy_identity_button.setEnabled(False)
+            return
+
+        visible_count = 0
+        for row in range(table.rowCount()):
+            item = table.item(row, 0)
+            state = item.data(_ROLE_COMPARE_STATE) if item is not None else None
+            should_show = isinstance(state, str) and _mods_compare_state_matches_filter(
+                state,
+                filter_value if isinstance(filter_value, str) else _COMPARE_FILTER_ACTIONABLE,
+            )
+            table.setRowHidden(row, not should_show)
+            if should_show:
+                visible_count += 1
+
+        if table.currentRow() >= 0 and table.isRowHidden(table.currentRow()):
+            table.clearSelection()
+
+        table.setVisible(bool(result.entries) and visible_count > 0)
+        self._compare_summary_label.setText(
+            _mods_compare_summary_text(
+                result,
+                filter_value=(
+                    filter_value if isinstance(filter_value, str) else _COMPARE_FILTER_ACTIONABLE
+                ),
+                visible_count=visible_count,
+            )
+        )
+        self._on_compare_selection_changed()
+
+    def _selected_compare_entry(self) -> ModsCompareEntry | None:
+        row = self._compare_results_table.currentRow()
+        if row < 0 or self._compare_results_table.isRowHidden(row):
+            return None
+        if not self._compare_results_table.selectedItems():
+            return None
+
+        item = self._compare_results_table.item(row, 0)
+        if item is None:
+            return None
+
+        unique_id = item.data(_ROLE_COMPARE_UNIQUE_ID)
+        if not isinstance(unique_id, str):
+            return None
+
+        result = self._current_mods_compare_result
+        if result is None:
+            return None
+
+        for entry in result.entries:
+            if entry.unique_id == unique_id and entry.name == item.text():
+                return entry
+        return None
 
     def _set_status(self, text: str) -> None:
         self._status_strip_label.setText(text)
@@ -4101,14 +4258,20 @@ class MainWindow(QMainWindow):
 
     def _clear_mods_compare_result(self, *_: object) -> None:
         self._current_mods_compare_result = None
+        self._compare_category_filter_combo.setCurrentIndex(
+            self._compare_category_filter_combo.findData(_COMPARE_FILTER_ACTIONABLE)
+        )
         self._compare_results_table.setRowCount(0)
         self._compare_results_table.setVisible(False)
+        self._compare_results_table.clearSelection()
+        self._compare_copy_identity_button.setEnabled(False)
+        self._compare_copy_identity_button.setToolTip("Select a compare row first.")
         self._set_local_detail_group_visibility(
             getattr(self, "_compare_output_group", None),
             "",
         )
         self._compare_summary_label.setText(
-            "Run compare to see drift between the configured real Mods path and sandbox Mods path."
+            "Run compare to see actionable drift between the configured real Mods path and sandbox Mods path. Same-version rows stay hidden until you ask for them."
         )
         self._compare_summary_label.setToolTip(
             "Run compare after changing either Mods path or archive exclusion path."
@@ -6243,10 +6406,25 @@ def _mods_compare_state_label(state: str) -> str:
     return labels.get(state, state.replace("_", " ").title())
 
 
-def _mods_compare_summary_text(result: ModsCompareResult) -> str:
+def _mods_compare_summary_text(
+    result: ModsCompareResult,
+    *,
+    filter_value: str = _COMPARE_FILTER_ACTIONABLE,
+    visible_count: int | None = None,
+) -> str:
     counts = Counter(entry.state for entry in result.entries)
+    visible_rows_text = ""
+    if visible_count is not None:
+        visible_rows_text = f" Showing {visible_count} row(s) in the current view."
+
     summary = (
-        "Last compare: "
+        _mods_compare_filter_intro_text(
+            result,
+            filter_value=filter_value,
+            visible_count=visible_count,
+        )
+        + visible_rows_text
+        + " Last compare: "
         f"{counts.get('only_in_real', 0)} only in real, "
         f"{counts.get('only_in_sandbox', 0)} only in sandbox, "
         f"{counts.get('same_version', 0)} same version, "
@@ -6259,6 +6437,42 @@ def _mods_compare_summary_text(result: ModsCompareResult) -> str:
     if parse_warning_total:
         summary += f" Additional scan warnings: {parse_warning_total}."
     return summary
+
+
+def _mods_compare_filter_intro_text(
+    result: ModsCompareResult,
+    *,
+    filter_value: str,
+    visible_count: int | None,
+) -> str:
+    if filter_value == _COMPARE_FILTER_ACTIONABLE:
+        if visible_count == 0 and any(entry.state == "same_version" for entry in result.entries):
+            return (
+                "No actionable drift found. Same-version rows are hidden by default; "
+                "choose Same version or All categories to inspect matching rows."
+            )
+        return "Showing actionable drift by default. Same-version rows are hidden until you ask for them."
+    if filter_value == _COMPARE_FILTER_ALL:
+        return "Showing all compare categories."
+    if filter_value == _COMPARE_FILTER_ONLY_IN_REAL:
+        return "Showing only mods found in real Mods but not sandbox Mods."
+    if filter_value == _COMPARE_FILTER_ONLY_IN_SANDBOX:
+        return "Showing only mods found in sandbox Mods but not real Mods."
+    if filter_value == _COMPARE_FILTER_VERSION_MISMATCH:
+        return "Showing version mismatches: same UniqueID, different versions."
+    if filter_value == _COMPARE_FILTER_AMBIGUOUS:
+        return "Showing ambiguous matches: duplicate folders share a UniqueID, so compare cannot pick one clean match."
+    if filter_value == _COMPARE_FILTER_SAME_VERSION:
+        return "Showing same-version rows only."
+    return "Showing compare results."
+
+
+def _mods_compare_state_matches_filter(state: str, filter_value: str) -> bool:
+    if filter_value == _COMPARE_FILTER_ACTIONABLE:
+        return state != "same_version"
+    if filter_value == _COMPARE_FILTER_ALL:
+        return True
+    return state == filter_value
 
 
 def _summarize_details_text(text: str) -> tuple[str, str]:
