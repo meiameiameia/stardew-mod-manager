@@ -1,6 +1,6 @@
 # Roadmap
 
-## Product direction after `1.0.0`
+## Product direction after `1.1.0`
 
 The app is now a local-first Stardew Valley mod workflow manager with a sandbox-first safety model.
 
@@ -16,7 +16,7 @@ It is not trying to become, in the near term:
 - a broad profile or instance manager
 - a broad shell-polish project divorced from workflow value
 
-## Shipped through `1.0.0`
+## Shipped through `1.1.0`
 
 ### Core workflow and safety baseline
 
@@ -69,6 +69,10 @@ Shipped:
   - same version
   - version mismatch
   - ambiguous match for duplicate/unclear UniqueID grouping
+- actionable drift default with same-version rows hidden until explicitly requested
+- category filtering for triage across compare states
+- inline category explanation for version mismatch and ambiguous match
+- copy mod name / UniqueID convenience from the selected compare row
 - compare remains visibility-first in this stage (no compare-driven writes)
 - explicit backup export baseline for local migration/recovery groundwork
 - config-aware backup export baseline for common per-mod config artifacts inside installed Mods trees
@@ -100,23 +104,23 @@ Still paused because post-v1 workflow value is higher than more shell refactor c
 
 ## Post-v1 priorities
 
-### 1. Compare follow-up
-
-- keep the shipped compare view readable and trustworthy as a first-class drift/orientation surface
-- revisit richer compare ergonomics only after the current restore/import and launch baselines settle
-- no compare-driven bulk sync/promotion shortcuts yet
-
-### 2. Restore/import file-level merge follow-up
+### 1. Restore/import file-level merge follow-up
 
 - keep the shipped conflict-resolution baseline folder-oriented and trustworthy
 - do not introduce file-level merge semantics until review, safety, and recovery semantics are explicitly designed
 - no casual overwrite shortcuts
 
-Why this is next after `1.0.0`:
+Why this is next after `1.1.0`:
 
 - restore/import now has a coherent trust chain from export through reviewed conflict-capable execution across both folder and zip bundle artifacts
 - Steam-assisted launch ergonomics are now shipped with a persisted user-controlled toggle
-- compare follow-up is the next visibility-focused convenience area without reopening risky write semantics
+- compare follow-up is now shipped as a read-only drift-orientation improvement without reopening risky write semantics
+
+### 2. Further compare ergonomics only if they remain read-only
+
+- keep compare visibility-first
+- do not introduce compare-driven sync/promotion/archive shortcuts
+- any future compare work should improve orientation speed without changing compare into a write surface
 
 ## Later or deferred
 

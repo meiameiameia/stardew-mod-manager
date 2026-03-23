@@ -20,6 +20,7 @@ from sdvmm.app.shell_service import (
     SCAN_TARGET_SANDBOX_MODS,
     AppShellError,
     AppShellService,
+    build_mods_compare_text,
 )
 from sdvmm.domain.models import (
     AppConfig,
@@ -1814,6 +1815,12 @@ def test_compare_real_and_sandbox_mods_reports_presence_and_version_states(
     assert by_key["sample.mismatch"].sandbox_mod is not None
     assert by_key["sample.mismatch"].real_mod.version == "1.0.0"
     assert by_key["sample.mismatch"].sandbox_mod.version == "2.0.0"
+    assert [entry.state for entry in result.entries] == [
+        "only_in_real",
+        "only_in_sandbox",
+        "version_mismatch",
+        "same_version",
+    ]
 
 
 def test_compare_real_and_sandbox_mods_marks_duplicate_unique_id_as_ambiguous(
@@ -1840,6 +1847,31 @@ def test_compare_real_and_sandbox_mods_marks_duplicate_unique_id_as_ambiguous(
     assert entry.sandbox_mod is not None
     assert entry.note is not None
     assert "real Mods has 2 folders with this UniqueID" in entry.note
+    assert entry.unique_id == "Sample.Duplicate"
+
+
+def test_build_mods_compare_text_includes_category_guide_and_unique_ids(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+
+    _create_mod(real_mods, "MismatchReal", "Sample.Mismatch", version="1.0.0")
+    _create_mod(sandbox_mods, "MismatchSandbox", "Sample.Mismatch", version="2.0.0")
+    _create_mod(real_mods, "DuplicateA", "Sample.Duplicate", version="1.0.0")
+    _create_mod(real_mods, "DuplicateB", "Sample.Duplicate", version="1.1.0")
+
+    result = service.compare_real_and_sandbox_mods(
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+    )
+
+    text = build_mods_compare_text(result)
+
+    assert "Category guide:" in text
+    assert "version mismatch: the same UniqueID exists in both places, but the versions differ." in text
+    assert "ambiguous match: duplicate folders share a UniqueID" in text
+    assert "MismatchReal (Sample.Mismatch)" in text
+    assert "DuplicateA (Sample.Duplicate)" in text
 
 
 def test_launch_game_vanilla_uses_saved_game_path_when_input_empty(

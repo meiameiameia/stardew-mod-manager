@@ -6600,6 +6600,7 @@ def _build_mods_compare_result(
             entries.append(
                 ModsCompareEntry(
                     match_key=key,
+                    unique_id=reference_mod.unique_id,
                     name=reference_mod.name,
                     state="ambiguous_match",
                     real_mod=real_group[0] if real_group else None,
@@ -6626,12 +6627,21 @@ def _build_mods_compare_result(
         entries.append(
             ModsCompareEntry(
                 match_key=key,
+                unique_id=reference_mod.unique_id,
                 name=reference_mod.name,
                 state=state,
                 real_mod=real_mod,
                 sandbox_mod=sandbox_mod,
             )
         )
+
+    entries.sort(
+        key=lambda entry: (
+            _mods_compare_state_sort_rank(entry.state),
+            entry.name.casefold(),
+            entry.unique_id.casefold(),
+        )
+    )
 
     return ModsCompareResult(
         real_mods_path=real_mods_path,
@@ -6674,6 +6684,20 @@ def _mods_compare_state_label(state: str) -> str:
     if state == "ambiguous_match":
         return "ambiguous match"
     return state
+
+
+def _mods_compare_state_sort_rank(state: str) -> int:
+    if state == "only_in_real":
+        return 0
+    if state == "only_in_sandbox":
+        return 1
+    if state == "version_mismatch":
+        return 2
+    if state == "ambiguous_match":
+        return 3
+    if state == "same_version":
+        return 4
+    return 5
 
 
 def _require_canonical_unique_id(unique_id: str) -> str:
@@ -6958,6 +6982,17 @@ def build_mods_compare_text(result: ModsCompareResult) -> str:
             f"Additional scan warnings outside direct compare rows: {parse_warning_total}"
         )
 
+    lines.extend(
+        (
+            "",
+            "Category guide:",
+            "- only in real / only in sandbox: the mod exists on one side only.",
+            "- version mismatch: the same UniqueID exists in both places, but the versions differ.",
+            "- ambiguous match: duplicate folders share a UniqueID, so compare cannot identify one clean match.",
+            "- same version: the same UniqueID and version exist in both places.",
+        )
+    )
+
     lines.extend(("", "Compared rows:"))
     if not result.entries:
         lines.append("- No installed mods were found in either location.")
@@ -6968,7 +7003,7 @@ def build_mods_compare_text(result: ModsCompareResult) -> str:
         sandbox_version = entry.sandbox_mod.version if entry.sandbox_mod is not None else "-"
         note = f" | {entry.note}" if entry.note else ""
         lines.append(
-            f"- {entry.name} [{_mods_compare_state_label(entry.state)}] "
+            f"- {entry.name} ({entry.unique_id}) [{_mods_compare_state_label(entry.state)}] "
             f"real={real_version} sandbox={sandbox_version}{note}"
         )
     return "\n".join(lines)

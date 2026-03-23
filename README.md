@@ -98,7 +98,16 @@ Live Mods safety expectations:
   - archive-aware replace on live-target conflicts (no blind overwrite)
 - **Real vs sandbox compare view**
   - dedicated compare tab for drift visibility before sync/promotion decisions
-  - clear first-pass categories: only in real, only in sandbox, same version, version mismatch, ambiguous match
+  - compare now opens on actionable drift by default, with same-version rows hidden until explicitly requested
+  - category filtering for:
+    - only in real
+    - only in sandbox
+    - version mismatch
+    - ambiguous match
+    - same version
+    - all categories
+  - built-in compare category explanation for version mismatch and ambiguous match
+  - copy mod name / UniqueID convenience from the selected compare row
   - compare is visibility-first in this baseline (no compare-driven write actions)
 - **Backup bundle inspection baseline**
   - explicit export-first backup bundle creation for migration/recovery groundwork
@@ -218,7 +227,7 @@ You can still run focused suites when iterating:
 .\.venv\Scripts\python.exe -m pytest tests\unit\test_main_window_gui_regression.py -q
 ```
 
-### 4) Build Windows portable folder (`1.0.0`)
+### 4) Build Windows portable folder (`1.1.0`)
 
 Packaging baseline in this repo uses **PyInstaller one-folder** output because it is the smallest practical Windows desktop packaging path here without introducing installer/signing work.
 
@@ -237,13 +246,13 @@ Build the portable folder:
 Output folder:
 
 ```text
-dist\stardew-mod-manager-1.0.0-windows-portable\
+dist\stardew-mod-manager-1.1.0-windows-portable\
 ```
 
 Launch the packaged app:
 
 ```powershell
-.\dist\stardew-mod-manager-1.0.0-windows-portable\Stardew Mod Manager.exe
+.\dist\stardew-mod-manager-1.1.0-windows-portable\Stardew Mod Manager.exe
 ```
 
 Current caveats:
@@ -264,8 +273,8 @@ Current caveats:
 - restore/import now handles reviewed version/content conflicts through archive-aware mod-folder replacement; file-level merge behavior is still deferred
 - Steam prelaunch help is now shipped as best-effort launch assistance with a persisted user-controlled toggle; it does not do background Steam management or retry loops
 - near-term usability priorities are now:
-  - compare follow-up after the current restore/import and Steam-assisted launch baselines
   - restore/import file-level merge follow-up only if safety/review semantics are explicitly designed
+  - further compare ergonomics only if they stay read-only and visibility-first
 - downloader automation, profile systems, and broad UI polish remain lower priority than restore/import trust work
 
 ## Data and persistence notes
