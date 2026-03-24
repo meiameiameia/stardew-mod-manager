@@ -40,3 +40,6 @@ artifacts/
 
 # Generated local release/audit archives
 /stardew-mod-manager-*.zip
+
+# Local internal prototypes / mockups kept outside the public repo surface
+/docs/internal/
