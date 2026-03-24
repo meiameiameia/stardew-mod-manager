@@ -61,8 +61,6 @@ The build script produces:
 dist\cinderleaf-1.1.1-windows-portable\
 ```
 
-The GitHub release workflow then zips that folder for distribution.
-
 ## Current limitations
 
 - downloads are still manual
