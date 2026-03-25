@@ -97,4 +97,5 @@ This repository is licensed under **PolyForm Noncommercial 1.0.0**. You can use,
 
 - [CHANGELOG](CHANGELOG.md)
 - [Feedback and issue notes](CONTRIBUTING.md)
+- [Release checklist](RELEASE_CHECKLIST.md)
 - [License](LICENSE)
