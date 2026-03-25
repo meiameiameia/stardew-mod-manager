@@ -2499,8 +2499,8 @@ def test_main_window_install_review_surface_onboarding_copy_is_user_facing(
     assert intro_label is not None
     assert execute_help_label is not None
     assert review_summary_label is not None
-    assert "confirm where it goes" in intro_label.text()
-    assert "Review install before Apply install" in intro_label.text()
+    assert "check destination and write summary" in intro_label.text()
+    assert "apply only when the plan looks right" in intro_label.text()
     assert "Review install is read-only." in execute_help_label.text()
     assert "Apply install writes to the selected destination" in execute_help_label.text()
     assert (
@@ -4450,10 +4450,12 @@ def test_main_window_plan_install_surface_has_expected_structure(
 
     plan_layout = plan_content.layout()
     intro_label = main_window.findChild(QLabel, "plan_install_intro_label")
+    review_state_label = main_window.findChild(QLabel, "plan_install_state_label")
     review_top_row = main_window.findChild(QWidget, "plan_install_top_row")
     review_middle_row = main_window.findChild(QWidget, "plan_install_middle_row")
     assert plan_layout is not None
     assert intro_label is not None
+    assert review_state_label is not None
     assert review_top_row is not None
     assert review_middle_row is not None
     assert safety_panel_group.parentWidget() is review_top_row
@@ -4465,7 +4467,8 @@ def test_main_window_plan_install_surface_has_expected_structure(
     assert isinstance(review_top_row_layout, QHBoxLayout)
     assert review_top_row_layout.itemAt(0).widget() is staged_package_group
     assert review_top_row_layout.itemAt(1).widget() is safety_panel_group
-    assert plan_layout.indexOf(intro_label) < plan_layout.indexOf(review_top_row)
+    assert plan_layout.indexOf(intro_label) < plan_layout.indexOf(review_state_label)
+    assert plan_layout.indexOf(review_state_label) < plan_layout.indexOf(review_top_row)
     assert plan_layout.indexOf(review_top_row) < plan_layout.indexOf(destination_group)
     assert plan_layout.indexOf(destination_group) < plan_layout.indexOf(review_middle_row)
     assert plan_layout.indexOf(review_middle_row) < plan_layout.indexOf(review_output_group)
@@ -4513,6 +4516,105 @@ def test_main_window_mods_workspace_uses_compact_action_band_above_inventory(
     assert action_band is not None
     assert inventory_tabs is not None
     assert action_band.parentWidget() is inventory_tabs.widget(0)
+
+
+def test_main_window_workflow_state_labels_exist(main_window: MainWindow) -> None:
+    assert main_window.findChild(QLabel, "mods_inventory_state_label") is main_window._mods_inventory_state_label
+    assert (
+        main_window.findChild(QLabel, "discovery_results_state_label")
+        is main_window._discovery_results_state_label
+    )
+    assert (
+        main_window.findChild(QLabel, "packages_workspace_state_label")
+        is main_window._packages_workspace_state_label
+    )
+    assert (
+        main_window.findChild(QLabel, "plan_install_state_label")
+        is main_window._plan_install_state_label
+    )
+    assert (
+        main_window.findChild(QLabel, "archive_state_hint_label")
+        is main_window._archive_state_hint_label
+    )
+
+
+def test_main_window_workflow_state_labels_reflect_idle_and_ready_states(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    mods_label = main_window._mods_inventory_state_label
+    discovery_label = main_window._discovery_results_state_label
+    packages_label = main_window._packages_workspace_state_label
+    review_label = main_window._plan_install_state_label
+
+    assert "Scan the selected Mods source" in mods_label.text()
+    assert "Search by mod name" in discovery_label.text()
+    assert "Choose zip files or start intake watch" in packages_label.text()
+    assert "No package staged yet" in review_label.text()
+
+    inventory = _mods_inventory(
+        _installed_mod_for_update_ui(
+            name="Alpha Mod",
+            unique_id="Sample.Alpha",
+            folder_name="AlphaMod",
+        )
+    )
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+    assert "Run Check for updates" in mods_label.text()
+
+    main_window._discovery_query_input.setText("SMAPI")
+    main_window._refresh_workflow_surface_states()
+    qapp.processEvents()
+    assert "Run Find mods to search this query" in discovery_label.text()
+
+    main_window._set_selected_zip_package_paths(
+        (Path(r"C:\Downloads\AlphaPack.zip"),),
+        current_path=Path(r"C:\Downloads\AlphaPack.zip"),
+    )
+    qapp.processEvents()
+    assert "Inspect them" in packages_label.text()
+
+    main_window._apply_install_plan_review(_sandbox_install_plan())
+    qapp.processEvents()
+    assert "Install review is ready" in review_label.text()
+
+
+def test_main_window_workflow_state_labels_show_running_activity(
+    main_window: MainWindow,
+) -> None:
+    main_window._active_operation_name = "Scan"
+    main_window._refresh_workflow_surface_states()
+    assert "Scanning the selected Mods source" in main_window._mods_inventory_state_label.text()
+
+    main_window._active_operation_name = "Discovery search"
+    main_window._refresh_workflow_surface_states()
+    assert "Searching discovery sources" in main_window._discovery_results_state_label.text()
+
+    main_window._active_operation_name = "Archive refresh"
+    main_window._refresh_workflow_surface_states()
+    assert "Refreshing archive entries" in main_window._archive_empty_state_label.text()
+    assert "Restore and delete stay unavailable" in main_window._archive_state_hint_label.text()
+
+    main_window._active_operation_name = None
+    main_window._refresh_workflow_surface_states()
+
+
+def test_main_window_archive_state_hint_updates_for_selection(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    entry = _archived_entry("AlphaMod", "AlphaMod")
+    main_window._archived_entries = (entry,)
+    main_window._render_archive_entries((entry,))
+    qapp.processEvents()
+
+    assert "Select an entry to restore" in main_window._archive_state_hint_label.text()
+
+    main_window._archive_table.selectRow(0)
+    qapp.processEvents()
+
+    assert "Archive entry selected" in main_window._archive_state_hint_label.text()
 
 
 def test_main_window_plan_install_safety_panel_updates_for_real_target(
@@ -4847,7 +4949,7 @@ def test_main_window_packages_intake_shows_explicit_single_package_review_rule(
 ) -> None:
     assert (
         main_window._zip_staging_rule_label.text()
-        == "Choose as many zip packages as you want. After inspection, pick one package at a time for Review."
+        == "Inspect first, then keep one package staged for Review at a time."
     )
 
 

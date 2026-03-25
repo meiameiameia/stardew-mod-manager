@@ -318,6 +318,18 @@ class MainWindow(QMainWindow):
             "inventory_update_guidance_label"
         )
         self._inventory_update_guidance_label.setWordWrap(True)
+        self._mods_inventory_state_label = QLabel(
+            "No inventory loaded yet. Scan the selected Mods source to populate the table."
+        )
+        self._mods_inventory_state_label.setObjectName("mods_inventory_state_label")
+        self._mods_inventory_state_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._mods_inventory_state_label)
+        self._discovery_results_state_label = QLabel(
+            "Search by mod name, UniqueID, or author to build a source list."
+        )
+        self._discovery_results_state_label.setObjectName("discovery_results_state_label")
+        self._discovery_results_state_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._discovery_results_state_label)
         self._inventory_blocked_detail_label = QLabel("")
         self._inventory_blocked_detail_label.setObjectName(
             "inventory_update_blocked_detail_label"
@@ -764,13 +776,27 @@ class MainWindow(QMainWindow):
         self._zip_selection_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._zip_selection_summary_label)
         self._zip_staging_rule_label = QLabel(
-            "Choose as many zip packages as you want. After inspection, pick one package at a time for Review."
+            "Inspect first, then keep one package staged for Review at a time."
         )
         self._zip_staging_rule_label.setObjectName(
             "packages_intake_staging_rule_label"
         )
         self._zip_staging_rule_label.setWordWrap(True)
         _set_auxiliary_label_style(self._zip_staging_rule_label)
+        self._packages_workspace_state_label = QLabel(
+            "Choose zip files or start intake watch to feed Review."
+        )
+        self._packages_workspace_state_label.setObjectName(
+            "packages_workspace_state_label"
+        )
+        self._packages_workspace_state_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._packages_workspace_state_label)
+        self._plan_install_state_label = QLabel(
+            "No package staged yet. Choose one in Packages to open Review."
+        )
+        self._plan_install_state_label.setObjectName("plan_install_state_label")
+        self._plan_install_state_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._plan_install_state_label)
         self._backup_bundle_inspection_summary_label = QLabel(
             "Inspect a backup bundle to review what it contains before restoring anything."
         )
@@ -791,6 +817,12 @@ class MainWindow(QMainWindow):
         self._active_backup_bundle_label.setObjectName("setup_active_backup_bundle_label")
         self._active_backup_bundle_label.setWordWrap(True)
         _set_auxiliary_label_style(self._active_backup_bundle_label)
+        self._archive_state_hint_label = QLabel(
+            "Archived entries will appear here after archive, recovery, or restore-safe actions."
+        )
+        self._archive_state_hint_label.setObjectName("archive_state_hint_label")
+        self._archive_state_hint_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._archive_state_hint_label)
 
         self._status_strip_group = GlobalStatusStrip()
         self._status_strip_label = self._status_strip_group.current_status_label
@@ -895,6 +927,7 @@ class MainWindow(QMainWindow):
         self._build_layout()
         self._refresh_intake_selector()
         self._load_startup_state()
+        self._refresh_workflow_surface_states()
 
     def _build_page_header(
         self,
@@ -1088,6 +1121,7 @@ class MainWindow(QMainWindow):
         inventory_filter_row.addWidget(self._mods_update_actionability_filter_combo)
         inventory_filter_row.addWidget(self._mods_filter_stats_label)
         table_layout.addLayout(inventory_filter_row)
+        table_layout.addWidget(self._mods_inventory_state_label)
         table_layout.addWidget(self._mods_table, 1)
 
         inspector_panel = QGroupBox("Selected mod")
@@ -1373,6 +1407,7 @@ class MainWindow(QMainWindow):
             discovery_query_input=self._discovery_query_input,
             discovery_filter_input=self._discovery_filter_input,
             discovery_filter_stats_label=self._discovery_filter_stats_label,
+            discovery_results_state_label=self._discovery_results_state_label,
             discovery_table=self._discovery_table,
             discovery_search_button=self._search_mods_button,
             open_discovered_button=open_discovered_button,
@@ -1609,18 +1644,19 @@ class MainWindow(QMainWindow):
         detected_layout.setHorizontalSpacing(8)
         detected_layout.setVerticalSpacing(4)
         detected_layout.setColumnStretch(1, 1)
-        detected_layout.addWidget(QLabel("Filter"), 0, 0)
-        detected_layout.addWidget(self._intake_filter_input, 0, 1, 1, 2)
-        detected_layout.addWidget(self._intake_filter_stats_label, 0, 3)
-        detected_layout.addWidget(QLabel("Package to review"), 1, 0)
-        detected_layout.addWidget(self._intake_result_combo, 1, 1, 1, 2)
+        detected_layout.addWidget(self._packages_workspace_state_label, 0, 0, 1, 4)
+        detected_layout.addWidget(QLabel("Filter"), 1, 0)
+        detected_layout.addWidget(self._intake_filter_input, 1, 1, 1, 2)
+        detected_layout.addWidget(self._intake_filter_stats_label, 1, 3)
+        detected_layout.addWidget(QLabel("Package to review"), 2, 0)
+        detected_layout.addWidget(self._intake_result_combo, 2, 1, 1, 2)
         review_flow_label = QLabel(
-            "Current selection becomes the Review target automatically. Use Review to inspect the install before writing files."
+            "The current selection becomes the Review target automatically. Open Review before writing files."
         )
         review_flow_label.setObjectName("packages_intake_review_flow_label")
         review_flow_label.setWordWrap(True)
         _set_auxiliary_label_style(review_flow_label)
-        detected_layout.addWidget(review_flow_label, 2, 0, 1, 4)
+        detected_layout.addWidget(review_flow_label, 3, 0, 1, 4)
         self._plan_selected_intake_button.clicked.connect(self._on_plan_selected_intake)
         self._stage_update_intake_button.clicked.connect(self._on_stage_selected_intake_update)
         _set_secondary_button_style(self._stage_update_intake_button)
@@ -1631,7 +1667,7 @@ class MainWindow(QMainWindow):
         detected_actions_layout.setSpacing(6)
         detected_actions_layout.addStretch(1)
         detected_actions_layout.addWidget(self._stage_update_intake_button)
-        detected_layout.addWidget(detected_actions_widget, 3, 0, 1, 4)
+        detected_layout.addWidget(detected_actions_widget, 4, 0, 1, 4)
         intake_layout.addWidget(detected_group)
         packages_output_group = QGroupBox("Packages detail")
         packages_output_group.setObjectName("packages_output_group")
@@ -1676,6 +1712,7 @@ class MainWindow(QMainWindow):
         archive_tab = ArchiveTabSurface(
             archive_filter_input=self._archive_filter_input,
             archive_filter_stats_label=self._archive_filter_stats_label,
+            archive_state_hint_label=self._archive_state_hint_label,
             archive_table=self._archive_table,
             refresh_archives_button=self._refresh_archives_button,
             restore_archived_button=self._restore_archived_button,
@@ -1732,6 +1769,7 @@ class MainWindow(QMainWindow):
             install_target_combo=self._install_target_combo,
             overwrite_checkbox=self._overwrite_checkbox,
             install_archive_label=self._install_archive_label,
+            review_state_label=self._plan_install_state_label,
             plan_install_button=plan_install_button,
             run_install_button=run_install_button,
             review_output_box=self._review_output_box,
@@ -1773,7 +1811,7 @@ class MainWindow(QMainWindow):
             staged_package_layout.addWidget(self._staged_package_label)
             review_top_row_layout.addWidget(staged_package_group, 3)
             review_top_row_layout.addWidget(safety_group, 2)
-            plan_tab_layout.insertWidget(1, review_top_row)
+            plan_tab_layout.insertWidget(2, review_top_row)
 
             review_middle_row = QWidget()
             review_middle_row.setObjectName("plan_install_middle_row")
@@ -1807,7 +1845,7 @@ class MainWindow(QMainWindow):
             review_middle_row_layout.addWidget(plan_facts_group, 2)
             review_middle_row_layout.addWidget(plan_review_summary_group, 3)
             review_middle_row_layout.addWidget(plan_tab.execute_group, 2)
-            plan_tab_layout.insertWidget(3, review_middle_row)
+            plan_tab_layout.insertWidget(4, review_middle_row)
 
         review_page = self._build_page_shell(
             object_name="review_workspace_page",
@@ -2841,6 +2879,7 @@ class MainWindow(QMainWindow):
             )
         )
         self._set_status(review.message)
+        self._refresh_workflow_surface_states()
 
     def _refresh_install_operation_selector(self) -> None:
         selected_before = self._selected_install_operation()
@@ -3859,6 +3898,7 @@ class MainWindow(QMainWindow):
         has_selection = self._selected_archive_entry() is not None
         self._restore_archived_button.setEnabled(has_selection)
         self._delete_archived_button.setEnabled(has_selection)
+        self._refresh_workflow_surface_states()
 
     def _refresh_archived_entries_after_change(self) -> None:
         try:
@@ -3907,6 +3947,7 @@ class MainWindow(QMainWindow):
             self._set_status(
                 "Downloads watcher started. Watching for new zip files."
             )
+            self._refresh_workflow_surface_states()
             return
 
         new_correlations = self._shell_service.correlate_intakes_with_updates(
@@ -3928,12 +3969,14 @@ class MainWindow(QMainWindow):
             update_output=False,
             update_status=True,
         )
+        self._refresh_workflow_surface_states()
 
     def _on_stop_watch(self) -> None:
         self._watch_timer.stop()
         self._watch_status_label.setText("Stopped")
         self._watch_status_label.setToolTip(self._watch_sources_tooltip())
         self._set_status("Downloads watcher stopped.")
+        self._refresh_workflow_surface_states()
 
     def _on_watch_tick(self) -> None:
         try:
@@ -4022,6 +4065,7 @@ class MainWindow(QMainWindow):
         )
         self._refresh_detected_intakes_for_current_inventory()
         self._refresh_discovery_correlations()
+        self._refresh_workflow_surface_states()
 
     def _apply_update_report(self, report: ModUpdateReport) -> None:
         if self._current_inventory is None:
@@ -4068,6 +4112,7 @@ class MainWindow(QMainWindow):
             name_item.setData(_ROLE_UPDATE_BLOCK_REASON, blocked_reason)
         self._mods_table.setSortingEnabled(was_sorting)
         self._apply_mods_filter()
+        self._refresh_workflow_surface_states()
 
     def _render_discovery_results(
         self,
@@ -4104,6 +4149,7 @@ class MainWindow(QMainWindow):
 
         self._discovery_table.setSortingEnabled(was_sorting)
         self._apply_discovery_filter()
+        self._refresh_workflow_surface_states()
 
     def _render_archive_entries(self, entries: tuple[ArchivedModEntry, ...]) -> None:
         has_entries = bool(entries)
@@ -4132,6 +4178,7 @@ class MainWindow(QMainWindow):
         self._archive_table.setSortingEnabled(was_sorting)
         self._apply_archive_filter()
         self._on_archive_selection_changed()
+        self._refresh_workflow_surface_states()
 
     def _render_mods_compare_result(self, result: ModsCompareResult) -> None:
         was_sorting = self._compare_results_table.isSortingEnabled()
@@ -4223,6 +4270,223 @@ class MainWindow(QMainWindow):
         self._status_strip_label.setText(text)
         self._status_strip_label.setToolTip(text)
 
+    def _refresh_workflow_surface_states(self) -> None:
+        self._refresh_mods_workspace_state()
+        self._refresh_discovery_workspace_state()
+        self._refresh_packages_workspace_state()
+        self._refresh_review_workspace_state()
+        self._refresh_compare_workspace_state()
+        self._refresh_archive_workspace_state()
+
+    def _refresh_mods_workspace_state(self) -> None:
+        visible_count = _visible_table_row_count(self._mods_table)
+        total_count = self._mods_table.rowCount()
+        active_operation = self._active_operation_name
+        if active_operation == "Scan":
+            _set_feedback_label_state(
+                self._mods_inventory_state_label,
+                "active",
+                "Scanning the selected Mods source. Inventory rows will appear here when the scan completes.",
+            )
+            return
+        if active_operation == "Update check":
+            _set_feedback_label_state(
+                self._mods_inventory_state_label,
+                "active",
+                "Checking remote metadata and update states for the current inventory.",
+            )
+            return
+        if total_count == 0:
+            _set_feedback_label_state(
+                self._mods_inventory_state_label,
+                "empty",
+                "No inventory loaded yet. Scan the selected Mods source to populate the table.",
+            )
+            return
+        if visible_count == 0:
+            _set_feedback_label_state(
+                self._mods_inventory_state_label,
+                "muted",
+                "No installed mods match the current filter. Clear or relax the filter to bring rows back into view.",
+            )
+            return
+        if self._current_update_report is None:
+            _set_feedback_label_state(
+                self._mods_inventory_state_label,
+                "ready",
+                f"{visible_count} installed mod(s) ready. Run Check for updates to unlock remote guidance and source-page actions.",
+            )
+            return
+        _set_feedback_label_state(
+            self._mods_inventory_state_label,
+            "ready",
+            f"{visible_count} installed mod(s) visible. Select a row to inspect guidance, sync to sandbox, or open its source page when actionable.",
+        )
+
+    def _refresh_discovery_workspace_state(self) -> None:
+        active_operation = self._active_operation_name
+        if active_operation == "Discovery search":
+            _set_feedback_label_state(
+                self._discovery_results_state_label,
+                "active",
+                "Searching discovery sources. Results will land here when the query completes.",
+            )
+            return
+        if self._current_discovery_result is None:
+            query_text = self._discovery_query_input.text().strip()
+            message = (
+                "Search by mod name, UniqueID, or author to build a source list."
+                if not query_text
+                else "Run Find mods to search this query and build a source list."
+            )
+            _set_feedback_label_state(
+                self._discovery_results_state_label,
+                "empty",
+                message,
+            )
+            return
+        visible_count = _visible_table_row_count(self._discovery_table)
+        total_count = self._discovery_table.rowCount()
+        if total_count == 0:
+            _set_feedback_label_state(
+                self._discovery_results_state_label,
+                "muted",
+                "No results landed for this query. Try a broader name, UniqueID, or author search.",
+            )
+            return
+        if visible_count == 0:
+            _set_feedback_label_state(
+                self._discovery_results_state_label,
+                "muted",
+                "No discovery rows match the current filter. Clear the filter to review the full result set.",
+            )
+            return
+        _set_feedback_label_state(
+            self._discovery_results_state_label,
+            "ready",
+            f"{visible_count} discovery result(s) ready. Select one to open its page and continue the workflow through Packages or Review.",
+        )
+
+    def _refresh_packages_workspace_state(self) -> None:
+        selected_count = len(self._selected_zip_package_paths)
+        has_detected_intakes = bool(self._detected_intakes)
+        has_inspection = self._package_inspection_batch_result is not None
+        watch_active = self._watch_timer.isActive()
+        if watch_active and not has_detected_intakes and not has_inspection:
+            _set_feedback_label_state(
+                self._packages_workspace_state_label,
+                "active",
+                "Watcher is running. New zip packages will appear here automatically as they land in watched folders.",
+            )
+            return
+        if has_inspection:
+            _set_feedback_label_state(
+                self._packages_workspace_state_label,
+                "ready",
+                "Inspection is ready. Keep the current package staged for Review, or choose a detected package below if you want a different target.",
+            )
+            return
+        if has_detected_intakes:
+            _set_feedback_label_state(
+                self._packages_workspace_state_label,
+                "ready",
+                "Detected packages are ready. Choose one as the current Review target, or use Review as update when it clearly matches installed mods.",
+            )
+            return
+        if selected_count > 0:
+            _set_feedback_label_state(
+                self._packages_workspace_state_label,
+                "muted",
+                "Zip packages are selected. Inspect them to confirm what is safe to review before staging anything for install.",
+            )
+            return
+        _set_feedback_label_state(
+            self._packages_workspace_state_label,
+            "empty",
+            "Choose zip files or start intake watch to feed Review.",
+        )
+
+    def _refresh_review_workspace_state(self) -> None:
+        if self._pending_install_plan is not None:
+            _set_feedback_label_state(
+                self._plan_install_state_label,
+                "ready",
+                "Install review is ready. Check destination, replace behavior, and write summary, then Apply install when the plan looks right.",
+            )
+            return
+        package_path = self._zip_path_input.text().strip()
+        if package_path:
+            _set_feedback_label_state(
+                self._plan_install_state_label,
+                "muted",
+                "A package is staged for review. Use Review install to generate the write summary before applying anything.",
+            )
+            return
+        _set_feedback_label_state(
+            self._plan_install_state_label,
+            "empty",
+            "No package staged yet. Choose one in Packages to open Review.",
+        )
+
+    def _refresh_compare_workspace_state(self) -> None:
+        if self._active_operation_name == "Compare real vs sandbox":
+            _set_feedback_label_state(
+                self._compare_summary_label,
+                "active",
+                "Comparing configured real Mods against sandbox Mods. The drift table will update when the read-only check completes.",
+            )
+            return
+        if self._current_mods_compare_result is None:
+            _set_feedback_label_state(
+                self._compare_summary_label,
+                "empty",
+                "Run compare to see actionable drift between the configured real Mods path and sandbox Mods path.",
+            )
+            return
+        _set_feedback_label_state(
+            self._compare_summary_label,
+            "ready",
+            self._compare_summary_label.text(),
+        )
+
+    def _refresh_archive_workspace_state(self) -> None:
+        if self._active_operation_name == "Archive refresh":
+            _set_feedback_label_state(
+                self._archive_empty_state_label,
+                "active",
+                "Refreshing archive entries from real and sandbox workflows.",
+            )
+            _set_feedback_label_state(
+                self._archive_state_hint_label,
+                "active",
+                "Restore and delete stay unavailable until the refreshed list lands and you select an entry.",
+            )
+            return
+        if not self._archived_entries:
+            _set_feedback_label_state(
+                self._archive_empty_state_label,
+                "empty",
+                "No archived entries yet. Refresh archive list after archive or recovery activity.",
+            )
+            _set_feedback_label_state(
+                self._archive_state_hint_label,
+                "muted",
+                "Archived entries will appear here after archive, recovery, or restore-safe actions.",
+            )
+            return
+        if self._selected_archive_entry() is None:
+            _set_feedback_label_state(
+                self._archive_state_hint_label,
+                "muted",
+                "Archive list is ready. Select an entry to restore it to its target or delete the archived copy explicitly.",
+            )
+            return
+        _set_feedback_label_state(
+            self._archive_state_hint_label,
+            "ready",
+            "Archive entry selected. Restore returns it to its target, while delete permanently removes the archived copy.",
+        )
+
     def _run_background_operation(
         self,
         *,
@@ -4246,6 +4510,7 @@ class MainWindow(QMainWindow):
         self._active_operation_name = operation_name
         self._operation_state_label.setText(f"Running: {running_label}")
         self._set_background_actions_enabled(False)
+        self._refresh_workflow_surface_states()
         self._set_status(started_status)
         QApplication.processEvents()
 
@@ -4313,6 +4578,7 @@ class MainWindow(QMainWindow):
         self._set_background_actions_enabled(True)
         self._refresh_restore_import_execution_state()
         self._on_archive_selection_changed()
+        self._refresh_workflow_surface_states()
         pending_callback = self._pending_post_operation_callback
         self._pending_post_operation_callback = None
         if success and pending_callback is not None:
@@ -4693,6 +4959,7 @@ class MainWindow(QMainWindow):
         self._compare_summary_label.setToolTip(
             "Run compare after changing either Mods path or archive exclusion path."
         )
+        self._refresh_workflow_surface_states()
 
     def _set_plan_install_output_text(self, text: str) -> None:
         self._findings_box = self._review_output_box
@@ -4719,6 +4986,7 @@ class MainWindow(QMainWindow):
         self._package_inspection_result_box.setPlainText(text or "")
         self._package_inspection_result_group.setVisible(has_text)
         self._refresh_stage_package_action_state()
+        self._refresh_workflow_surface_states()
         self._refresh_responsive_panel_bounds()
 
     def _clear_package_inspection_results(self) -> None:
@@ -4769,6 +5037,7 @@ class MainWindow(QMainWindow):
             self._show_selected_package_inspection_result(preferred_index)
         else:
             self._clear_package_inspection_results()
+        self._refresh_workflow_surface_states()
 
     def _show_selected_package_inspection_result(self, index: int) -> None:
         entry = self._package_inspection_entry_at(index)
@@ -4809,6 +5078,7 @@ class MainWindow(QMainWindow):
                 "No zip packages chosen yet. Choose zip files to start review."
             )
             self._zip_selection_summary_label.setToolTip("")
+            self._refresh_workflow_surface_states()
             return
 
         package_names = [path.name for path in self._selected_zip_package_paths]
@@ -4818,12 +5088,14 @@ class MainWindow(QMainWindow):
                 f"1 zip package chosen: {package_names[0]}"
             )
             self._zip_selection_summary_label.setToolTip(package_list)
+            self._refresh_workflow_surface_states()
             return
 
         self._zip_selection_summary_label.setText(
             f"{selected_count} zip packages chosen for inspection."
         )
         self._zip_selection_summary_label.setToolTip(package_list)
+        self._refresh_workflow_surface_states()
 
     def _configured_watch_path_texts(self) -> tuple[str, ...]:
         configured_paths: list[str] = []
@@ -4907,6 +5179,7 @@ class MainWindow(QMainWindow):
         self._set_plan_review_summary_text(_NO_PLAN_REVIEW_SUMMARY_TEXT)
         self._set_plan_review_explanation_text(_NO_PLAN_REVIEW_EXPLANATION_TEXT)
         self._set_plan_facts_text(_NO_PLAN_FACTS_TEXT)
+        self._refresh_workflow_surface_states()
 
     def _invalidate_restore_import_plan(self, *_: object) -> None:
         self._clear_restore_import_plan_state(reset_summary=True)
@@ -5590,6 +5863,7 @@ class MainWindow(QMainWindow):
             shown_count=visible_count,
             total_count=self._discovery_table.rowCount(),
         )
+        self._refresh_workflow_surface_states()
 
     def _apply_archive_filter(self, *_: object) -> None:
         filter_text = self._archive_filter_input.text()
@@ -5608,6 +5882,7 @@ class MainWindow(QMainWindow):
             shown_count=visible_count,
             total_count=self._archive_table.rowCount(),
         )
+        self._refresh_workflow_surface_states()
 
     def _selected_archive_entry(self) -> ArchivedModEntry | None:
         row = self._archive_table.currentRow()
@@ -5757,6 +6032,7 @@ class MainWindow(QMainWindow):
                 shown_count=0,
                 total_count=0,
             )
+            self._refresh_workflow_surface_states()
             return
 
         filter_text = self._intake_filter_input.text()
@@ -5800,6 +6076,7 @@ class MainWindow(QMainWindow):
                 shown_count=0,
                 total_count=len(self._detected_intakes),
             )
+            self._refresh_workflow_surface_states()
             return
 
         selected_after = self._intake_result_combo.findData(selected_before)
@@ -5813,6 +6090,7 @@ class MainWindow(QMainWindow):
             shown_count=visible_count,
             total_count=len(self._detected_intakes),
         )
+        self._refresh_workflow_surface_states()
 
     def _selected_intake_index(self) -> int:
         value = self._intake_result_combo.currentData()
@@ -5888,10 +6166,12 @@ class MainWindow(QMainWindow):
             self._stage_update_intake_button.setToolTip(
                 "Review this detected package as an update and preselect archive-aware replace."
             )
+            self._refresh_workflow_surface_states()
             return
         self._stage_update_intake_button.setToolTip(
             "Select a detected package that clearly replaces an installed mod to review it as an update."
         )
+        self._refresh_workflow_surface_states()
 
     def _refresh_staged_package_preview(self) -> None:
         package_path = self._zip_path_input.text().strip()
@@ -6672,6 +6952,18 @@ def _section_label(text: str) -> QLabel:
     label = QLabel(text)
     _set_section_label_style(label)
     return label
+
+
+def _set_feedback_label_state(label: QLabel, tone: str, text: str) -> None:
+    label.setText(text)
+    label.setToolTip(text)
+    label.setProperty("feedbackTone", tone)
+    label.style().unpolish(label)
+    label.style().polish(label)
+
+
+def _visible_table_row_count(table: QTableWidget) -> int:
+    return sum(1 for row in range(table.rowCount()) if not table.isRowHidden(row))
 
 
 def _set_primary_button_style(button: QPushButton) -> None:
