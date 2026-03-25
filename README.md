@@ -6,7 +6,7 @@
 
 Current stable portable release: **1.1.3**
 
-## Why Cinderleaf
+## Why use it
 
 - review installs before any write happens
 - keep sandbox work separate from live `Mods`
@@ -14,21 +14,19 @@ Current stable portable release: **1.1.3**
 - export backup bundles and inspect/plan restore work before execution
 - preserve reversible workflows with archive and recovery support
 
-## Real UI
+## Screenshots
 
-![Cinderleaf full window](.github/screenshots/full-window-1.1.1.png)
+![Cinderleaf setup overview](media/nexus-screenshots/01-setup-overview.png)
 
-## Recommended workflow
+![Cinderleaf mods workspace](media/nexus-screenshots/02-mods-workspace.png)
 
-1. Set your game folder, real `Mods`, and sandbox `Mods` in `Setup`.
-2. Use `Discover` and `Packages` to inspect downloaded zips.
-3. Review the current package in `Review` before applying anything.
-4. Install to sandbox first.
-5. Use `Compare` to inspect drift between real and sandbox.
-6. Promote selected sandbox mods into real `Mods` only when you are ready.
-7. Use backup, restore, archive, and recovery tools before larger changes or machine migration.
+![Cinderleaf packages workspace](media/nexus-screenshots/05-packages-workspace.png)
 
-If you are not sure which destination to use, use the sandbox.
+## Requirements
+
+- Windows
+- Stardew Valley
+- SMAPI for most modded setups
 
 ## Download the portable build
 
@@ -44,6 +42,18 @@ Current release caveats:
 - this is a portable folder, not an installer
 - Windows reputation prompts are still expected because code signing is not in place yet
 - auto-update is not implemented yet
+
+## Recommended workflow
+
+1. Set your game folder, real `Mods`, and sandbox `Mods` in `Setup`.
+2. Use `Discover` and `Packages` to inspect downloaded zips.
+3. Review the current package in `Review` before applying anything.
+4. Install to sandbox first.
+5. Use `Compare` to inspect drift between real and sandbox.
+6. Promote selected sandbox mods into real `Mods` only when you are ready.
+7. Use backup, restore, archive, and recovery tools before larger changes or machine migration.
+
+If you are not sure which destination to use, use the sandbox.
 
 ## Build from source
 
@@ -70,11 +80,12 @@ dist\cinderleaf-1.1.3-windows-portable\
 - profile and instance management are out of scope
 - Windows is the primary supported desktop path today
 
-## Support and issue reporting
+## Feedback and issue reporting
 
 - use GitHub Issues for bugs and feature requests
 - include the app version, Windows version, and whether the issue happened in real `Mods`, sandbox `Mods`, compare, or restore/import flow
 - if the problem is install- or recovery-related, include the review summary or error text shown by the app
+- code contributions and pull requests are not being actively accepted right now
 
 ## License
 
@@ -85,5 +96,5 @@ This repository is licensed under **PolyForm Noncommercial 1.0.0**. You can use,
 ## Project files
 
 - [CHANGELOG](CHANGELOG.md)
-- [CONTRIBUTING](CONTRIBUTING.md)
+- [Feedback and issue notes](CONTRIBUTING.md)
 - [License](LICENSE)

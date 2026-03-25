@@ -1,53 +1,32 @@
-# Contributing to Cinderleaf
+# Feedback and issue notes
 
-Thanks for contributing.
+Thanks for checking out Cinderleaf.
 
-## Before you open a pull request
+## Current policy
 
-- keep changes small and focused
-- avoid mixing feature work with unrelated cleanup
-- preserve the app's safety-first behavior, especially around live `Mods` writes
-- do not add scraping, browser automation for downloads, or premium-bypass behavior
+Bug reports and feature suggestions are welcome.
 
-## Local setup
+Code contributions and pull requests are **not** being actively accepted right now. The public repo is open so players can download releases, report problems, and suggest improvements, but the implementation roadmap is still being managed directly in the main project.
 
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -U pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev,build]"
-```
+## Best way to send feedback
 
-## Validation
+Please use the GitHub issue templates and include:
 
-Run the unit suite before opening a PR:
+- Cinderleaf version
+- Windows version
+- what you expected to happen
+- what happened instead
+- whether the issue happened in real `Mods`, sandbox `Mods`, compare, packages/review, or backup/restore/recovery flow
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests\unit -q
-```
-
-If your change affects packaging, also run:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\build_windows_portable.py
-```
+If the issue involves install, recovery, archive, or restore behavior, please also include the review summary, status text, or error message shown by the app.
 
 ## Scope expectations
 
 - sandbox remains the recommended test path
 - Compare stays read-only unless a specifically approved stage changes it
-- real-Mods operations should remain explicit, reviewable, and recoverable
+- real-`Mods` operations stay explicit, reviewable, and recoverable
 - provider-compliant manual download flow remains the default
-
-## Issues and feature requests
-
-Please use the GitHub issue templates and include:
-
-- app version
-- Windows version
-- expected behavior
-- actual behavior
-- whether the issue happened in real `Mods`, sandbox `Mods`, compare, or restore/import flow
 
 ## License reminder
 
-This repository is source-available under **PolyForm Noncommercial 1.0.0**. Contributions are accepted under that same license model.
+This repository is source-available under **PolyForm Noncommercial 1.0.0**.

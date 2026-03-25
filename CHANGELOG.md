@@ -6,8 +6,11 @@ All notable user-facing changes for this repository are tracked here.
 
 - Fixed the restore/import planning regression where the released UI passed an unsupported `steam_auto_start_enabled` argument into restore/import planning.
 - `Inspect backup` now automatically runs restore/import planning for the current configured environment when the bundle is structurally usable.
-- `Execute restore` keeps explicit confirmation before writing into configured destinations.
-- Shipped as a narrow restore/import hotfix with no broader workflow-semantics change.
+- Removed the extra restore-plan click from the normal UI flow and kept restore review tied to the active inspected bundle.
+- Fixed restore/import execution readiness so the write action only appears available when execution is actually allowed under the current review model.
+- Kept explicit confirmation in front of restore/import writes.
+- Fixed packaged version display so the portable app now truthfully shows `Version 1.1.3` in the shell.
+- Shipped as a narrow restore/import and packaging hotfix with no broader workflow-semantics change.
 
 ## [1.1.2]
 
