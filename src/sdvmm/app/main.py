@@ -4,6 +4,7 @@ import os
 import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+import tomllib
 
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
@@ -15,11 +16,29 @@ from sdvmm.ui.main_window import MainWindow
 APP_PACKAGE_NAME = "stardew-mod-manager"
 APP_DISPLAY_NAME = "Cinderleaf"
 APP_VERSION_FALLBACK = "0.3.1"
+APP_VERSION_FILENAME = "app-version.txt"
 APP_RUNTIME_ICON_NAMES = ("app-icon.png", "stardew-mod-manager.ico")
 WINDOWS_APP_USER_MODEL_ID = "local.sdvmm.cinderleaf"
 
 
 def _resolve_app_version() -> str:
+    runtime_root = _resolve_runtime_root()
+    runtime_version_path = runtime_root / APP_VERSION_FILENAME
+    if runtime_version_path.is_file():
+        runtime_version_text = runtime_version_path.read_text(encoding="utf-8").strip()
+        if runtime_version_text:
+            return runtime_version_text
+
+    pyproject_path = runtime_root / "pyproject.toml"
+    if pyproject_path.is_file():
+        try:
+            project = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))["project"]
+            pyproject_version = str(project["version"]).strip()
+            if pyproject_version:
+                return pyproject_version
+        except Exception:
+            pass
+
     try:
         return version(APP_PACKAGE_NAME)
     except PackageNotFoundError:

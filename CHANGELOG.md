@@ -2,6 +2,13 @@
 
 All notable user-facing changes for this repository are tracked here.
 
+## [1.1.3]
+
+- Fixed the restore/import planning regression where the released UI passed an unsupported `steam_auto_start_enabled` argument into restore/import planning.
+- `Inspect backup` now automatically runs restore/import planning for the current configured environment when the bundle is structurally usable.
+- `Execute restore` keeps explicit confirmation before writing into configured destinations.
+- Shipped as a narrow restore/import hotfix with no broader workflow-semantics change.
+
 ## [1.1.2]
 
 - Fixed the `Backup export` regression where the released UI passed an unsupported `steam_auto_start_enabled` argument into backup/export.

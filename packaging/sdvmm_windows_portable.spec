@@ -11,8 +11,15 @@ PROJECT = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]
 VERSION = PROJECT["version"]
 DIST_NAME = f"cinderleaf-{VERSION}-windows-portable"
 APP_ICON = ROOT / "assets" / "stardew-mod-manager.ico"
+APP_VERSION_FILE = ROOT / "build" / "app-version.txt"
 
-datas = copy_metadata("stardew-mod-manager") + [(str(APP_ICON), "assets")]
+APP_VERSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+APP_VERSION_FILE.write_text(f"{VERSION}\n", encoding="utf-8")
+
+datas = copy_metadata("stardew-mod-manager") + [
+    (str(APP_ICON), "assets"),
+    (str(APP_VERSION_FILE), "."),
+]
 
 a = Analysis(
     [str(ROOT / "src" / "sdvmm" / "app" / "main.py")],

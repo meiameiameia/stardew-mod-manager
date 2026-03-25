@@ -107,6 +107,23 @@ def main_window(tmp_path: Path, qapp: QApplication) -> MainWindow:
     qapp.processEvents()
 
 
+def _fake_background_operation_with_real_lifecycle(
+    main_window: MainWindow,
+    captured: dict[str, object] | None = None,
+):
+    def _runner(**kwargs: object) -> None:
+        operation_name = str(kwargs["operation_name"])
+        if captured is not None:
+            captured.setdefault("operation_names", []).append(operation_name)
+        main_window._active_operation_name = operation_name
+        main_window._active_background_task = SimpleNamespace()
+        task_result = kwargs["task_fn"]()
+        kwargs["on_success"](task_result)
+        main_window._finish_background_operation(operation_name, success=True)
+
+    return _runner
+
+
 def test_main_window_instantiates_in_qt_context(main_window: MainWindow) -> None:
     assert main_window is not None
     assert main_window.windowTitle() != ""
@@ -500,7 +517,7 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     assert setup_button.property("navRole") == "workspace"
     assert review_button.property("navRole") == "workspace"
     assert brand_title.text() == "Cinderleaf"
-    assert brand_version.text() == "Version 1.1.2"
+    assert brand_version.text() == "Version 1.1.3"
 
 
 def test_main_window_workspace_nav_buttons_drive_context_pages(
@@ -2333,7 +2350,10 @@ def test_main_window_setup_surface_onboarding_copy_is_user_facing(
         setup_intro_label.text()
     )
     assert "does not change installed mods" in setup_intro_label.text()
-    assert "Inspect and Plan are read-only." in backup_intro_label.text()
+    assert (
+        "Inspect is read-only and automatically prepares restore/import review."
+        in backup_intro_label.text()
+    )
     assert "Execute restore/import writes only into the current configured folders." in (
         backup_intro_label.text()
     )
@@ -2355,7 +2375,6 @@ def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: Mai
         "setup_detect_environment_button",
         "setup_export_backup_button",
         "setup_inspect_backup_button",
-        "setup_plan_restore_import_button",
         "setup_execute_restore_import_button",
         "setup_open_mods_button",
         "setup_open_sandbox_mods_button",
@@ -2622,6 +2641,7 @@ def test_main_window_export_backup_bundle_cancel_sets_status_without_running(
 
 def test_main_window_inspect_backup_bundle_runs_service_and_updates_output(
     main_window: MainWindow,
+    qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2662,6 +2682,41 @@ def test_main_window_inspect_backup_bundle_runs_service_and_updates_output(
             "A restore/import workflow. This bundle is export-only in this stage.",
         ),
     )
+    planning_result = RestoreImportPlanningResult(
+        bundle_path=bundle_path,
+        inspection=result,
+        items=(
+            RestoreImportPlanningItem(
+                key="real_mods",
+                label="Real Mods directory",
+                state="safe_to_restore_later",
+                message="Real Mods directory planning looks straightforward: 1 safe, 0 blocked.",
+                bundle_relative_path=Path("mods") / "real-mods",
+                local_target_path=Path(r"C:\Local\Mods"),
+                bundle_declared_status="copied",
+                bundle_structure_state="present",
+                safe_mod_count=1,
+            ),
+        ),
+        mod_entries=tuple(),
+        config_entries=tuple(),
+        safe_item_count=1,
+        review_item_count=0,
+        blocked_item_count=0,
+        safe_mod_count=1,
+        review_mod_count=0,
+        blocked_mod_count=0,
+        safe_config_count=0,
+        review_config_count=0,
+        blocked_config_count=0,
+        message="Restore/import planning complete: 1 item(s) look straightforward.",
+    )
+    review = RestoreImportExecutionReview(
+        allowed=True,
+        message="Restore/import is ready to write 1 mod folder(s) and 0 config artifact(s) into the current configured destinations. Existing local content will not be merged.",
+        executable_mod_count=1,
+        executable_config_count=0,
+    )
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -2674,40 +2729,147 @@ def test_main_window_inspect_backup_bundle_runs_service_and_updates_output(
         captured["service_kwargs"] = kwargs
         return result
 
-    def fake_run_background_operation(**kwargs: object) -> None:
-        captured["operation_name"] = kwargs["operation_name"]
-        task_result = kwargs["task_fn"]()
-        kwargs["on_success"](task_result)
+    def fake_plan_restore_import_from_backup_bundle(
+        **kwargs: object,
+    ) -> RestoreImportPlanningResult:
+        captured["plan_service_kwargs"] = kwargs
+        return planning_result
 
     monkeypatch.setattr(
         main_window._shell_service,
         "inspect_backup_bundle",
         fake_inspect_backup_bundle,
     )
-    monkeypatch.setattr(main_window, "_run_background_operation", fake_run_background_operation)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "plan_restore_import_from_backup_bundle",
+        fake_plan_restore_import_from_backup_bundle,
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "review_restore_import_execution",
+        lambda planning: review,
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
 
     main_window._on_inspect_backup_bundle()
+    qapp.processEvents()
 
-    assert captured["operation_name"] == "Backup bundle inspection"
+    assert captured["operation_names"] == [
+        "Backup bundle inspection",
+        "Restore/import planning",
+    ]
     assert captured["service_kwargs"] == {"bundle_path_text": str(bundle_path)}
+    assert captured["plan_service_kwargs"] == {
+        "bundle_path_text": str(bundle_path),
+        **main_window._current_restore_import_planning_inputs(),
+    }
+    assert "steam_auto_start_enabled" not in captured["plan_service_kwargs"]
     assert (
         main_window._status_strip_label.text()
-        == "Backup bundle looks structurally usable for future restore/import."
+        == "Restore/import planning complete: 1 item(s) look straightforward."
     )
     assert (
         main_window._backup_bundle_inspection_summary_label.text()
         == "Backup bundle looks structurally usable for future restore/import."
     )
+    assert (
+        main_window._restore_import_planning_summary_label.text()
+        == "Restore/import planning complete: 1 item(s) look straightforward."
+    )
     assert str(bundle_path) in main_window._active_backup_bundle_label.toolTip()
-    assert "inspected" in main_window._active_backup_bundle_label.text().casefold()
-    assert "real mods config snapshot" in main_window._setup_output_box.toPlainText().casefold()
-    assert "backup bundle inspection" in main_window._setup_output_box.toPlainText().casefold()
+    assert "planned" in main_window._active_backup_bundle_label.text().casefold()
+    assert "restore/import planning" in main_window._setup_output_box.toPlainText().casefold()
     assert str(bundle_path) in main_window._setup_output_box.toPlainText()
-    assert "backup bundle inspection" in main_window._findings_box.toPlainText().casefold()
+    assert "restore/import planning" in main_window._findings_box.toPlainText().casefold()
     assert str(bundle_path) in main_window._findings_box.toPlainText()
     execute_button = main_window.findChild(QPushButton, "setup_execute_restore_import_button")
     assert execute_button is not None
     assert execute_button.isEnabled() is True
+    assert "ready to write 1 mod folder" in execute_button.toolTip()
+
+
+def test_main_window_inspect_backup_bundle_keeps_inspection_visible_when_auto_plan_fails(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle_path = tmp_path / "Exports" / "sdvmm-backup-20260324-120000Z"
+    bundle_path.mkdir(parents=True)
+    inspection = BackupBundleInspectionResult(
+        bundle_path=bundle_path,
+        manifest_path=bundle_path / "manifest.json",
+        summary_path=bundle_path / "README.txt",
+        bundle_format="sdvmm-local-backup",
+        format_version=1,
+        created_at_utc="2026-03-24T12:00:00Z",
+        items=tuple(),
+        structurally_usable=True,
+        message="Backup bundle looks structurally usable for future restore/import.",
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        main_window,
+        "_prompt_for_backup_bundle_path",
+        lambda: bundle_path,
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "inspect_backup_bundle",
+        lambda **kwargs: inspection,
+    )
+
+    def fake_plan_restore_import_from_backup_bundle(**kwargs: object) -> RestoreImportPlanningResult:
+        captured["plan_service_kwargs"] = kwargs
+        raise AssertionError("task_fn should not be called directly for failed plan simulation")
+
+    def fake_run_background_operation(**kwargs: object) -> None:
+        operation_name = str(kwargs["operation_name"])
+        captured.setdefault("operation_names", []).append(operation_name)
+        main_window._active_operation_name = operation_name
+        main_window._active_background_task = SimpleNamespace()
+        if operation_name == "Backup bundle inspection":
+            kwargs["on_success"](kwargs["task_fn"]())
+            main_window._finish_background_operation(operation_name, success=True)
+            return
+        kwargs["on_failure"](
+            "Restore/import planning failed: current configured destination is unavailable."
+        )
+        main_window._finish_background_operation(operation_name, success=False)
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "plan_restore_import_from_backup_bundle",
+        fake_plan_restore_import_from_backup_bundle,
+    )
+    monkeypatch.setattr(main_window, "_run_background_operation", fake_run_background_operation)
+
+    main_window._on_inspect_backup_bundle()
+    qapp.processEvents()
+
+    assert captured["operation_names"] == [
+        "Backup bundle inspection",
+        "Restore/import planning",
+    ]
+    output_text = main_window._setup_output_box.toPlainText()
+    assert "backup bundle inspection" in output_text.casefold()
+    assert "automatic restore/import planning could not run" in output_text.casefold()
+    assert "current configured destination is unavailable" in output_text
+    assert (
+        main_window._restore_import_planning_summary_label.text()
+        == "Automatic restore/import planning could not run."
+    )
+    assert "inspected" in main_window._active_backup_bundle_label.text().casefold()
+    execute_button = main_window.findChild(QPushButton, "setup_execute_restore_import_button")
+    assert execute_button is not None
+    assert execute_button.isEnabled() is True
+    assert "refresh restore/import review" in execute_button.toolTip().casefold()
 
 
 def test_main_window_inspect_backup_bundle_cancel_sets_status_without_running(
@@ -2894,8 +3056,126 @@ def test_main_window_plan_restore_import_reuses_bundle_selected_for_inspection_b
     assert captured["plan_operation_name"] == "Restore/import planning"
     assert captured["plan_service_kwargs"] == {
         "bundle_path_text": str(bundle_path),
-        **main_window._current_operational_config_inputs(),
+        **main_window._current_restore_import_planning_inputs(),
     }
+    assert "steam_auto_start_enabled" not in captured["plan_service_kwargs"]
+
+
+def test_main_window_plan_restore_import_reuses_active_bundle_after_inspect_without_reprompting(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle_path = tmp_path / "Exports" / "sdvmm-backup-20260324-160000Z"
+    bundle_path.mkdir(parents=True)
+    inspection = BackupBundleInspectionResult(
+        bundle_path=bundle_path,
+        manifest_path=bundle_path / "manifest.json",
+        summary_path=bundle_path / "README.txt",
+        bundle_format="sdvmm-local-backup",
+        format_version=1,
+        created_at_utc="2026-03-24T16:00:00Z",
+        items=tuple(),
+        structurally_usable=True,
+        message="Backup bundle looks structurally usable for future restore/import.",
+    )
+    auto_plan_result = RestoreImportPlanningResult(
+        bundle_path=bundle_path,
+        inspection=inspection,
+        items=tuple(),
+        mod_entries=tuple(),
+        config_entries=tuple(),
+        safe_item_count=1,
+        review_item_count=0,
+        blocked_item_count=0,
+        safe_mod_count=1,
+        review_mod_count=0,
+        blocked_mod_count=0,
+        safe_config_count=0,
+        review_config_count=0,
+        blocked_config_count=0,
+        message="Restore/import planning complete: 1 item(s) look straightforward.",
+    )
+    manual_plan_result = RestoreImportPlanningResult(
+        bundle_path=bundle_path,
+        inspection=inspection,
+        items=tuple(),
+        mod_entries=tuple(),
+        config_entries=tuple(),
+        safe_item_count=1,
+        review_item_count=0,
+        blocked_item_count=0,
+        safe_mod_count=1,
+        review_mod_count=0,
+        blocked_mod_count=0,
+        safe_config_count=0,
+        review_config_count=0,
+        blocked_config_count=0,
+        message="Restore/import planning complete: 1 item(s) still look straightforward.",
+    )
+    captured: dict[str, object] = {"prompt_calls": 0}
+
+    def fake_prompt_for_backup_bundle_path() -> Path:
+        captured["prompt_calls"] = int(captured["prompt_calls"]) + 1
+        return bundle_path
+
+    def fake_inspect_backup_bundle(**kwargs: object) -> BackupBundleInspectionResult:
+        captured["inspect_kwargs"] = kwargs
+        return inspection
+
+    def fake_plan_restore_import_from_backup_bundle(
+        **kwargs: object,
+    ) -> RestoreImportPlanningResult:
+        captured.setdefault("plan_kwargs_list", []).append(kwargs)
+        if len(captured["plan_kwargs_list"]) == 1:
+            return auto_plan_result
+        return manual_plan_result
+
+    monkeypatch.setattr(
+        main_window,
+        "_prompt_for_backup_bundle_path",
+        fake_prompt_for_backup_bundle_path,
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "inspect_backup_bundle",
+        fake_inspect_backup_bundle,
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "plan_restore_import_from_backup_bundle",
+        fake_plan_restore_import_from_backup_bundle,
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+
+    main_window._on_inspect_backup_bundle()
+    qapp.processEvents()
+    main_window._on_plan_restore_import()
+
+    assert captured["prompt_calls"] == 1
+    assert captured["inspect_kwargs"] == {"bundle_path_text": str(bundle_path)}
+    assert captured["operation_names"] == [
+        "Backup bundle inspection",
+        "Restore/import planning",
+        "Restore/import planning",
+    ]
+    assert captured["plan_kwargs_list"] == [
+        {
+            "bundle_path_text": str(bundle_path),
+            **main_window._current_restore_import_planning_inputs(),
+        },
+        {
+            "bundle_path_text": str(bundle_path),
+            **main_window._current_restore_import_planning_inputs(),
+        },
+    ]
+    for kwargs in captured["plan_kwargs_list"]:
+        assert "steam_auto_start_enabled" not in kwargs
 
 
 def test_main_window_plan_restore_import_runs_service_and_updates_output(
@@ -3019,20 +3299,22 @@ def test_main_window_plan_restore_import_runs_service_and_updates_output(
     assert captured["operation_name"] == "Restore/import planning"
     assert captured["service_kwargs"] == {
         "bundle_path_text": str(bundle_path),
-        **main_window._current_operational_config_inputs(),
+        **main_window._current_restore_import_planning_inputs(),
     }
+    assert "steam_auto_start_enabled" not in captured["service_kwargs"]
     assert (
         main_window._status_strip_label.text()
-        == "Restore/import planning complete: 0 item(s) look straightforward, 2 item(s) need review."
+        == "Restore/import execution is blocked: no clearly restorable missing content is available under the current review model."
     )
     assert (
         main_window._restore_import_planning_summary_label.text()
-        == "Restore/import planning complete: 0 item(s) look straightforward, 2 item(s) need review."
+        == "Restore/import execution is blocked: no clearly restorable missing content is available under the current review model."
     )
     assert str(bundle_path) in main_window._active_backup_bundle_label.toolTip()
     assert "planned" in main_window._active_backup_bundle_label.text().casefold()
     assert "config realalpha\\config.json" in main_window._setup_output_box.toPlainText().casefold()
     assert "restore/import planning" in main_window._setup_output_box.toPlainText().casefold()
+    assert "execution readiness:" in main_window._setup_output_box.toPlainText().casefold()
     assert str(bundle_path) in main_window._setup_output_box.toPlainText()
     assert "restore/import planning" in main_window._findings_box.toPlainText().casefold()
     assert str(bundle_path) in main_window._findings_box.toPlainText()
@@ -3099,7 +3381,7 @@ def test_main_window_plan_restore_import_uses_active_inspected_bundle_without_pi
     )
     captured: dict[str, object] = {}
 
-    main_window._on_backup_bundle_inspection_completed(inspection)
+    main_window._set_active_backup_bundle_context(bundle_path, label_text="inspected")
 
     monkeypatch.setattr(
         main_window,
@@ -3129,8 +3411,9 @@ def test_main_window_plan_restore_import_uses_active_inspected_bundle_without_pi
     assert captured["operation_name"] == "Restore/import planning"
     assert captured["service_kwargs"] == {
         "bundle_path_text": str(bundle_path),
-        **main_window._current_operational_config_inputs(),
+        **main_window._current_restore_import_planning_inputs(),
     }
+    assert "steam_auto_start_enabled" not in captured["service_kwargs"]
 
 
 def test_main_window_execute_restore_import_uses_active_bundle_without_picker(
@@ -3186,7 +3469,7 @@ def test_main_window_execute_restore_import_uses_active_bundle_without_picker(
     )
     captured: dict[str, object] = {}
 
-    main_window._on_backup_bundle_inspection_completed(inspection)
+    main_window._set_active_backup_bundle_context(bundle_path, label_text="inspected")
 
     monkeypatch.setattr(
         main_window,
@@ -3240,8 +3523,9 @@ def test_main_window_execute_restore_import_uses_active_bundle_without_picker(
     ]
     assert captured["plan_kwargs"] == {
         "bundle_path_text": str(bundle_path),
-        **main_window._current_operational_config_inputs(),
+        **main_window._current_restore_import_planning_inputs(),
     }
+    assert "steam_auto_start_enabled" not in captured["plan_kwargs"]
     assert captured["execute_args"] == (planning_result, True)
 
 
@@ -3355,13 +3639,15 @@ def test_main_window_execute_restore_import_picker_fallback_runs_when_no_active_
     ]
     assert captured["plan_kwargs"] == {
         "bundle_path_text": str(bundle_path),
-        **main_window._current_operational_config_inputs(),
+        **main_window._current_restore_import_planning_inputs(),
     }
+    assert "steam_auto_start_enabled" not in captured["plan_kwargs"]
     assert captured["execute_args"] == (planning_result, True)
 
 
 def test_main_window_active_backup_bundle_label_updates_when_context_changes(
     main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     first_bundle = tmp_path / "Exports" / "sdvmm-backup-20260321-134500Z"
@@ -3391,6 +3677,11 @@ def test_main_window_active_backup_bundle_label_updates_when_context_changes(
         message="Second bundle ready.",
     )
 
+    monkeypatch.setattr(
+        main_window,
+        "_start_restore_import_planning_for_bundle",
+        lambda *args, **kwargs: None,
+    )
     main_window._on_backup_bundle_inspection_completed(first_inspection)
     first_label = main_window._active_backup_bundle_label.text()
 
@@ -3490,11 +3781,6 @@ def test_main_window_plan_restore_import_enables_execute_button_when_review_allo
         captured["service_kwargs"] = kwargs
         return result
 
-    def fake_run_background_operation(**kwargs: object) -> None:
-        captured["operation_name"] = kwargs["operation_name"]
-        task_result = kwargs["task_fn"]()
-        kwargs["on_success"](task_result)
-
     monkeypatch.setattr(
         main_window._shell_service,
         "plan_restore_import_from_backup_bundle",
@@ -3505,15 +3791,95 @@ def test_main_window_plan_restore_import_enables_execute_button_when_review_allo
         "review_restore_import_execution",
         lambda planning_result: review,
     )
-    monkeypatch.setattr(main_window, "_run_background_operation", fake_run_background_operation)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
 
     main_window._on_plan_restore_import()
 
     execute_button = main_window.findChild(QPushButton, "setup_execute_restore_import_button")
     assert execute_button is not None
-    assert captured["operation_name"] == "Restore/import planning"
+    assert captured["operation_names"] == ["Restore/import planning"]
     assert execute_button.isEnabled() is True
     assert "ready to write 1 mod folder" in execute_button.toolTip()
+
+
+def test_main_window_plan_restore_import_keeps_execute_button_disabled_when_review_blocks(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bundle_path = tmp_path / "Exports" / "sdvmm-backup-20260318-132000Z"
+    bundle_path.mkdir(parents=True)
+    manifest_path = bundle_path / "manifest.json"
+    summary_path = bundle_path / "README.txt"
+    inspection = BackupBundleInspectionResult(
+        bundle_path=bundle_path,
+        manifest_path=manifest_path,
+        summary_path=summary_path,
+        bundle_format="sdvmm-local-backup",
+        format_version=1,
+        created_at_utc="2026-03-18T13:20:00Z",
+        items=tuple(),
+        structurally_usable=True,
+        message="Backup bundle looks structurally usable for future restore/import.",
+    )
+    result = RestoreImportPlanningResult(
+        bundle_path=bundle_path,
+        inspection=inspection,
+        items=tuple(),
+        mod_entries=tuple(),
+        config_entries=tuple(),
+        safe_item_count=0,
+        review_item_count=1,
+        blocked_item_count=0,
+        safe_mod_count=0,
+        review_mod_count=1,
+        blocked_mod_count=0,
+        safe_config_count=0,
+        review_config_count=0,
+        blocked_config_count=0,
+        message="Restore/import planning complete: 1 item(s) still needs review.",
+    )
+    review = RestoreImportExecutionReview(
+        allowed=False,
+        message="Restore/import review is not executable yet. Resolve the remaining review entries first.",
+        executable_mod_count=0,
+        executable_config_count=0,
+        review_entry_count=1,
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        main_window,
+        "_prompt_for_backup_bundle_path",
+        lambda: bundle_path,
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "plan_restore_import_from_backup_bundle",
+        lambda **kwargs: result,
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "review_restore_import_execution",
+        lambda planning_result: review,
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+
+    main_window._on_plan_restore_import()
+
+    execute_button = main_window.findChild(QPushButton, "setup_execute_restore_import_button")
+    assert execute_button is not None
+    assert captured["operation_names"] == ["Restore/import planning"]
+    assert execute_button.isEnabled() is False
+    assert "not executable yet" in execute_button.toolTip()
 
 
 def test_main_window_execute_restore_import_runs_service_and_updates_output(
@@ -3650,7 +4016,7 @@ def test_main_window_execute_restore_import_runs_service_and_updates_output(
     execute_button = main_window.findChild(QPushButton, "setup_execute_restore_import_button")
     assert execute_button is not None
     assert execute_button.isEnabled() is True
-    assert "current backup bundle" in execute_button.toolTip().casefold()
+    assert "refresh restore/import review" in execute_button.toolTip().casefold()
 
 
 def test_main_window_execute_restore_import_cancel_preserves_no_write(

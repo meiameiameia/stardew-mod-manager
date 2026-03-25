@@ -352,6 +352,11 @@ QPushButton[buttonRole="primary"]:hover {
     background: #f6c64f;
 }
 
+QPushButton[buttonRole="primary"]:disabled {
+    background: #2a2b26;
+    color: #81776a;
+}
+
 QPushButton[buttonRole="secondary"] {
     background: #262f25;
     color: #d2e4cb;
@@ -360,6 +365,11 @@ QPushButton[buttonRole="secondary"] {
 
 QPushButton[buttonRole="secondary"]:hover {
     background: #2d392c;
+}
+
+QPushButton[buttonRole="secondary"]:disabled {
+    background: #202421;
+    color: #7f8a7b;
 }
 
 QPushButton[buttonRole="utility"] {
@@ -373,6 +383,11 @@ QPushButton[buttonRole="utility"]:hover {
     background: #24292c;
 }
 
+QPushButton[buttonRole="utility"]:disabled {
+    background: #1b1d1f;
+    color: #74706a;
+}
+
 QPushButton[buttonRole="danger"] {
     background: #633032;
     color: #ffd9d9;
@@ -381,6 +396,11 @@ QPushButton[buttonRole="danger"] {
 
 QPushButton[buttonRole="danger"]:hover {
     background: #7b3b3e;
+}
+
+QPushButton[buttonRole="danger"]:disabled {
+    background: #302425;
+    color: #9b8080;
 }
 
 QLabel#compact_hint_label,

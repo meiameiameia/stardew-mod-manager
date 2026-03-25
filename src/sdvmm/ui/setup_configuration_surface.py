@@ -41,7 +41,7 @@ class SetupConfigurationSurface(QScrollArea):
         detect_environment_button: QPushButton,
         export_backup_button: QPushButton,
         inspect_backup_button: QPushButton,
-        plan_restore_import_button: QPushButton,
+        plan_restore_import_button: QPushButton | None,
         execute_restore_import_button: QPushButton,
         active_backup_bundle_label: QLabel,
         backup_bundle_inspection_summary_label: QLabel,
@@ -187,11 +187,15 @@ class SetupConfigurationSurface(QScrollArea):
         setup_actions_layout.setContentsMargins(0, 0, 0, 0)
         setup_actions_layout.setHorizontalSpacing(8)
         setup_actions_layout.setVerticalSpacing(6)
-        action_buttons = (
-            export_backup_button,
-            inspect_backup_button,
-            plan_restore_import_button,
-            execute_restore_import_button,
+        action_buttons = tuple(
+            button
+            for button in (
+                export_backup_button,
+                inspect_backup_button,
+                plan_restore_import_button,
+                execute_restore_import_button,
+            )
+            if button is not None
         )
         for index, button in enumerate(action_buttons):
             setup_actions_layout.addWidget(button, index // 2, index % 2)
@@ -206,7 +210,7 @@ class SetupConfigurationSurface(QScrollArea):
         backup_layout.setSpacing(10)
 
         backup_intro_label = QLabel(
-            "Export creates a backup bundle. Inspect and Plan are read-only. "
+            "Export creates a backup bundle. Inspect is read-only and automatically prepares restore/import review. "
             "Execute restore/import writes only into the current configured folders."
         )
         backup_intro_label.setObjectName("setup_backup_restore_intro_label")

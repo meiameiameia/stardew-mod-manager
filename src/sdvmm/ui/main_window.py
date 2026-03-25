@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -177,13 +178,13 @@ _NO_PLAN_FACTS_TEXT = (
     "Blocked entries: -"
 )
 _NO_RESTORE_IMPORT_PLANNING_SUMMARY_TEXT = (
-    "Plan restore compares a backup bundle against this machine without changing local files."
+    "Inspect backup reads the bundle and automatically prepares a restore/import review for this machine."
 )
 _NO_ACTIVE_BACKUP_BUNDLE_TEXT = (
     "Current backup bundle: none selected. Inspect or plan a bundle to reuse it across restore steps."
 )
 _NO_RESTORE_IMPORT_EXECUTION_TOOLTIP = (
-    "Inspect or plan a backup bundle first."
+    "Inspect a backup bundle first."
 )
 _COMPARE_FILTER_ACTIONABLE = "actionable_drift"
 _COMPARE_FILTER_ONLY_IN_REAL = "only_in_real"
@@ -192,6 +193,15 @@ _COMPARE_FILTER_VERSION_MISMATCH = "version_mismatch"
 _COMPARE_FILTER_AMBIGUOUS = "ambiguous_match"
 _COMPARE_FILTER_SAME_VERSION = "same_version"
 _COMPARE_FILTER_ALL = "all_categories"
+
+
+@dataclass(frozen=True, slots=True)
+class _RestoreImportPlanningUiPayload:
+    planning_result: RestoreImportPlanningResult
+    execution_review: RestoreImportExecutionReview
+    planning_text: str
+    combined_text: str
+    summary_text: str
 
 
 class MainWindow(QMainWindow):
@@ -225,6 +235,7 @@ class MainWindow(QMainWindow):
         self._thread_pool = QThreadPool.globalInstance()
         self._active_operation_name: str | None = None
         self._active_background_task: BackgroundTask | None = None
+        self._pending_post_operation_callback: Callable[[], None] | None = None
         self._background_action_buttons: tuple[QPushButton, ...] = tuple()
         self._startup_checks_scheduled = False
         self._startup_checks_completed = False
@@ -1189,10 +1200,6 @@ class MainWindow(QMainWindow):
         inspect_backup_button.setObjectName("setup_inspect_backup_button")
         inspect_backup_button.clicked.connect(self._on_inspect_backup_bundle)
         _set_utility_button_style(inspect_backup_button)
-        plan_restore_import_button = QPushButton("Plan restore")
-        plan_restore_import_button.setObjectName("setup_plan_restore_import_button")
-        plan_restore_import_button.clicked.connect(self._on_plan_restore_import)
-        _set_utility_button_style(plan_restore_import_button)
         execute_restore_import_button = QPushButton("Execute restore")
         execute_restore_import_button.setObjectName("setup_execute_restore_import_button")
         execute_restore_import_button.clicked.connect(self._on_execute_restore_import)
@@ -1222,7 +1229,7 @@ class MainWindow(QMainWindow):
             detect_environment_button=detect_environment_button,
             export_backup_button=export_backup_button,
             inspect_backup_button=inspect_backup_button,
-            plan_restore_import_button=plan_restore_import_button,
+            plan_restore_import_button=None,
             execute_restore_import_button=execute_restore_import_button,
             active_backup_bundle_label=self._active_backup_bundle_label,
             backup_bundle_inspection_summary_label=self._backup_bundle_inspection_summary_label,
@@ -1905,7 +1912,6 @@ class MainWindow(QMainWindow):
             self._delete_archived_button,
             self._compare_real_vs_sandbox_button,
             inspect_backup_button,
-            plan_restore_import_button,
             execute_restore_import_button,
             self._launch_vanilla_button,
             self._launch_smapi_button,
@@ -1979,6 +1985,23 @@ class MainWindow(QMainWindow):
         }
 
     def _current_backup_export_inputs(self) -> dict[str, object]:
+        return {
+            "game_path_text": self._game_path_input.text(),
+            "mods_dir_text": self._mods_path_input.text(),
+            "sandbox_mods_path_text": self._sandbox_mods_path_input.text(),
+            "sandbox_archive_path_text": self._sandbox_archive_path_input.text(),
+            "watched_downloads_path_text": self._watched_downloads_path_input.text(),
+            "secondary_watched_downloads_path_text": (
+                self._secondary_watched_downloads_path_input.text()
+            ),
+            "real_archive_path_text": self._real_archive_path_input.text(),
+            "nexus_api_key_text": self._nexus_api_key_input.text(),
+            "scan_target": self._current_scan_target(),
+            "install_target": self._current_install_target(),
+            "existing_config": self._config,
+        }
+
+    def _current_restore_import_planning_inputs(self) -> dict[str, object]:
         return {
             "game_path_text": self._game_path_input.text(),
             "mods_dir_text": self._mods_path_input.text(),
@@ -2360,7 +2383,45 @@ class MainWindow(QMainWindow):
         self._backup_bundle_inspection_summary_label.setText(result.message)
         self._backup_bundle_inspection_summary_label.setToolTip(inspection_text)
         self._set_setup_output_and_details_text(inspection_text)
-        self._set_status(result.message)
+        if not result.structurally_usable:
+            self._set_status(result.message)
+            return
+
+        planning_started_text = (
+            "Planning restore/import for the current configured environment..."
+        )
+        self._restore_import_planning_summary_label.setText(planning_started_text)
+        self._restore_import_planning_summary_label.setToolTip(planning_started_text)
+        self._set_status(planning_started_text)
+        self._queue_restore_import_planning_after_inspection(
+            result,
+            inspection_text=inspection_text,
+            planning_started_text=planning_started_text,
+        )
+
+    def _queue_restore_import_planning_after_inspection(
+        self,
+        inspection_result: BackupBundleInspectionResult,
+        *,
+        inspection_text: str,
+        planning_started_text: str,
+    ) -> None:
+        def _start_after_inspection_finishes() -> None:
+            if self._active_backup_bundle_path != inspection_result.bundle_path:
+                return
+            self._start_restore_import_planning_for_bundle(
+                inspection_result.bundle_path,
+                started_status=planning_started_text,
+                on_success=self._on_restore_import_planning_completed,
+                on_failure=lambda message: self._on_restore_import_planning_after_inspection_failed(
+                    inspection_result,
+                    inspection_text,
+                    message,
+                ),
+                reset_summary=False,
+            )
+
+        self._pending_post_operation_callback = _start_after_inspection_finishes
 
     def _on_plan_restore_import(self) -> None:
         bundle_path = self._resolve_active_or_prompted_backup_bundle_path(
@@ -2377,22 +2438,42 @@ class MainWindow(QMainWindow):
 
     def _on_restore_import_planning_completed(
         self,
-        result: RestoreImportPlanningResult,
+        payload: _RestoreImportPlanningUiPayload,
     ) -> None:
-        planning_text = build_restore_import_planning_text(result)
+        result = payload.planning_result
         self._current_restore_import_planning_result = result
-        self._current_restore_import_execution_review = (
-            self._shell_service.review_restore_import_execution(result)
-        )
+        self._current_restore_import_execution_review = payload.execution_review
         self._set_active_backup_bundle_context(
             result.bundle_path,
             label_text="planned",
         )
-        self._restore_import_planning_summary_label.setText(result.message)
-        self._restore_import_planning_summary_label.setToolTip(planning_text)
-        self._set_setup_output_and_details_text(planning_text)
+        self._restore_import_planning_summary_label.setText(payload.summary_text)
+        self._restore_import_planning_summary_label.setToolTip(payload.combined_text)
+        self._set_setup_output_and_details_text(payload.combined_text)
         self._refresh_restore_import_execution_state()
-        self._set_status(result.message)
+        self._set_status(payload.summary_text)
+
+    def _on_restore_import_planning_after_inspection_failed(
+        self,
+        inspection_result: BackupBundleInspectionResult,
+        inspection_text: str,
+        message: str,
+    ) -> None:
+        combined_text = (
+            f"{inspection_text}\n\n"
+            "Automatic restore/import planning could not run for the current configured "
+            f"environment.\n{message}"
+        )
+        self._set_active_backup_bundle_context(
+            inspection_result.bundle_path,
+            label_text="inspected",
+        )
+        self._restore_import_planning_summary_label.setText(
+            "Automatic restore/import planning could not run."
+        )
+        self._restore_import_planning_summary_label.setToolTip(message)
+        self._set_setup_output_and_details_text(combined_text)
+        self._refresh_restore_import_execution_state()
 
     def _on_execute_restore_import(self) -> None:
         bundle_path = self._resolve_active_or_prompted_backup_bundle_path(
@@ -2417,10 +2498,10 @@ class MainWindow(QMainWindow):
 
     def _on_restore_import_planning_then_execute_completed(
         self,
-        result: RestoreImportPlanningResult,
+        payload: _RestoreImportPlanningUiPayload,
     ) -> None:
-        self._on_restore_import_planning_completed(result)
-        self._continue_restore_import_execution(result)
+        self._on_restore_import_planning_completed(payload)
+        self._continue_restore_import_execution(payload.planning_result)
 
     def _continue_restore_import_execution(
         self,
@@ -4159,6 +4240,7 @@ class MainWindow(QMainWindow):
         self._operation_state_label.setText(f"Running: {running_label}")
         self._set_background_actions_enabled(False)
         self._set_status(started_status)
+        QApplication.processEvents()
 
         task.signals.succeeded.connect(
             lambda result, _name=operation_name, _handler=on_success: self._on_background_operation_succeeded(
@@ -4222,7 +4304,12 @@ class MainWindow(QMainWindow):
         self._active_operation_name = None
         self._active_background_task = None
         self._set_background_actions_enabled(True)
+        self._refresh_restore_import_execution_state()
         self._on_archive_selection_changed()
+        pending_callback = self._pending_post_operation_callback
+        self._pending_post_operation_callback = None
+        if success and pending_callback is not None:
+            QTimer.singleShot(0, pending_callback)
         if success:
             self._operation_state_label.setText(f"Last: {operation_name} finished")
             return
@@ -4490,21 +4577,49 @@ class MainWindow(QMainWindow):
         bundle_path: Path,
         *,
         started_status: str,
-        on_success: Callable[[RestoreImportPlanningResult], None],
+        on_success: Callable[[_RestoreImportPlanningUiPayload], None],
+        on_failure: Callable[[str], None] | None = None,
         reset_summary: bool = True,
     ) -> None:
         self._clear_restore_import_plan_state(reset_summary=reset_summary)
+        planning_inputs = self._current_restore_import_planning_inputs()
         self._run_background_operation(
             operation_name="Restore/import planning",
             running_label="Restore/import planning",
             started_status=started_status,
             error_title="Restore/import planning failed",
-            task_fn=lambda: self._shell_service.plan_restore_import_from_backup_bundle(
-                bundle_path_text=str(bundle_path),
-                **self._current_operational_config_inputs(),
+            task_fn=lambda: self._build_restore_import_planning_ui_payload(
+                bundle_path,
+                planning_inputs,
             ),
             on_success=on_success,
-            on_failure=self._set_setup_output_text,
+            on_failure=on_failure or self._set_setup_output_text,
+        )
+
+    def _build_restore_import_planning_ui_payload(
+        self,
+        bundle_path: Path,
+        planning_inputs: dict[str, object],
+    ) -> _RestoreImportPlanningUiPayload:
+        planning_result = self._shell_service.plan_restore_import_from_backup_bundle(
+            bundle_path_text=str(bundle_path),
+            **planning_inputs,
+        )
+        execution_review = self._shell_service.review_restore_import_execution(planning_result)
+        planning_text = build_restore_import_planning_text(planning_result)
+        combined_text = (
+            f"{planning_text}\n\n"
+            f"Execution readiness: {execution_review.message}"
+        )
+        summary_text = (
+            execution_review.message if not execution_review.allowed else planning_result.message
+        )
+        return _RestoreImportPlanningUiPayload(
+            planning_result=planning_result,
+            execution_review=execution_review,
+            planning_text=planning_text,
+            combined_text=combined_text,
+            summary_text=summary_text,
         )
 
     def _refresh_restore_import_execution_state(self) -> None:
@@ -4515,13 +4630,17 @@ class MainWindow(QMainWindow):
             button.setEnabled(False)
             button.setToolTip("Wait for the current background operation to finish.")
             return
+        if self._pending_post_operation_callback is not None:
+            button.setEnabled(False)
+            button.setToolTip("Wait for restore/import planning to start.")
+            return
 
         review = self._current_restore_import_execution_review
         if review is None:
             if self._active_backup_bundle_path is not None:
                 button.setEnabled(True)
                 button.setToolTip(
-                    "Use the current backup bundle to refresh restore/import review and continue to execution."
+                    "Refresh restore/import review for the current backup bundle before execution."
                 )
             else:
                 button.setEnabled(False)
@@ -6792,15 +6911,15 @@ def _resolve_ui_app_version() -> str:
     if isinstance(version_text, str) and version_text.strip():
         return version_text.strip()
 
-    try:
-        return package_version(_APP_PACKAGE_NAME)
-    except PackageNotFoundError:
-        pass
     app = QApplication.instance()
     if app is not None:
         application_version = app.applicationVersion().strip()
         if application_version:
             return application_version
+    try:
+        return package_version(_APP_PACKAGE_NAME)
+    except PackageNotFoundError:
+        pass
     return "unknown"
 
 
