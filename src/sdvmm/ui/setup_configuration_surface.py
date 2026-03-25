@@ -92,15 +92,21 @@ class SetupConfigurationSurface(QScrollArea):
         primary_actions_layout.addWidget(detect_environment_button)
         primary_actions_layout.addStretch(1)
 
-        setup_group = QGroupBox("Essential folders")
+        main_intro_label = QLabel(
+            "Set these paths once, then spend most of your time in Packages, Review, Compare, and Mods."
+        )
+        main_intro_label.setObjectName("setup_main_column_intro_label")
+        main_intro_label.setWordWrap(True)
+
+        setup_group = QGroupBox("Configure paths")
         setup_group.setObjectName("setup_surface_group")
         setup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         setup_layout = QVBoxLayout(setup_group)
         setup_layout.setContentsMargins(12, 12, 12, 12)
         setup_layout.setSpacing(10)
         setup_intro_label = QLabel(
-            "Start with the live game folder plus your real and sandbox Mods folders. "
-            "Saving setup or detecting folders here does not change installed mods."
+            "Point Cinderleaf at the live game folder plus your real and sandbox Mods folders. "
+            "Save and Detect stay read-only for your installed mods."
         )
         setup_intro_label.setObjectName("setup_local_setup_intro_label")
         setup_intro_label.setWordWrap(True)
@@ -133,14 +139,14 @@ class SetupConfigurationSurface(QScrollArea):
             )
         )
 
-        advanced_group = QGroupBox("Advanced and safety options")
+        advanced_group = QGroupBox("Safety and integrations")
         advanced_group.setObjectName("setup_advanced_group")
         advanced_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         advanced_layout = QVBoxLayout(advanced_group)
         advanced_layout.setContentsMargins(12, 12, 12, 12)
         advanced_layout.setSpacing(10)
         advanced_intro_label = QLabel(
-            "Archive folders protect live and sandbox workflows. Nexus and Steam options are optional helpers."
+            "Archive folders keep live and sandbox changes reversible. Nexus and Steam options are optional helpers."
         )
         advanced_intro_label.setObjectName("setup_advanced_intro_label")
         advanced_intro_label.setWordWrap(True)
@@ -202,7 +208,7 @@ class SetupConfigurationSurface(QScrollArea):
         for column in range(2):
             setup_actions_layout.setColumnStretch(column, 1)
 
-        backup_group = QGroupBox("Back Up, Inspect, and Restore")
+        backup_group = QGroupBox("Backup and restore tools")
         backup_group.setObjectName("setup_backup_restore_group")
         backup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         backup_layout = QVBoxLayout(backup_group)
@@ -210,8 +216,8 @@ class SetupConfigurationSurface(QScrollArea):
         backup_layout.setSpacing(8)
 
         backup_intro_label = QLabel(
-            "Export creates a backup bundle. Inspect is read-only and automatically prepares restore/import review. "
-            "Execute restore/import writes only into the current configured folders."
+            "Export creates a bundle. Inspect stays read-only and prepares restore/import review for the current machine. "
+            "Execute restore writes only into the configured folders."
         )
         backup_intro_label.setObjectName("setup_backup_restore_intro_label")
         backup_intro_label.setWordWrap(True)
@@ -221,7 +227,7 @@ class SetupConfigurationSurface(QScrollArea):
         backup_layout.addWidget(backup_bundle_inspection_summary_label)
         backup_layout.addWidget(restore_import_planning_summary_label)
 
-        setup_output_group = QGroupBox("Setup and migration details")
+        setup_output_group = QGroupBox("Restore and setup details")
         setup_output_group.setObjectName("setup_output_group")
         setup_output_group.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -255,24 +261,42 @@ class SetupConfigurationSurface(QScrollArea):
         main_layout = QVBoxLayout(main_column)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(12)
+        main_layout.addWidget(main_intro_label)
         main_layout.addWidget(setup_group)
         main_layout.addWidget(advanced_group)
         main_layout.addStretch(1)
 
         secondary_column = QWidget()
         secondary_column.setObjectName("setup_surface_secondary_column")
-        secondary_column.setMinimumWidth(320)
-        secondary_column.setMaximumWidth(410)
+        secondary_column.setMinimumWidth(292)
+        secondary_column.setMaximumWidth(360)
         secondary_column.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         secondary_layout = QVBoxLayout(secondary_column)
         secondary_layout.setContentsMargins(0, 0, 0, 0)
-        secondary_layout.setSpacing(12)
-        secondary_layout.addWidget(backup_group)
-        secondary_layout.addWidget(setup_output_group)
+        secondary_layout.setSpacing(10)
+
+        secondary_panel = QFrame()
+        secondary_panel.setObjectName("setup_secondary_panel")
+        secondary_panel_layout = QVBoxLayout(secondary_panel)
+        secondary_panel_layout.setContentsMargins(12, 12, 12, 12)
+        secondary_panel_layout.setSpacing(10)
+        secondary_section_label = QLabel("Backup and restore")
+        secondary_section_label.setObjectName("setup_secondary_section_label")
+        secondary_intro_label = QLabel(
+            "Use this side when you need a bundle, a restore/import review, or migration detail."
+        )
+        secondary_intro_label.setObjectName("setup_secondary_intro_label")
+        secondary_intro_label.setWordWrap(True)
+        secondary_panel_layout.addWidget(secondary_section_label)
+        secondary_panel_layout.addWidget(secondary_intro_label)
+        secondary_panel_layout.addWidget(backup_group)
+        secondary_panel_layout.addWidget(setup_output_group)
+
+        secondary_layout.addWidget(secondary_panel)
         secondary_layout.addStretch(1)
 
-        workspace_layout.addWidget(main_column, 7)
-        workspace_layout.addWidget(secondary_column, 4)
+        workspace_layout.addWidget(main_column, 8)
+        workspace_layout.addWidget(secondary_column, 3)
         content_layout.addWidget(workspace_band)
 
         self.setWidget(content_widget)
@@ -280,6 +304,8 @@ class SetupConfigurationSurface(QScrollArea):
         self.workspace_band = workspace_band
         self.main_column = main_column
         self.secondary_column = secondary_column
+        self.main_intro_label = main_intro_label
+        self.secondary_panel = secondary_panel
         self.setup_group = setup_group
         self.advanced_group = advanced_group
         self.backup_group = backup_group

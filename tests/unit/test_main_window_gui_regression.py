@@ -2268,19 +2268,21 @@ def test_main_window_setup_surface_group_and_scroll_exist(
     workspace_band = setup_scroll.findChild(QWidget, "setup_surface_workspace_band")
     main_column = setup_scroll.findChild(QWidget, "setup_surface_main_column")
     secondary_column = setup_scroll.findChild(QWidget, "setup_surface_secondary_column")
+    secondary_panel = setup_scroll.findChild(QFrame, "setup_secondary_panel")
     primary_actions = setup_scroll.findChild(QWidget, "setup_surface_primary_actions")
     save_button = main_window.findChild(QPushButton, "setup_save_config_button")
     detect_button = main_window.findChild(QPushButton, "setup_detect_environment_button")
     assert workspace_band is not None
     assert main_column is not None
     assert secondary_column is not None
+    assert secondary_panel is not None
     assert primary_actions is not None
     assert save_button is not None
     assert detect_button is not None
     assert setup_group.parentWidget() is main_column
     assert advanced_group.parentWidget() is main_column
-    assert backup_group.parentWidget() is secondary_column
-    assert setup_output_group.parentWidget() is secondary_column
+    assert backup_group.parentWidget() is secondary_panel
+    assert setup_output_group.parentWidget() is secondary_panel
     assert save_button.parentWidget() is primary_actions
     assert detect_button.parentWidget() is primary_actions
     assert setup_output_box.parentWidget() is setup_output_group
@@ -2341,21 +2343,29 @@ def test_main_window_left_inventory_tabs_are_simplified_for_v1_shell(
 def test_main_window_setup_surface_onboarding_copy_is_user_facing(
     main_window: MainWindow,
 ) -> None:
+    main_intro_label = main_window.findChild(QLabel, "setup_main_column_intro_label")
     setup_intro_label = main_window.findChild(QLabel, "setup_local_setup_intro_label")
     backup_intro_label = main_window.findChild(QLabel, "setup_backup_restore_intro_label")
+    secondary_intro_label = main_window.findChild(QLabel, "setup_secondary_intro_label")
 
+    assert main_intro_label is not None
     assert setup_intro_label is not None
     assert backup_intro_label is not None
+    assert secondary_intro_label is not None
+    assert "Packages, Review, Compare, and Mods" in main_intro_label.text()
     assert "live game folder plus your real and sandbox Mods folders" in (
         setup_intro_label.text()
     )
-    assert "does not change installed mods" in setup_intro_label.text()
+    assert "Save and Detect stay read-only" in setup_intro_label.text()
     assert (
-        "Inspect is read-only and automatically prepares restore/import review."
+        "Inspect stays read-only and prepares restore/import review"
         in backup_intro_label.text()
     )
-    assert "Execute restore/import writes only into the current configured folders." in (
+    assert "Execute restore writes only into the configured folders." in (
         backup_intro_label.text()
+    )
+    assert "bundle, a restore/import review, or migration detail" in (
+        secondary_intro_label.text()
     )
 
 

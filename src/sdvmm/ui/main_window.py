@@ -180,7 +180,7 @@ _NO_PLAN_FACTS_TEXT = (
     "Blocked entries: -"
 )
 _NO_RESTORE_IMPORT_PLANNING_SUMMARY_TEXT = (
-    "Inspect backup reads the bundle and automatically prepares a restore/import review for this machine."
+    "Inspect backup reads the bundle and prepares a restore/import review for this machine."
 )
 _NO_ACTIVE_BACKUP_BUNDLE_TEXT = (
     "Current backup bundle: none selected. Inspect or plan a bundle to reuse it across restore steps."
@@ -997,10 +997,10 @@ class MainWindow(QMainWindow):
         footer_layout = QVBoxLayout(footer_panel)
         footer_layout.setContentsMargins(10, 8, 10, 8)
         footer_layout.setSpacing(1)
-        footer_title = QLabel("Write safety")
+        footer_title = QLabel("Typical loop")
         footer_title.setObjectName("workspace_nav_section_label")
         footer_hint = QLabel(
-            "Search, detect, inspect, plan, and compare stay read-only until you choose the write action."
+            "Discover or import, review, install to sandbox, compare, then promote when the live update is ready."
         )
         footer_hint.setObjectName("workspace_nav_footer_label")
         footer_hint.setWordWrap(True)
@@ -1055,8 +1055,8 @@ class MainWindow(QMainWindow):
                 eyebrow="Library and launch",
                 title="Installed workspace",
                 subtitle=(
-                    "Scan the current environment, inspect update guidance, launch the game, "
-                    "and keep selected-mod actions close to the inventory."
+                    "Scan the current environment, check update guidance, launch the game, "
+                    "and keep selected-mod actions beside the inventory."
                 ),
             )
         )
@@ -1464,7 +1464,7 @@ class MainWindow(QMainWindow):
             object_name="compare_tab",
             eyebrow="Read-only drift orientation",
             title="Compare real and sandbox",
-            subtitle="Default to actionable drift, then filter down to the category you need.",
+            subtitle="Check actionable drift before you promote sandbox changes into the live Mods folder.",
             body_widget=compare_tab,
         )
         self._compare_page = compare_tab
@@ -1653,7 +1653,7 @@ class MainWindow(QMainWindow):
             object_name="packages_workspace_page",
             eyebrow="Import downloaded zips",
             title="Packages",
-            subtitle="Choose one or many zip files, let inspection run immediately, and send the current valid package into Review.",
+            subtitle="Import zips, inspect them immediately, and hand the current package into Review.",
             body_widget=intake_tab,
         )
         self._packages_page = intake_tab
@@ -1813,7 +1813,7 @@ class MainWindow(QMainWindow):
             object_name="review_workspace_page",
             eyebrow="Review before writing",
             title="Install review",
-            subtitle="Confirm the current package, choose where it goes, and use Review install before Apply install.",
+            subtitle="Confirm the package, destination, and safety summary before any write.",
             body_widget=plan_tab,
         )
         context_tabs.addTab(review_page, "Review")
@@ -1886,7 +1886,7 @@ class MainWindow(QMainWindow):
             object_name="setup_workspace_page",
             eyebrow="Configure once, reuse everywhere",
             title="Setup and migration",
-            subtitle="Keep live, sandbox, archive, and backup paths honest. Detect and inspect stay read-only until you choose an action that writes.",
+            subtitle="Set paths once. Backup, inspect, and restore stay available as secondary tools when you need them.",
             body_widget=setup_scroll,
         )
         self._setup_scroll = setup_scroll

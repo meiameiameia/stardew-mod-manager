@@ -65,6 +65,12 @@ QWidget#setup_surface_primary_actions {
     background: transparent;
 }
 
+QFrame#setup_secondary_panel {
+    background: #14181b;
+    border: 1px solid rgba(224, 216, 203, 0.05);
+    border-radius: 12px;
+}
+
 QFrame#workspace_page_header {
     background: transparent;
     border-radius: 0px;
@@ -131,11 +137,45 @@ QGroupBox#setup_output_group {
 
 QGroupBox#setup_surface_group,
 QGroupBox#setup_advanced_group {
-    background: #1d2024;
+    background: #1e2328;
 }
 
 QGroupBox#setup_backup_restore_group {
-    background: #171a1d;
+    background: #181c20;
+}
+
+QGroupBox#setup_output_group {
+    background: #161a1d;
+}
+
+QGroupBox#setup_backup_restore_group::title,
+QGroupBox#setup_output_group::title {
+    color: #ab9888;
+}
+
+QLabel#setup_main_column_intro_label {
+    color: #c3b7ab;
+    font-size: 8.85pt;
+}
+
+QLabel#setup_secondary_section_label {
+    color: #9cc38f;
+    font-size: 7.1pt;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+QLabel#setup_local_setup_intro_label,
+QLabel#setup_advanced_intro_label,
+QLabel#setup_backup_restore_intro_label,
+QLabel#setup_secondary_intro_label {
+    color: #b4a89c;
+    font-size: 8.6pt;
+}
+
+QLabel#setup_secondary_intro_label {
+    color: #a79b8e;
 }
 
 QLabel[setupFieldLabel="true"] {
@@ -222,7 +262,7 @@ QLabel#workspace_nav_brand_version,
 QLabel#workspace_nav_section_label,
 QLabel#workspace_nav_footer_label {
     color: #bcaea1;
-    font-size: 8pt;
+    font-size: 7.8pt;
 }
 
 QLabel#workspace_nav_brand_subtitle {
@@ -395,8 +435,8 @@ QPushButton[buttonRole="secondary"]:disabled {
 }
 
 QPushButton[buttonRole="utility"] {
-    background: #1a1e21;
-    color: #c2b3a4;
+    background: #191d20;
+    color: #cdbfb2;
     padding: 3px 7px;
     font-size: 8.35pt;
 }
@@ -409,6 +449,16 @@ QPushButton[buttonRole="utility"]:disabled {
     background: #181a1c;
     color: #6a6661;
     border-color: rgba(224, 216, 203, 0.03);
+}
+
+QWidget#setup_surface_primary_actions QPushButton[buttonRole="primary"] {
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
+QWidget#setup_surface_primary_actions QPushButton[buttonRole="utility"] {
+    padding-left: 10px;
+    padding-right: 10px;
 }
 
 QPushButton[buttonRole="danger"] {
