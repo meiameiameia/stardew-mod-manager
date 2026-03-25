@@ -19,6 +19,7 @@ class DiscoveryTabSurface(QWidget):
         discovery_query_input: QLineEdit,
         discovery_filter_input: QLineEdit,
         discovery_filter_stats_label: QLabel,
+        discovery_results_state_label: QLabel,
         discovery_table: QTableWidget,
         discovery_search_button: QPushButton,
         open_discovered_button: QPushButton,
@@ -53,6 +54,7 @@ class DiscoveryTabSurface(QWidget):
         discovery_results_layout = QVBoxLayout(discovery_results_group)
         discovery_results_layout.setContentsMargins(10, 10, 10, 10)
         discovery_results_layout.setSpacing(8)
+        discovery_results_layout.addWidget(discovery_results_state_label)
         discovery_filter_layout = QHBoxLayout()
         discovery_filter_layout.setSpacing(8)
         discovery_filter_layout.addWidget(QLabel("Filter"))
@@ -65,3 +67,4 @@ class DiscoveryTabSurface(QWidget):
 
         self.search_group = discovery_search_group
         self.results_group = discovery_results_group
+        self.results_state_label = discovery_results_state_label

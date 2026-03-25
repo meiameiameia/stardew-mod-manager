@@ -65,6 +65,12 @@ QWidget#setup_surface_primary_actions {
     background: transparent;
 }
 
+QWidget#archive_state_panel {
+    background: #171b1e;
+    border: 1px solid rgba(224, 216, 203, 0.05);
+    border-radius: 10px;
+}
+
 QFrame#setup_secondary_panel {
     background: #14181b;
     border: 1px solid rgba(224, 216, 203, 0.05);
@@ -93,6 +99,66 @@ QLabel#workspace_page_title {
 QLabel#workspace_page_subtitle {
     color: #b6ab9f;
     font-size: 9pt;
+}
+
+QLabel#mods_inventory_state_label,
+QLabel#discovery_results_state_label,
+QLabel#packages_workspace_state_label,
+QLabel#plan_install_state_label,
+QLabel#archive_empty_state_label,
+QLabel#archive_state_hint_label,
+QLabel#compare_summary_label {
+    background: #171b1e;
+    border: 1px solid rgba(224, 216, 203, 0.05);
+    border-radius: 8px;
+    padding: 6px 9px;
+    color: #cabfb3;
+    font-size: 8.8pt;
+}
+
+QLabel#mods_inventory_state_label[feedbackTone="empty"],
+QLabel#discovery_results_state_label[feedbackTone="empty"],
+QLabel#packages_workspace_state_label[feedbackTone="empty"],
+QLabel#plan_install_state_label[feedbackTone="empty"],
+QLabel#archive_empty_state_label[feedbackTone="empty"],
+QLabel#compare_summary_label[feedbackTone="empty"] {
+    background: #171b1e;
+    border-color: rgba(224, 216, 203, 0.05);
+    color: #c5b8aa;
+}
+
+QLabel#mods_inventory_state_label[feedbackTone="muted"],
+QLabel#discovery_results_state_label[feedbackTone="muted"],
+QLabel#packages_workspace_state_label[feedbackTone="muted"],
+QLabel#plan_install_state_label[feedbackTone="muted"],
+QLabel#archive_state_hint_label[feedbackTone="muted"],
+QLabel#compare_summary_label[feedbackTone="muted"] {
+    background: #191d21;
+    border-color: rgba(224, 216, 203, 0.07);
+    color: #d1c4b8;
+}
+
+QLabel#mods_inventory_state_label[feedbackTone="ready"],
+QLabel#discovery_results_state_label[feedbackTone="ready"],
+QLabel#packages_workspace_state_label[feedbackTone="ready"],
+QLabel#plan_install_state_label[feedbackTone="ready"],
+QLabel#archive_state_hint_label[feedbackTone="ready"],
+QLabel#compare_summary_label[feedbackTone="ready"] {
+    background: #1a231d;
+    border-color: rgba(156, 195, 143, 0.16);
+    color: #dbe8d5;
+}
+
+QLabel#mods_inventory_state_label[feedbackTone="active"],
+QLabel#discovery_results_state_label[feedbackTone="active"],
+QLabel#packages_workspace_state_label[feedbackTone="active"],
+QLabel#plan_install_state_label[feedbackTone="active"],
+QLabel#archive_empty_state_label[feedbackTone="active"],
+QLabel#archive_state_hint_label[feedbackTone="active"],
+QLabel#compare_summary_label[feedbackTone="active"] {
+    background: #252014;
+    border-color: rgba(241, 187, 57, 0.14);
+    color: #f0dfb8;
 }
 
 QGroupBox#top_context_surface_group,

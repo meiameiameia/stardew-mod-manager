@@ -17,6 +17,7 @@ class ArchiveTabSurface(QWidget):
         *,
         archive_filter_input: QLineEdit,
         archive_filter_stats_label: QLabel,
+        archive_state_hint_label: QLabel,
         archive_table: QTableWidget,
         refresh_archives_button: QPushButton,
         restore_archived_button: QPushButton,
@@ -77,6 +78,7 @@ class ArchiveTabSurface(QWidget):
         archive_state_panel_layout.setContentsMargins(0, 0, 0, 0)
         archive_state_panel_layout.setSpacing(0)
         archive_state_panel_layout.addWidget(archive_empty_state_label)
+        archive_state_panel_layout.addWidget(archive_state_hint_label)
         archive_controls_layout.addWidget(archive_state_panel)
 
         layout.addWidget(archive_controls_group)
@@ -95,4 +97,5 @@ class ArchiveTabSurface(QWidget):
 
         self.controls_group = archive_controls_group
         self.empty_state_label = archive_empty_state_label
+        self.state_hint_label = archive_state_hint_label
         self.results_group = archive_results_group
