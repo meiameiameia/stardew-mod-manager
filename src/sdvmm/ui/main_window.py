@@ -325,6 +325,12 @@ class MainWindow(QMainWindow):
         self._mods_inventory_state_label.setObjectName("mods_inventory_state_label")
         self._mods_inventory_state_label.setWordWrap(True)
         _set_auxiliary_label_style(self._mods_inventory_state_label)
+        self._setup_readiness_label = QLabel(
+            "Minimum to start: set Game folder, Real Mods folder, and Sandbox Mods folder."
+        )
+        self._setup_readiness_label.setObjectName("setup_readiness_label")
+        self._setup_readiness_label.setWordWrap(True)
+        _set_auxiliary_label_style(self._setup_readiness_label)
         self._discovery_results_state_label = QLabel(
             "Search by mod name, UniqueID, or author to build a source list."
         )
@@ -859,6 +865,9 @@ class MainWindow(QMainWindow):
         self._game_path_input.textChanged.connect(self._invalidate_restore_import_plan)
         self._mods_path_input.textChanged.connect(self._invalidate_restore_import_plan)
         self._sandbox_mods_path_input.textChanged.connect(self._invalidate_restore_import_plan)
+        self._game_path_input.textChanged.connect(self._refresh_setup_readiness_state)
+        self._mods_path_input.textChanged.connect(self._refresh_setup_readiness_state)
+        self._sandbox_mods_path_input.textChanged.connect(self._refresh_setup_readiness_state)
         self._sandbox_archive_path_input.textChanged.connect(self._invalidate_restore_import_plan)
         self._real_archive_path_input.textChanged.connect(self._invalidate_restore_import_plan)
         self._sandbox_mods_path_input.textChanged.connect(self._invalidate_pending_plan)
@@ -1271,6 +1280,7 @@ class MainWindow(QMainWindow):
             check_nexus_button=check_nexus_button,
             save_button=save_button,
             detect_environment_button=detect_environment_button,
+            setup_readiness_label=self._setup_readiness_label,
             export_backup_button=export_backup_button,
             inspect_backup_button=inspect_backup_button,
             plan_restore_import_button=None,
@@ -4454,12 +4464,95 @@ class MainWindow(QMainWindow):
         self._status_strip_label.setToolTip(text)
 
     def _refresh_workflow_surface_states(self) -> None:
+        self._refresh_setup_readiness_state()
         self._refresh_mods_workspace_state()
         self._refresh_discovery_workspace_state()
         self._refresh_packages_workspace_state()
         self._refresh_review_workspace_state()
         self._refresh_compare_workspace_state()
         self._refresh_archive_workspace_state()
+
+    def _refresh_setup_readiness_state(self, *_: object) -> None:
+        configured_labels = tuple(
+            label
+            for label, field in (
+                ("Game folder", self._game_path_input),
+                ("Real Mods folder", self._mods_path_input),
+                ("Sandbox Mods folder", self._sandbox_mods_path_input),
+            )
+            if field.text().strip()
+        )
+        configured_count = len(configured_labels)
+        missing_labels = tuple(
+            label
+            for label, field in (
+                ("Game folder", self._game_path_input),
+                ("Real Mods folder", self._mods_path_input),
+                ("Sandbox Mods folder", self._sandbox_mods_path_input),
+            )
+            if not field.text().strip()
+        )
+
+        if configured_count == 3:
+            _set_feedback_label_state(
+                self._setup_readiness_label,
+                "ready",
+                "Configured enough to proceed. Save setup if you want to keep these paths, then inspect a package in Packages.",
+            )
+            self._refresh_first_run_status_hint(configured_count, missing_labels)
+            return
+
+        if configured_count == 0:
+            _set_feedback_label_state(
+                self._setup_readiness_label,
+                "empty",
+                "Minimum to start: set Game folder, Real Mods folder, and Sandbox Mods folder.",
+            )
+            self._refresh_first_run_status_hint(configured_count, missing_labels)
+            return
+
+        _set_feedback_label_state(
+            self._setup_readiness_label,
+            "muted",
+            f"{configured_count}/3 core paths set. Add {', '.join(missing_labels)} to unlock the common sandbox-first workflow.",
+        )
+        self._refresh_first_run_status_hint(configured_count, missing_labels)
+
+    def _refresh_first_run_status_hint(
+        self,
+        configured_count: int,
+        missing_labels: tuple[str, ...],
+    ) -> None:
+        if self._config is not None or self._active_operation_name is not None:
+            return
+
+        current_status = self._status_strip_label.text().strip()
+        managed_prefixes = (
+            "No saved configuration found.",
+            "Minimum setup is empty.",
+            "Setup is in progress.",
+            "Core paths are ready.",
+        )
+        if current_status and not current_status.startswith(managed_prefixes):
+            return
+
+        if configured_count == 3:
+            self._set_status(
+                "Core paths are ready. You can inspect a package now, and save setup when you want to keep these paths."
+            )
+            return
+
+        if configured_count == 0:
+            self._set_status(
+                "Minimum setup is empty. Set Game folder, Real Mods folder, and Sandbox Mods folder to unlock the common workflow."
+            )
+            return
+
+        self._set_status(
+            "Setup is in progress. Add "
+            + ", ".join(missing_labels)
+            + " to unlock the common workflow, then save setup when you want to keep these paths."
+        )
 
     def _refresh_mods_workspace_state(self) -> None:
         visible_count = _visible_table_row_count(self._mods_table)
@@ -4480,6 +4573,24 @@ class MainWindow(QMainWindow):
             )
             return
         if total_count == 0:
+            if self._current_scan_target() == SCAN_TARGET_CONFIGURED_REAL_MODS:
+                configured_path = self._mods_path_input.text().strip()
+                if not configured_path:
+                    _set_feedback_label_state(
+                        self._mods_inventory_state_label,
+                        "empty",
+                        "Set the Real Mods folder in Setup, then scan that source to load the live inventory.",
+                    )
+                    return
+            else:
+                configured_path = self._sandbox_mods_path_input.text().strip()
+                if not configured_path:
+                    _set_feedback_label_state(
+                        self._mods_inventory_state_label,
+                        "empty",
+                        "Set the Sandbox Mods folder in Setup, then scan that source to load the sandbox inventory.",
+                    )
+                    return
             _set_feedback_label_state(
                 self._mods_inventory_state_label,
                 "empty",
@@ -4518,7 +4629,7 @@ class MainWindow(QMainWindow):
         if self._current_discovery_result is None:
             query_text = self._discovery_query_input.text().strip()
             message = (
-                "Search by mod name, UniqueID, or author to build a source list."
+                "Optional: search by mod name, UniqueID, or author when you need source pages or update context."
                 if not query_text
                 else "Run Find mods to search this query and build a source list."
             )
@@ -4586,7 +4697,7 @@ class MainWindow(QMainWindow):
         _set_feedback_label_state(
             self._packages_workspace_state_label,
             "empty",
-            "Choose zip files or start intake watch to feed Review.",
+            "After Setup, choose zip files to inspect a package, or start intake watch if you want automatic intake.",
         )
 
     def _refresh_review_workspace_state(self) -> None:
@@ -4603,13 +4714,13 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._plan_install_state_label,
                 "muted",
-                "A package is staged for review. Use Review install to generate the write summary before applying anything.",
+                "A package is staged for review. Review install is the next step; it stays read-only until the write summary is ready.",
             )
             return
         _set_feedback_label_state(
             self._plan_install_state_label,
             "empty",
-            "No package staged yet. Choose one in Packages to open Review.",
+            "Start in Packages: inspect or select a package, then use Open Review.",
         )
 
     def _refresh_compare_workspace_state(self) -> None:

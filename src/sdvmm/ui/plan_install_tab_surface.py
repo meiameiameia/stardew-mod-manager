@@ -53,7 +53,7 @@ class PlanInstallTabSurface(QWidget):
         layout.addWidget(scroll_area)
 
         intro_label = QLabel(
-            "Confirm the current package, generate the read-only review, then apply only when the write summary looks right."
+            "Bring a package in from Packages, generate the read-only review, then apply only when the write summary looks right."
         )
         intro_label.setObjectName("plan_install_intro_label")
         intro_label.setWordWrap(True)

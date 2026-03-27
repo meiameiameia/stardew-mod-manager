@@ -39,6 +39,7 @@ class SetupConfigurationSurface(QScrollArea):
         check_nexus_button: QPushButton,
         save_button: QPushButton,
         detect_environment_button: QPushButton,
+        setup_readiness_label: QLabel,
         export_backup_button: QPushButton,
         inspect_backup_button: QPushButton,
         plan_restore_import_button: QPushButton | None,
@@ -93,10 +94,26 @@ class SetupConfigurationSurface(QScrollArea):
         primary_actions_layout.addStretch(1)
 
         main_intro_label = QLabel(
-            "Set these paths once, then spend most of your time in Packages, Review, Compare, and Mods."
+            "Set the core folders once, confirm that Cinderleaf is ready, then spend most of your time in Packages, Review, Compare, and Mods."
         )
         main_intro_label.setObjectName("setup_main_column_intro_label")
         main_intro_label.setWordWrap(True)
+
+        quickstart_panel = QFrame()
+        quickstart_panel.setObjectName("setup_quickstart_panel")
+        quickstart_layout = QVBoxLayout(quickstart_panel)
+        quickstart_layout.setContentsMargins(12, 12, 12, 12)
+        quickstart_layout.setSpacing(6)
+        quickstart_label = QLabel("Minimum to start")
+        quickstart_label.setObjectName("setup_quickstart_label")
+        quickstart_intro_label = QLabel(
+            "You can start the common workflow once Game folder, Real Mods folder, and Sandbox Mods folder are in place."
+        )
+        quickstart_intro_label.setObjectName("setup_quickstart_intro_label")
+        quickstart_intro_label.setWordWrap(True)
+        quickstart_layout.addWidget(quickstart_label)
+        quickstart_layout.addWidget(quickstart_intro_label)
+        quickstart_layout.addWidget(setup_readiness_label)
 
         setup_group = QGroupBox("Configure paths")
         setup_group.setObjectName("setup_surface_group")
@@ -106,7 +123,7 @@ class SetupConfigurationSurface(QScrollArea):
         setup_layout.setSpacing(10)
         setup_intro_label = QLabel(
             "Point Cinderleaf at the live game folder plus your real and sandbox Mods folders. "
-            "Save and Detect stay read-only for your installed mods."
+            "Save setup keeps these paths. Detect game folders only reads the installed environment."
         )
         setup_intro_label.setObjectName("setup_local_setup_intro_label")
         setup_intro_label.setWordWrap(True)
@@ -146,7 +163,7 @@ class SetupConfigurationSurface(QScrollArea):
         advanced_layout.setContentsMargins(12, 12, 12, 12)
         advanced_layout.setSpacing(10)
         advanced_intro_label = QLabel(
-            "Archive folders keep live and sandbox changes reversible. Nexus and Steam options are optional helpers."
+            "Archive folders keep live and sandbox changes reversible. Nexus and Steam options are optional helpers, not the minimum setup."
         )
         advanced_intro_label.setObjectName("setup_advanced_intro_label")
         advanced_intro_label.setWordWrap(True)
@@ -217,7 +234,7 @@ class SetupConfigurationSurface(QScrollArea):
 
         backup_intro_label = QLabel(
             "Export creates a bundle. Inspect stays read-only and prepares restore/import review for the current machine. "
-            "Execute restore writes only into the configured folders."
+            "Execute restore still writes only into the configured folders."
         )
         backup_intro_label.setObjectName("setup_backup_restore_intro_label")
         backup_intro_label.setWordWrap(True)
@@ -262,6 +279,7 @@ class SetupConfigurationSurface(QScrollArea):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(12)
         main_layout.addWidget(main_intro_label)
+        main_layout.addWidget(quickstart_panel)
         main_layout.addWidget(setup_group)
         main_layout.addWidget(advanced_group)
         main_layout.addStretch(1)
@@ -283,7 +301,7 @@ class SetupConfigurationSurface(QScrollArea):
         secondary_section_label = QLabel("Backup and restore")
         secondary_section_label.setObjectName("setup_secondary_section_label")
         secondary_intro_label = QLabel(
-            "Use this side when you need a bundle, a restore/import review, or migration detail."
+            "Use this side when you need a backup bundle, a restore/import review, or migration detail."
         )
         secondary_intro_label.setObjectName("setup_secondary_intro_label")
         secondary_intro_label.setWordWrap(True)
@@ -305,6 +323,10 @@ class SetupConfigurationSurface(QScrollArea):
         self.main_column = main_column
         self.secondary_column = secondary_column
         self.main_intro_label = main_intro_label
+        self.quickstart_panel = quickstart_panel
+        self.quickstart_label = quickstart_label
+        self.quickstart_intro_label = quickstart_intro_label
+        self.setup_readiness_label = setup_readiness_label
         self.secondary_panel = secondary_panel
         self.setup_group = setup_group
         self.advanced_group = advanced_group

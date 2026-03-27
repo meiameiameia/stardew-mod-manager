@@ -224,6 +224,25 @@ QLabel#setup_main_column_intro_label {
     font-size: 8.85pt;
 }
 
+QFrame#setup_quickstart_panel {
+    background: rgba(156, 195, 143, 0.08);
+    border: 1px solid rgba(156, 195, 143, 0.18);
+    border-radius: 10px;
+}
+
+QLabel#setup_quickstart_label {
+    color: #9cc38f;
+    font-size: 7.25pt;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+QLabel#setup_quickstart_intro_label {
+    color: #c6b9ac;
+    font-size: 8.5pt;
+}
+
 QLabel#setup_secondary_section_label {
     color: #9cc38f;
     font-size: 7.1pt;
