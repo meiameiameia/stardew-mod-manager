@@ -2282,11 +2282,11 @@ class MainWindow(QMainWindow):
 
     def _on_startup_app_update_check_completed(self, status: AppUpdateStatus) -> None:
         self._apply_app_update_status(status)
-        if status.state == "update_available":
-            self._set_status(status.message)
+        self._set_status(self._startup_app_update_final_status_text(status=status))
         self._startup_checks_completed = True
 
-    def _on_startup_app_update_check_failed(self, _message: str) -> None:
+    def _on_startup_app_update_check_failed(self, message: str) -> None:
+        self._set_status(self._startup_app_update_final_status_text(failure_message=message))
         self._startup_checks_completed = True
 
     def _on_browse_game(self) -> None:
@@ -4562,6 +4562,18 @@ class MainWindow(QMainWindow):
     def _set_status(self, text: str) -> None:
         self._status_strip_label.setText(text)
         self._status_strip_label.setToolTip(text)
+
+    @staticmethod
+    def _startup_app_update_final_status_text(
+        *,
+        status: AppUpdateStatus | None = None,
+        failure_message: str | None = None,
+    ) -> str:
+        if status is not None:
+            return status.message or _app_update_summary_label(status)
+        if failure_message:
+            return failure_message
+        return "Cinderleaf release status unavailable right now."
 
     def _refresh_workflow_surface_states(self) -> None:
         self._refresh_setup_readiness_state()

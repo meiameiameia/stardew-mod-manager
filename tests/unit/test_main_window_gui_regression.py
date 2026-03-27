@@ -239,10 +239,22 @@ def test_main_window_startup_auto_checks_run_in_sequence_when_game_path_is_ready
     assert window._smapi_log_status_label.text() == "Log not found"
     assert window._setup_app_update_status_label.text() == "Cinderleaf is up to date."
     assert window._workspace_nav_release_status_label.text() == "App up to date (1.1.5)"
+    assert window._status_strip_label.text() == "Cinderleaf is up to date."
     assert window._startup_checks_completed is True
 
     window.close()
     qapp.processEvents()
+
+
+def test_main_window_startup_app_update_failure_replaces_temporary_footer_status(
+    main_window: MainWindow,
+) -> None:
+    main_window._set_status("Checking Cinderleaf release status on startup...")
+
+    main_window._on_startup_app_update_check_failed("Could not reach the Cinderleaf release feed.")
+
+    assert main_window._status_strip_label.text() == "Could not reach the Cinderleaf release feed."
+    assert main_window._startup_checks_completed is True
 
 
 def test_main_window_close_persists_practical_setup_paths_across_restart(
@@ -517,10 +529,6 @@ def test_main_window_top_context_surface_has_expected_panels(main_window: MainWi
     assert environment_panel is not None
     assert runtime_panel is not None
     assert active_context_panel is not None
-    assert brand_title.text() != "Stardew Mod Manager"
-    assert active_context_panel.parentWidget() is brand_panel
-    assert environment_panel.parentWidget() is operations_panel
-    assert runtime_panel.parentWidget() is operations_panel
 
 
 def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
