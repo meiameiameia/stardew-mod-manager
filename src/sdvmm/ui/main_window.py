@@ -544,7 +544,10 @@ class MainWindow(QMainWindow):
             minimum_contents_length=24,
             sample_text="ExamplePack.zip [1 mod, ready to review]",
         )
-        self._plan_selected_intake_button = QPushButton("Review selected package")
+        self._plan_selected_intake_button = QPushButton("Open Review")
+        self._plan_selected_intake_button.setObjectName("packages_open_review_button")
+        _set_primary_button_style(self._plan_selected_intake_button)
+        self._plan_selected_intake_button.setEnabled(False)
         self._stage_update_intake_button = QPushButton("Review as update")
         self._stage_update_intake_button.setObjectName("packages_intake_stage_update_button")
         self._stage_update_intake_button.setVisible(False)
@@ -1652,7 +1655,7 @@ class MainWindow(QMainWindow):
         detected_layout.addWidget(QLabel("Package to review"), 2, 0)
         detected_layout.addWidget(self._intake_result_combo, 2, 1, 1, 2)
         review_flow_label = QLabel(
-            "The current selection becomes the Review target automatically. Open Review before writing files."
+            "Use Open Review to carry the current package into Review. Review stays read-only until you generate the install summary."
         )
         review_flow_label.setObjectName("packages_intake_review_flow_label")
         review_flow_label.setWordWrap(True)
@@ -1661,12 +1664,12 @@ class MainWindow(QMainWindow):
         self._plan_selected_intake_button.clicked.connect(self._on_plan_selected_intake)
         self._stage_update_intake_button.clicked.connect(self._on_stage_selected_intake_update)
         _set_secondary_button_style(self._stage_update_intake_button)
-        self._plan_selected_intake_button.setVisible(False)
         detected_actions_widget = QWidget()
         detected_actions_layout = QHBoxLayout(detected_actions_widget)
         detected_actions_layout.setContentsMargins(0, 0, 0, 0)
         detected_actions_layout.setSpacing(6)
         detected_actions_layout.addStretch(1)
+        detected_actions_layout.addWidget(self._plan_selected_intake_button)
         detected_actions_layout.addWidget(self._stage_update_intake_button)
         detected_layout.addWidget(detected_actions_widget, 4, 0, 1, 4)
         intake_layout.addWidget(detected_group)
@@ -1761,11 +1764,11 @@ class MainWindow(QMainWindow):
         plan_install_button = QPushButton("Review install")
         plan_install_button.setObjectName("plan_install_plan_button")
         plan_install_button.clicked.connect(self._on_plan_install)
-        _set_secondary_button_style(plan_install_button)
+        self._plan_install_button = plan_install_button
         run_install_button = QPushButton("Apply install")
         run_install_button.setObjectName("plan_install_run_button")
         run_install_button.clicked.connect(self._on_run_install)
-        _set_primary_button_style(run_install_button)
+        self._run_install_button = run_install_button
         plan_tab = PlanInstallTabSurface(
             install_target_combo=self._install_target_combo,
             overwrite_checkbox=self._overwrite_checkbox,
@@ -2790,10 +2793,12 @@ class MainWindow(QMainWindow):
         self._compare_copy_identity_button.setEnabled(has_selection)
         if entry is None:
             self._compare_copy_identity_button.setToolTip("Select a compare row first.")
+            self._refresh_compare_summary_feedback()
             return
         self._compare_copy_identity_button.setToolTip(
             f"Copy {entry.name} ({entry.unique_id}) to the clipboard."
         )
+        self._refresh_compare_summary_feedback()
 
     def _on_copy_compare_row_identity(self) -> None:
         entry = self._selected_compare_entry()
@@ -4561,14 +4566,14 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "ready",
-                "Inspection is ready. Keep the current package staged for Review, or choose a detected package below if you want a different target.",
+                "Inspection is ready. Use Open Review to carry the current package into Review, or choose a different detected package below first.",
             )
             return
         if has_detected_intakes:
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "ready",
-                "Detected packages are ready. Choose one as the current Review target, or use Review as update when it clearly matches installed mods.",
+                "Detected packages are ready. Choose a review target, then use Open Review. Review as update stays available when the package clearly matches an installed mod.",
             )
             return
         if selected_count > 0:
@@ -4585,6 +4590,7 @@ class MainWindow(QMainWindow):
         )
 
     def _refresh_review_workspace_state(self) -> None:
+        self._refresh_review_action_hierarchy()
         if self._pending_install_plan is not None:
             _set_feedback_label_state(
                 self._plan_install_state_label,
@@ -4621,6 +4627,7 @@ class MainWindow(QMainWindow):
                 "Run compare to see actionable drift between the configured real Mods path and sandbox Mods path.",
             )
             return
+        self._refresh_compare_summary_feedback()
         _set_feedback_label_state(
             self._compare_summary_label,
             "ready",
@@ -5426,7 +5433,10 @@ class MainWindow(QMainWindow):
 
             self._stage_package_for_plan_install(
                 str(intake.package_path),
-                status_message=f"Ready for review: {intake.package_path.name}",
+                status_message=(
+                    f"Opened Review for {intake.package_path.name}. "
+                    "Next step: Review install."
+                ),
             )
             return
 
@@ -5436,8 +5446,8 @@ class MainWindow(QMainWindow):
             self._stage_package_for_plan_install(
                 str(inspection_entry.package_path),
                 status_message=(
-                    "Ready for review: "
-                    f"{inspection_entry.package_path.name}"
+                    f"Opened Review for {inspection_entry.package_path.name}. "
+                    "Next step: Review install."
                 ),
             )
             return
@@ -5470,8 +5480,8 @@ class MainWindow(QMainWindow):
             str(intake.package_path),
             apply_update_intent=True,
             status_message=(
-                "Ready for review as update with archive-aware replace enabled: "
-                f"{intake.package_path.name}"
+                "Opened Review with archive-aware replace preselected for "
+                f"{intake.package_path.name}. Next step: Review install."
             ),
         )
 
@@ -6339,9 +6349,23 @@ class MainWindow(QMainWindow):
         self._refresh_staged_package_preview()
 
     def _refresh_stage_package_action_state(self) -> None:
-        self._plan_selected_intake_button.setEnabled(
-            self._selected_intake_index() >= 0 or self._has_stageable_inspected_package()
-        )
+        has_selected_intake = self._selected_intake_index() >= 0
+        has_stageable_inspection = self._has_stageable_inspected_package()
+        can_open_review = has_selected_intake or has_stageable_inspection
+        self._plan_selected_intake_button.setVisible(True)
+        self._plan_selected_intake_button.setEnabled(can_open_review)
+        if has_selected_intake:
+            self._plan_selected_intake_button.setToolTip(
+                "Stage the selected detected package into Review and continue there."
+            )
+        elif has_stageable_inspection:
+            self._plan_selected_intake_button.setToolTip(
+                "Stage the inspected package into Review and continue with the read-only install summary."
+            )
+        else:
+            self._plan_selected_intake_button.setToolTip(
+                "Inspect a zip or select a detected package to open Review."
+            )
         update_like_selection = self._selected_intake_supports_update_action()
         self._stage_update_intake_button.setVisible(update_like_selection)
         self._stage_update_intake_button.setEnabled(update_like_selection)
@@ -6355,6 +6379,60 @@ class MainWindow(QMainWindow):
             "Select a detected package that clearly replaces an installed mod to review it as an update."
         )
         self._refresh_workflow_surface_states()
+
+    def _refresh_review_action_hierarchy(self) -> None:
+        has_staged_package = bool(self._zip_path_input.text().strip())
+        has_reviewed_plan = self._pending_install_plan is not None
+
+        if has_reviewed_plan:
+            self._plan_install_button.setText("Review again")
+            self._plan_install_button.setEnabled(has_staged_package)
+            self._plan_install_button.setToolTip(
+                "Rebuild the read-only install review for the current package."
+            )
+            _set_secondary_button_style(self._plan_install_button)
+
+            self._run_install_button.setText("Apply install")
+            self._run_install_button.setEnabled(True)
+            self._run_install_button.setToolTip(
+                "Apply the reviewed install plan to the selected destination."
+            )
+            _set_primary_button_style(self._run_install_button)
+            return
+
+        self._plan_install_button.setText("Review install")
+        self._plan_install_button.setEnabled(has_staged_package)
+        self._plan_install_button.setToolTip(
+            "Generate the read-only install review for the staged package."
+            if has_staged_package
+            else "Choose a package in Packages first."
+        )
+        _set_primary_button_style(self._plan_install_button)
+
+        self._run_install_button.setText("Apply install")
+        self._run_install_button.setEnabled(False)
+        self._run_install_button.setToolTip(
+            "Create an install plan before executing install."
+        )
+        _set_secondary_button_style(self._run_install_button)
+
+    def _refresh_compare_summary_feedback(self) -> None:
+        result = self._current_mods_compare_result
+        if result is None:
+            return
+        filter_value = self._compare_category_filter_combo.currentData()
+        compare_filter = (
+            filter_value if isinstance(filter_value, str) else _COMPARE_FILTER_ACTIONABLE
+        )
+        self._compare_summary_label.setText(
+            _mods_compare_summary_text(
+                result,
+                filter_value=compare_filter,
+                visible_count=_visible_table_row_count(self._compare_results_table),
+                selected_entry=self._selected_compare_entry(),
+            )
+        )
+        self._compare_summary_label.setToolTip(build_mods_compare_text(result))
 
     def _refresh_staged_package_preview(self) -> None:
         package_path = self._zip_path_input.text().strip()
@@ -7353,6 +7431,7 @@ def _mods_compare_summary_text(
     *,
     filter_value: str = _COMPARE_FILTER_ACTIONABLE,
     visible_count: int | None = None,
+    selected_entry: ModsCompareEntry | None = None,
 ) -> str:
     counts = Counter(entry.state for entry in result.entries)
     visible_rows_text = ""
@@ -7378,7 +7457,62 @@ def _mods_compare_summary_text(
     )
     if parse_warning_total:
         summary += f" Additional scan warnings: {parse_warning_total}."
+    summary += _mods_compare_next_step_text(
+        result,
+        filter_value=filter_value,
+        visible_count=visible_count,
+        selected_entry=selected_entry,
+    )
     return summary
+
+
+def _mods_compare_next_step_text(
+    result: ModsCompareResult,
+    *,
+    filter_value: str,
+    visible_count: int | None,
+    selected_entry: ModsCompareEntry | None,
+) -> str:
+    if selected_entry is not None:
+        if selected_entry.state == "only_in_sandbox":
+            return (
+                f" Selected row: {selected_entry.name} exists only in sandbox. "
+                "If sandbox testing looks good, return to Mods on the sandbox scan target and use Promote selected to real."
+            )
+        if selected_entry.state == "version_mismatch":
+            return (
+                f" Selected row: {selected_entry.name} differs between live and sandbox. "
+                "Review which version should win, then use Mods to promote from sandbox or sync from real."
+            )
+        if selected_entry.state == "only_in_real":
+            return (
+                f" Selected row: {selected_entry.name} exists only in real Mods. "
+                "Use Mods on the real scan target if you want to sync it into sandbox before testing."
+            )
+        if selected_entry.state == "ambiguous_match":
+            return (
+                f" Selected row: {selected_entry.name} is ambiguous. "
+                "Resolve duplicate folders in Mods before you promote or sync anything."
+            )
+        return (
+            f" Selected row: {selected_entry.name} already matches on both sides. "
+            "No promote step is needed unless you want to inspect identity details."
+        )
+
+    if filter_value == _COMPARE_FILTER_ACTIONABLE and visible_count and visible_count > 0:
+        return (
+            " Next step: select a drift row, then return to Mods to sync from real to sandbox or promote from sandbox to real."
+        )
+    if filter_value == _COMPARE_FILTER_ACTIONABLE and visible_count == 0:
+        if any(entry.state == "same_version" for entry in result.entries):
+            return (
+                " Next step: switch to Same version or All categories if you want to inspect rows that already match."
+            )
+    if any(entry.state in {"only_in_sandbox", "version_mismatch"} for entry in result.entries):
+        return (
+            " Next step: use Mods on the sandbox scan target when you are ready to choose what should be promoted to the live Mods folder."
+        )
+    return ""
 
 
 def _mods_compare_filter_intro_text(

@@ -53,7 +53,7 @@ class PlanInstallTabSurface(QWidget):
         layout.addWidget(scroll_area)
 
         intro_label = QLabel(
-            "Confirm the current package, check destination and write summary, then apply only when the plan looks right."
+            "Confirm the current package, generate the read-only review, then apply only when the write summary looks right."
         )
         intro_label.setObjectName("plan_install_intro_label")
         intro_label.setWordWrap(True)
@@ -103,7 +103,7 @@ class PlanInstallTabSurface(QWidget):
         execute_layout.addLayout(plan_actions)
 
         caution_label = QLabel(
-            "Review install is read-only. Apply install writes to the selected destination."
+            "Review install is read-only. Apply install stays unavailable until the review is ready."
         )
         caution_label.setObjectName("plan_install_execute_help_label")
         caution_label.setWordWrap(True)

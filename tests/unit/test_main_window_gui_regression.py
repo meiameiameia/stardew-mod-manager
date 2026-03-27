@@ -2506,10 +2506,10 @@ def test_main_window_install_review_surface_onboarding_copy_is_user_facing(
     assert intro_label is not None
     assert execute_help_label is not None
     assert review_summary_label is not None
-    assert "check destination and write summary" in intro_label.text()
-    assert "apply only when the plan looks right" in intro_label.text()
+    assert "generate the read-only review" in intro_label.text()
+    assert "write summary looks right" in intro_label.text()
     assert "Review install is read-only." in execute_help_label.text()
-    assert "Apply install writes to the selected destination" in execute_help_label.text()
+    assert "Apply install stays unavailable until the review is ready." in execute_help_label.text()
     assert (
         review_summary_label.text()
         == "Review summary: no plan yet. Click Review install to inspect changes."
@@ -4539,9 +4539,11 @@ def test_main_window_key_actions_keep_clear_button_roles(main_window: MainWindow
     assert main_window._restore_archived_button.property("buttonRole") == "secondary"
     assert main_window._delete_archived_button.property("buttonRole") == "danger"
     assert review_install_button is not None
-    assert review_install_button.property("buttonRole") == "secondary"
+    assert review_install_button.property("buttonRole") == "primary"
+    assert review_install_button.isEnabled() is False
     assert apply_install_button is not None
-    assert apply_install_button.property("buttonRole") == "primary"
+    assert apply_install_button.property("buttonRole") == "secondary"
+    assert apply_install_button.isEnabled() is False
 
 
 def test_main_window_workflow_state_labels_exist(main_window: MainWindow) -> None:
@@ -5002,7 +5004,8 @@ def test_main_window_selected_inspected_package_auto_updates_current_review_targ
     assert main_window._zip_path_input.text() == str(second.package_path)
     assert main_window._staged_package_label.text() == str(second.package_path)
     assert main_window._staged_package_label.toolTip() == str(second.package_path)
-    assert main_window._plan_selected_intake_button.isHidden() is True
+    assert main_window._plan_selected_intake_button.isHidden() is False
+    assert main_window._plan_selected_intake_button.isEnabled() is True
 
 
 def test_main_window_single_valid_inspected_package_hides_selector_and_targets_review(
@@ -5063,7 +5066,8 @@ def test_main_window_selected_detected_package_auto_updates_current_review_targe
     assert main_window._staged_package_label.toolTip() == str(intake.package_path)
     assert main_window._staged_package_label.text() == str(intake.package_path)
     assert main_window._pending_install_plan is None
-    assert main_window._plan_selected_intake_button.isHidden() is True
+    assert main_window._plan_selected_intake_button.isHidden() is False
+    assert main_window._plan_selected_intake_button.isEnabled() is True
 
 
 def test_main_window_single_guided_match_auto_selects_detected_package_and_surfaces_message(
@@ -5467,6 +5471,10 @@ def test_main_window_plan_install_stores_sandbox_plan_and_sets_status(
     assert "warning" not in main_window._plan_review_explanation_label.text().casefold()
     assert "blocked" not in main_window._plan_review_explanation_label.text().casefold()
     assert main_window._findings_box.toPlainText().startswith(review.message)
+    assert main_window._plan_install_button.property("buttonRole") == "secondary"
+    assert main_window._plan_install_button.text() == "Review again"
+    assert main_window._run_install_button.property("buttonRole") == "primary"
+    assert main_window._run_install_button.isEnabled() is True
 
 
 def test_main_window_plan_install_stores_real_destination_plan_and_sets_status(
@@ -6784,6 +6792,7 @@ def test_main_window_compare_action_renders_real_vs_sandbox_drift(
     assert "1 version mismatch" in main_window._compare_summary_label.text()
     assert "1 ambiguous" in main_window._compare_summary_label.text()
     assert "Showing actionable drift by default." in main_window._compare_summary_label.text()
+    assert "select a drift row" in main_window._compare_summary_label.text().casefold()
     assert main_window._compare_results_table.item(0, 0) is not None
     assert "Real vs sandbox Mods compare" in main_window._findings_box.toPlainText()
     assert "Category guide:" in main_window._findings_box.toPlainText()
@@ -6885,6 +6894,7 @@ def test_main_window_compare_filter_and_copy_identity_controls_work(
     qapp.processEvents()
 
     assert main_window._compare_copy_identity_button.isEnabled() is True
+    assert "Same Mod already matches on both sides" in main_window._compare_summary_label.text()
     main_window._compare_copy_identity_button.click()
 
     assert QApplication.clipboard().text() == "Same Mod | Sample.Same"
@@ -7287,6 +7297,8 @@ def test_main_window_selecting_valid_intake_enables_plan_selected_button(
     qapp.processEvents()
     assert main_window._selected_intake_index() >= 0
     assert main_window._plan_selected_intake_button.isEnabled() is True
+    assert main_window._plan_selected_intake_button.text() == "Open Review"
+    assert "selected detected package" in main_window._plan_selected_intake_button.toolTip()
 
 
 def test_main_window_intake_selection_does_not_override_global_operation_status(
@@ -7440,6 +7452,7 @@ def test_main_window_stage_update_button_only_appears_for_update_like_detected_p
     qapp.processEvents()
 
     assert main_window._plan_selected_intake_button.isEnabled() is True
+    assert main_window._plan_selected_intake_button.text() == "Open Review"
     assert main_window._stage_update_intake_button.isHidden() is True
 
     main_window._detected_intakes = (update_intake,)
@@ -7456,6 +7469,31 @@ def test_main_window_stage_update_button_only_appears_for_update_like_detected_p
     assert main_window._plan_selected_intake_button.isEnabled() is True
     assert main_window._stage_update_intake_button.isHidden() is False
     assert main_window._stage_update_intake_button.isEnabled() is True
+
+
+def test_main_window_review_action_hierarchy_leads_with_read_only_step_until_plan_exists(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    main_window._set_selected_zip_package_paths(
+        (Path(r"C:\Downloads\AlphaPack.zip"),),
+        current_path=Path(r"C:\Downloads\AlphaPack.zip"),
+    )
+    qapp.processEvents()
+
+    assert main_window._plan_install_button.property("buttonRole") == "primary"
+    assert main_window._plan_install_button.isEnabled() is True
+    assert main_window._plan_install_button.text() == "Review install"
+    assert main_window._run_install_button.property("buttonRole") == "secondary"
+    assert main_window._run_install_button.isEnabled() is False
+
+    main_window._apply_install_plan_review(_sandbox_install_plan())
+    qapp.processEvents()
+
+    assert main_window._plan_install_button.property("buttonRole") == "secondary"
+    assert main_window._plan_install_button.text() == "Review again"
+    assert main_window._run_install_button.property("buttonRole") == "primary"
+    assert main_window._run_install_button.isEnabled() is True
 
 
 def test_main_window_stage_update_carries_archive_replace_intent_into_plan(
