@@ -16,6 +16,21 @@ QWidget {
     font-size: 10pt;
 }
 
+QMessageBox,
+QMessageBox QWidget {
+    background: #16191d;
+    color: #ece7df;
+}
+
+QMessageBox QLabel {
+    background: transparent;
+    color: #ece7df;
+}
+
+QMessageBox QPushButton {
+    min-width: 72px;
+}
+
 QLabel {
     color: #ece7df;
 }

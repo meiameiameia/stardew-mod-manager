@@ -473,6 +473,16 @@ def test_main_window_status_strip_labels_do_not_use_hardcoded_color_stylesheets(
         assert "#" not in stylesheet
 
 
+def test_main_window_stylesheet_explicitly_themes_message_boxes(
+    main_window: MainWindow,
+) -> None:
+    stylesheet = main_window.styleSheet()
+
+    assert "QMessageBox" in stylesheet
+    assert "background: #16191d;" in stylesheet
+    assert "QMessageBox QLabel" in stylesheet
+
+
 def test_main_window_top_context_surface_has_expected_panels(main_window: MainWindow) -> None:
     top_context_group = main_window.findChild(QGroupBox, "top_context_surface_group")
     status_strip_group = main_window.findChild(QGroupBox, "global_status_strip_group")
