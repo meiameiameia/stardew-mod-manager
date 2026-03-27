@@ -2276,16 +2276,21 @@ def test_main_window_setup_surface_group_and_scroll_exist(
     main_column = setup_scroll.findChild(QWidget, "setup_surface_main_column")
     secondary_column = setup_scroll.findChild(QWidget, "setup_surface_secondary_column")
     secondary_panel = setup_scroll.findChild(QFrame, "setup_secondary_panel")
+    quickstart_panel = setup_scroll.findChild(QFrame, "setup_quickstart_panel")
     primary_actions = setup_scroll.findChild(QWidget, "setup_surface_primary_actions")
     save_button = main_window.findChild(QPushButton, "setup_save_config_button")
     detect_button = main_window.findChild(QPushButton, "setup_detect_environment_button")
+    setup_readiness_label = main_window.findChild(QLabel, "setup_readiness_label")
     assert workspace_band is not None
     assert main_column is not None
     assert secondary_column is not None
     assert secondary_panel is not None
+    assert quickstart_panel is not None
     assert primary_actions is not None
     assert save_button is not None
     assert detect_button is not None
+    assert setup_readiness_label is not None
+    assert quickstart_panel.parentWidget() is main_column
     assert setup_group.parentWidget() is main_column
     assert advanced_group.parentWidget() is main_column
     assert backup_group.parentWidget() is secondary_panel
@@ -2351,29 +2356,61 @@ def test_main_window_setup_surface_onboarding_copy_is_user_facing(
     main_window: MainWindow,
 ) -> None:
     main_intro_label = main_window.findChild(QLabel, "setup_main_column_intro_label")
+    quickstart_intro_label = main_window.findChild(QLabel, "setup_quickstart_intro_label")
     setup_intro_label = main_window.findChild(QLabel, "setup_local_setup_intro_label")
     backup_intro_label = main_window.findChild(QLabel, "setup_backup_restore_intro_label")
     secondary_intro_label = main_window.findChild(QLabel, "setup_secondary_intro_label")
 
     assert main_intro_label is not None
+    assert quickstart_intro_label is not None
     assert setup_intro_label is not None
     assert backup_intro_label is not None
     assert secondary_intro_label is not None
-    assert "Packages, Review, Compare, and Mods" in main_intro_label.text()
+    assert "confirm that Cinderleaf is ready" in main_intro_label.text()
+    assert "common workflow" in quickstart_intro_label.text()
     assert "live game folder plus your real and sandbox Mods folders" in (
         setup_intro_label.text()
     )
-    assert "Save and Detect stay read-only" in setup_intro_label.text()
+    assert "Detect game folders only reads the installed environment" in setup_intro_label.text()
     assert (
         "Inspect stays read-only and prepares restore/import review"
         in backup_intro_label.text()
     )
-    assert "Execute restore writes only into the configured folders." in (
+    assert "Execute restore still writes only into the configured folders." in (
         backup_intro_label.text()
     )
-    assert "bundle, a restore/import review, or migration detail" in (
+    assert "backup bundle, a restore/import review, or migration detail" in (
         secondary_intro_label.text()
     )
+
+
+def test_main_window_setup_readiness_label_tracks_minimum_paths(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    readiness_label = main_window.findChild(QLabel, "setup_readiness_label")
+    status_label = main_window._status_strip_label
+
+    assert readiness_label is not None
+    assert "Minimum to start" in readiness_label.text()
+    assert "Minimum setup is empty" in status_label.text()
+
+    main_window._game_path_input.setText(r"C:\Game")
+    qapp.processEvents()
+    assert "1/3 core paths set" in readiness_label.text()
+    assert "Real Mods folder, Sandbox Mods folder" in readiness_label.text()
+    assert "Setup is in progress" in status_label.text()
+
+    main_window._mods_path_input.setText(r"C:\Game\Mods")
+    qapp.processEvents()
+    assert "2/3 core paths set" in readiness_label.text()
+    assert "Sandbox Mods folder" in readiness_label.text()
+
+    main_window._sandbox_mods_path_input.setText(r"C:\Sandbox\Mods")
+    qapp.processEvents()
+    assert "Configured enough to proceed" in readiness_label.text()
+    assert "inspect a package in Packages" in readiness_label.text()
+    assert "Core paths are ready" in status_label.text()
 
 
 def test_main_window_setup_surface_key_inputs_and_actions_exist(main_window: MainWindow) -> None:
@@ -4575,10 +4612,15 @@ def test_main_window_workflow_state_labels_reflect_idle_and_ready_states(
     packages_label = main_window._packages_workspace_state_label
     review_label = main_window._plan_install_state_label
 
-    assert "Scan the selected Mods source" in mods_label.text()
-    assert "Search by mod name" in discovery_label.text()
-    assert "Choose zip files or start intake watch" in packages_label.text()
-    assert "No package staged yet" in review_label.text()
+    main_window._scan_target_combo.setCurrentIndex(
+        main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    )
+    qapp.processEvents()
+
+    assert "Set the Real Mods folder in Setup" in mods_label.text()
+    assert "Optional: search by mod name" in discovery_label.text()
+    assert "After Setup, choose zip files" in packages_label.text()
+    assert "Start in Packages" in review_label.text()
 
     inventory = _mods_inventory(
         _installed_mod_for_update_ui(

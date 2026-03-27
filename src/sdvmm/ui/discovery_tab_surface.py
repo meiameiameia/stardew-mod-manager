@@ -31,6 +31,13 @@ class DiscoveryTabSurface(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
+        intro_label = QLabel(
+            "Optional: look up source pages or update context when you need them."
+        )
+        intro_label.setObjectName("discovery_intro_label")
+        intro_label.setWordWrap(True)
+        layout.addWidget(intro_label)
+
         discovery_search_group = QGroupBox("Search and Source")
         discovery_search_group.setObjectName("discovery_search_group")
         discovery_search_group.setFlat(True)
@@ -67,4 +74,5 @@ class DiscoveryTabSurface(QWidget):
 
         self.search_group = discovery_search_group
         self.results_group = discovery_results_group
+        self.intro_label = intro_label
         self.results_state_label = discovery_results_state_label
