@@ -98,14 +98,53 @@ class SmapiLogFinding:
 
 
 @dataclass(frozen=True, slots=True)
+class SmapiMissingDependency:
+    requiring_mod_name: str | None
+    requiring_mod_unique_id: str | None = None
+    dependency_name: str | None = None
+    dependency_unique_id: str | None = None
+    required_version: str | None = None
+    source_text: str | None = None
+
+    @property
+    def dependency_target(self) -> str | None:
+        return self.dependency_unique_id or self.dependency_name
+
+
+@dataclass(frozen=True, slots=True)
 class SmapiLogReport:
     state: SmapiLogStatusState
     source: SmapiLogSourceKind
     log_path: Path | None
     game_path: Path | None
     findings: tuple[SmapiLogFinding, ...]
+    missing_dependencies: tuple[SmapiMissingDependency, ...] = tuple()
+    missing_dependency_ids: tuple[str, ...] = tuple()
     notes: tuple[str, ...] = tuple()
     message: str | None = None
+
+    @property
+    def actionable_missing_dependency_targets(self) -> tuple[str, ...]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for entry in self.missing_dependencies:
+            target = entry.dependency_target
+            if not target:
+                continue
+            key = target.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(target)
+        return tuple(ordered)
+
+    @property
+    def missing_dependency_entry_count(self) -> int:
+        return len(self.missing_dependencies)
+
+    @property
+    def missing_dependency_target_count(self) -> int:
+        return len(self.actionable_missing_dependency_targets)
 
 
 @dataclass(frozen=True, slots=True)

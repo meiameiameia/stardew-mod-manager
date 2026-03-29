@@ -34,6 +34,7 @@ from sdvmm.domain.models import (
     PackageModEntry,
     PackageWarning,
     SmapiLogFinding,
+    SmapiMissingDependency,
     SmapiLogReport,
     SmapiUpdateStatus,
     SandboxInstallPlan,
@@ -112,6 +113,12 @@ def test_smapi_log_report_text_highlights_missing_dependencies_guidance() -> Non
                 kind="missing_dependency",
                 line_number=120,
                 message="Fancy Pack because it needs mods which aren't installed (Pathoschild.ContentPatcher)",
+            ),
+        ),
+        missing_dependencies=(
+            SmapiMissingDependency(
+                requiring_mod_name="Fancy Pack",
+                dependency_unique_id="Pathoschild.ContentPatcher",
             ),
         ),
         message="Parsed SMAPI log: errors=0, warnings=0, failed_mods=0, missing_dependencies=1, runtime_issues=0.",
