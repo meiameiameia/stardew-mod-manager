@@ -218,13 +218,25 @@ def build_smapi_log_report_text(report: SmapiLogReport) -> str:
     lines.append(f"- Source: {_smapi_log_source_label(report.source)}")
     lines.append(f"- Log path: {report.log_path or '<not loaded>'}")
     lines.append(f"- Game path context: {report.game_path or '<none>'}")
-
-    if report.message:
-        lines.append(f"- Summary: {report.message}")
+    if report.missing_dependency_entry_count > 0:
+        lines.append(
+            f"- Missing dependency targets: {report.missing_dependency_target_count}"
+        )
+    lines.append(f"- Summary: {_smapi_log_summary_text(report)}")
+    if report.missing_dependencies:
+        lines.append("")
+        lines.append("Missing dependency details:")
+        for entry in report.missing_dependencies:
+            requiring_mod = entry.requiring_mod_name or entry.requiring_mod_unique_id or "Unknown mod"
+            dependency_target = entry.dependency_target or "<unknown dependency>"
+            detail = f"- {requiring_mod} -> {dependency_target}"
+            if entry.required_version:
+                detail += f" (required {entry.required_version})"
+            lines.append(detail)
 
     lines.append("")
     if report.findings:
-        counts = _smapi_log_findings_count(report)
+        counts = _smapi_log_issue_counts(report)
         lines.append(
             "- Parsed findings: "
             f"errors={counts[SMAPI_LOG_ERROR]}, "
@@ -255,9 +267,12 @@ def build_smapi_log_report_text(report: SmapiLogReport) -> str:
     elif report.state == SMAPI_LOG_UNABLE_TO_DETERMINE:
         lines.append("- Load a specific SMAPI log file manually and re-check.")
     else:
-        counts = _smapi_log_findings_count(report)
-        if counts[SMAPI_LOG_MISSING_DEPENDENCY] > 0:
+        counts = _smapi_log_issue_counts(report)
+        if report.missing_dependency_entry_count > 0:
             lines.append("- Install missing dependencies first, then launch SMAPI and re-check.")
+            missing_targets = _smapi_missing_dependency_targets(report)
+            if missing_targets:
+                lines.append("- Discover search targets: " + ", ".join(missing_targets))
         elif counts[SMAPI_LOG_FAILED_MOD] > 0:
             lines.append("- Review failed-mod entries and update/remove the failing mods.")
         elif counts[SMAPI_LOG_ERROR] > 0 or counts[SMAPI_LOG_RUNTIME_ISSUE] > 0:
@@ -268,6 +283,10 @@ def build_smapi_log_report_text(report: SmapiLogReport) -> str:
             lines.append("- No obvious issues parsed. Re-check after reproducing a problem if needed.")
 
     return "\n".join(lines)
+
+
+def _smapi_missing_dependency_targets(report: SmapiLogReport) -> tuple[str, ...]:
+    return report.actionable_missing_dependency_targets
 
 
 def build_dependency_preflight_text(
@@ -971,17 +990,31 @@ def _smapi_log_finding_kind_label(kind: str) -> str:
     return labels.get(kind, kind.replace("_", " ").title())
 
 
-def _smapi_log_findings_count(report: SmapiLogReport) -> dict[str, int]:
+def _smapi_log_issue_counts(report: SmapiLogReport) -> dict[str, int]:
     counts = {
         SMAPI_LOG_ERROR: 0,
         SMAPI_LOG_WARNING: 0,
         SMAPI_LOG_FAILED_MOD: 0,
-        SMAPI_LOG_MISSING_DEPENDENCY: 0,
+        SMAPI_LOG_MISSING_DEPENDENCY: report.missing_dependency_entry_count,
         SMAPI_LOG_RUNTIME_ISSUE: 0,
     }
     for finding in report.findings:
+        if finding.kind == SMAPI_LOG_MISSING_DEPENDENCY:
+            continue
         counts[finding.kind] = counts.get(finding.kind, 0) + 1
     return counts
+
+
+def _smapi_log_summary_text(report: SmapiLogReport) -> str:
+    counts = _smapi_log_issue_counts(report)
+    return (
+        "Parsed SMAPI log: "
+        f"errors={counts[SMAPI_LOG_ERROR]}, "
+        f"warnings={counts[SMAPI_LOG_WARNING]}, "
+        f"failed_mods={counts[SMAPI_LOG_FAILED_MOD]}, "
+        f"missing_dependencies={counts[SMAPI_LOG_MISSING_DEPENDENCY]}, "
+        f"runtime_issues={counts[SMAPI_LOG_RUNTIME_ISSUE]}."
+    )
 
 
 def _scan_entry_kind_label(kind: str) -> str:

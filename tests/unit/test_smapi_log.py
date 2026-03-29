@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from sdvmm.domain.models import SmapiMissingDependency
 from sdvmm.services.smapi_log import (
     check_smapi_log_troubleshooting,
     locate_smapi_log,
@@ -91,6 +92,64 @@ def test_parse_smapi_log_text_extracts_key_troubleshooting_findings() -> None:
     assert counts["failed_mod"] >= 2
     assert counts["missing_dependency"] >= 1
     assert counts["runtime_issue"] >= 1
+    assert report.missing_dependency_ids == ("Pathoschild.ContentPatcher",)
+    assert report.missing_dependencies == (
+        SmapiMissingDependency(
+            requiring_mod_name="Fancy Pack",
+            dependency_unique_id="Pathoschild.ContentPatcher",
+            source_text="Pathoschild.ContentPatcher",
+        ),
+    )
+
+
+def test_parse_smapi_log_text_collects_unique_missing_dependency_ids() -> None:
+    log_text = "\n".join(
+        (
+            "[SMAPI] Skipped mods",
+            "[SMAPI]    - Fancy Pack because it needs mods which aren't installed (Pathoschild.ContentPatcher)",
+            "[SMAPI]    - Helper Pack because it needs mods which aren't installed (FlashShifter.SVE, Pathoschild.ContentPatcher)",
+        )
+    )
+
+    report = parse_smapi_log_text(
+        log_text,
+        log_path=Path("/tmp/SMAPI-latest.txt"),
+        source="manual",
+        game_path=Path("/tmp/Game"),
+    )
+
+    assert report.missing_dependency_entry_count == 3
+    assert report.missing_dependency_ids == (
+        "FlashShifter.SVE",
+        "Pathoschild.ContentPatcher",
+    )
+    assert "missing_dependencies=3" in (report.message or "")
+
+
+def test_parse_smapi_log_text_keeps_dependency_target_and_required_version_separate() -> None:
+    log_text = "\n".join(
+        (
+            "[SMAPI] Skipped mods",
+            "[SMAPI]    - Expanded Preconditions Utility because it needs Pathoschild.ContentPatcher 5.0.8 or later, which isn't installed",
+        )
+    )
+
+    report = parse_smapi_log_text(
+        log_text,
+        log_path=Path("/tmp/SMAPI-latest.txt"),
+        source="manual",
+        game_path=Path("/tmp/Game"),
+    )
+
+    assert report.missing_dependency_ids == ("Pathoschild.ContentPatcher",)
+    assert report.missing_dependencies == (
+        SmapiMissingDependency(
+            requiring_mod_name="Expanded Preconditions Utility",
+            dependency_unique_id="Pathoschild.ContentPatcher",
+            required_version="5.0.8 or later",
+            source_text="Pathoschild.ContentPatcher 5.0.8 or later",
+        ),
+    )
 
 
 def test_parse_smapi_log_text_reports_empty_log_as_unable_to_determine() -> None:
