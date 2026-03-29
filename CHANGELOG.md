@@ -7,6 +7,12 @@ All notable user-facing changes for this repository are tracked here.
 - Fixed Windows dark-theme confirmation dialog readability so confirmation prompts stay legible in the shipped portable app.
 - Shipped as a small UI/readability hotfix with no workflow-semantics change.
 
+## [1.1.6]
+
+- Improved SMAPI troubleshooting so missing dependencies surface as actionable targets with clearer context and Discover handoff.
+- Tightened startup and workflow usability with the already-landed shell/status, startup scan, and troubleshooting consistency improvements.
+- Fixed low-height workspace and table usability on `1366x768`, including better scrolling, denser controls, stronger table row budgets, and user-resizable long-text columns.
+
 ## [1.1.4]
 
 - Tightened shell chrome and improved workflow emphasis so the main mod workflow reads more clearly than Setup-heavy earlier builds.

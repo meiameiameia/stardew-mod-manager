@@ -204,8 +204,8 @@ def test_main_window_startup_auto_checks_run_in_sequence_when_game_path_is_ready
     )
     app_update_status = AppUpdateStatus(
         state="up_to_date",
-        current_version="1.1.5",
-        latest_version="1.1.5",
+        current_version="1.1.6",
+        latest_version="1.1.6",
         update_page_url="https://example.test/cinderleaf/releases/latest",
         message="Cinderleaf is up to date.",
     )
@@ -244,7 +244,7 @@ def test_main_window_startup_auto_checks_run_in_sequence_when_game_path_is_ready
     assert window._smapi_update_status_label.text() == "Up to date (4.1.0)"
     assert window._smapi_log_status_label.text() == "Log not found"
     assert window._setup_app_update_status_label.text() == "Cinderleaf is up to date."
-    assert window._workspace_nav_release_status_label.text() == "App up to date (1.1.5)"
+    assert window._workspace_nav_release_status_label.text() == "App up to date (1.1.6)"
     assert window._status_strip_label.text() == "Cinderleaf is up to date."
     assert window._startup_checks_completed is True
 
@@ -312,8 +312,8 @@ def test_main_window_startup_auto_scans_real_and_sandbox_without_switching_selec
     )
     app_update_status = AppUpdateStatus(
         state="up_to_date",
-        current_version="1.1.5",
-        latest_version="1.1.5",
+        current_version="1.1.6",
+        latest_version="1.1.6",
         update_page_url="https://example.test/cinderleaf/releases/latest",
         message="Cinderleaf is up to date.",
     )
@@ -1138,7 +1138,7 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     assert review_button.property("navRole") == "workspace"
     assert brand_title.text() == "Cinderleaf"
     assert brand_subtitle.text() == "for Stardew Valley"
-    assert brand_version.text() == "Version 1.1.5"
+    assert brand_version.text() == "Version 1.1.6"
     brand_layout = brand_panel.layout()
     assert brand_layout is not None
     assert brand_layout.itemAt(1).widget() is brand_title

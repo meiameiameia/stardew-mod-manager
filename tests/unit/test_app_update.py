@@ -6,33 +6,33 @@ from sdvmm.services.update_metadata import MetadataFetchError, REQUEST_FAILURE
 
 def test_check_app_update_status_reports_update_available() -> None:
     fetcher = _FakeFetcher(
-        payload={"tag_name": "v1.1.6", "html_url": "https://example.test/cinderleaf/releases/1.1.6"}
+        payload={"tag_name": "v1.1.7", "html_url": "https://example.test/cinderleaf/releases/1.1.7"}
     )
 
-    status = check_app_update_status(current_version="1.1.5", fetcher=fetcher)
+    status = check_app_update_status(current_version="1.1.6", fetcher=fetcher)
 
     assert status.state == "update_available"
-    assert status.current_version == "1.1.5"
-    assert status.latest_version == "1.1.6"
+    assert status.current_version == "1.1.6"
+    assert status.latest_version == "1.1.7"
 
 
 def test_check_app_update_status_reports_up_to_date() -> None:
-    fetcher = _FakeFetcher(payload={"tag_name": "1.1.5"})
+    fetcher = _FakeFetcher(payload={"tag_name": "1.1.6"})
 
-    status = check_app_update_status(current_version="1.1.5", fetcher=fetcher)
+    status = check_app_update_status(current_version="1.1.6", fetcher=fetcher)
 
     assert status.state == "up_to_date"
-    assert status.current_version == "1.1.5"
-    assert status.latest_version == "1.1.5"
+    assert status.current_version == "1.1.6"
+    assert status.latest_version == "1.1.6"
 
 
 def test_check_app_update_status_reports_unable_when_remote_check_fails() -> None:
     fetcher = _FakeFetcher(error=MetadataFetchError(REQUEST_FAILURE, "network unavailable"))
 
-    status = check_app_update_status(current_version="1.1.5", fetcher=fetcher)
+    status = check_app_update_status(current_version="1.1.6", fetcher=fetcher)
 
     assert status.state == "unable_to_determine"
-    assert status.current_version == "1.1.5"
+    assert status.current_version == "1.1.6"
     assert status.latest_version is None
 
 

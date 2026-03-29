@@ -2662,10 +2662,10 @@ def test_check_app_update_status_uses_supplied_current_version(tmp_path: Path, m
     service = AppShellService(state_file=tmp_path / "app-state.json")
     expected = AppUpdateStatus(
         state="update_available",
-        current_version="1.1.5",
-        latest_version="1.1.6",
+        current_version="1.1.6",
+        latest_version="1.1.7",
         update_page_url="https://example.test/cinderleaf/releases/latest",
-        message="Cinderleaf 1.1.6 is available.",
+        message="Cinderleaf 1.1.7 is available.",
     )
     captured: dict[str, object] = {}
 
@@ -2679,9 +2679,9 @@ def test_check_app_update_status_uses_supplied_current_version(tmp_path: Path, m
         _fake_check_app_update_status,
     )
 
-    status = service.check_app_update_status(current_version="1.1.5")
+    status = service.check_app_update_status(current_version="1.1.6")
 
-    assert captured["current_version"] == "1.1.5"
+    assert captured["current_version"] == "1.1.6"
     assert status == expected
 
 
@@ -2689,10 +2689,10 @@ def test_resolve_app_update_page_url_uses_status_url_when_available(tmp_path: Pa
     _ = tmp_path
     status = AppUpdateStatus(
         state="update_available",
-        current_version="1.1.5",
-        latest_version="1.1.6",
+        current_version="1.1.6",
+        latest_version="1.1.7",
         update_page_url="https://example.test/cinderleaf/releases/latest",
-        message="Cinderleaf 1.1.6 is available.",
+        message="Cinderleaf 1.1.7 is available.",
     )
 
     assert (
