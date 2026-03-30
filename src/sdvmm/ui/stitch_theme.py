@@ -670,6 +670,12 @@ QWidget#setup_surface_primary_actions QPushButton[buttonRole="utility"] {
     padding-right: 10px;
 }
 
+QWidget#setup_managed_folders_action_row QPushButton[buttonRole="secondary"] {
+    min-height: 22px;
+    padding-left: 10px;
+    padding-right: 10px;
+}
+
 QPushButton[buttonRole="danger"] {
     background: #5f2d30;
     color: #ffd9d9;

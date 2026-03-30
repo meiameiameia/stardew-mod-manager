@@ -363,7 +363,7 @@ class MainWindow(QMainWindow):
         self._setup_app_update_status_label.setWordWrap(True)
         _set_auxiliary_label_style(self._setup_app_update_status_label)
         self._managed_folders_summary_label = QLabel(
-            "Set the game folder to see the Cinderleaf-managed paths that can live under it."
+            "Set the game folder to see the Cinderleaf-managed paths. Existing paths keep working until you choose migration."
         )
         self._managed_folders_summary_label.setObjectName("setup_managed_folders_summary_label")
         self._managed_folders_summary_label.setWordWrap(True)
@@ -1497,10 +1497,12 @@ class MainWindow(QMainWindow):
             self._on_open_managed_sandbox_logs_folder
         )
         _set_utility_button_style(open_managed_sandbox_logs_button)
-        migrate_managed_folders_button = QPushButton(
-            "Move Cinderleaf-managed folders under game folder"
-        )
+        migrate_managed_folders_button = QPushButton("Migrate configured folders")
         migrate_managed_folders_button.setObjectName("setup_migrate_managed_folders_button")
+        migrate_managed_folders_button.setToolTip(
+            "Move the configured Sandbox Mods and archive folders into the "
+            "Cinderleaf-managed paths under the game folder."
+        )
         migrate_managed_folders_button.clicked.connect(
             self._on_migrate_cinderleaf_managed_folders
         )
@@ -2838,7 +2840,7 @@ class MainWindow(QMainWindow):
         if not raw_game_path:
             placeholder = "<set the game folder first>"
             self._managed_folders_summary_label.setText(
-                "Set the game folder to see the Cinderleaf-managed paths that can live under it. Existing users can keep current paths until they explicitly choose migration."
+                "Set the game folder to see the Cinderleaf-managed paths. Existing paths keep working until you choose migration."
             )
             for label in (
                 self._managed_sandbox_mods_path_label,
@@ -2868,7 +2870,7 @@ class MainWindow(QMainWindow):
         except AppShellError:
             placeholder = "<game folder is not ready>"
             self._managed_folders_summary_label.setText(
-                "The game folder must point to an accessible Stardew Valley install before Cinderleaf-managed folders can be derived."
+                "The game folder must point to an accessible Stardew Valley install before managed folders can be derived."
             )
             for label in (
                 self._managed_sandbox_mods_path_label,
@@ -2891,7 +2893,7 @@ class MainWindow(QMainWindow):
             return
 
         self._managed_folders_summary_label.setText(
-            "Derived from the game folder and auto-managed by Cinderleaf. Migration is optional: it only moves the configured Sandbox Mods and archive folders if you choose it."
+            "Derived from the game folder. Optional: migrate the configured Sandbox Mods and archive folders here when you are ready."
         )
         self._managed_sandbox_mods_path_label.setText(str(managed_paths.sandbox_mods_path))
         self._managed_sandbox_mods_path_label.setToolTip(str(managed_paths.sandbox_mods_path))

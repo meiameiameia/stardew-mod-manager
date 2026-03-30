@@ -310,13 +310,19 @@ class SetupConfigurationSurface(QScrollArea):
         managed_layout = QVBoxLayout(managed_group)
         managed_layout.setContentsMargins(12, 12, 12, 12)
         managed_layout.setSpacing(8)
-        managed_intro_label = QLabel(
-            "These folders are derived from the game folder. They stay optional for existing users, and the migration action only moves Cinderleaf-managed paths when you choose it."
+        managed_action_row = QWidget()
+        managed_action_row.setObjectName("setup_managed_folders_action_row")
+        managed_action_layout = QHBoxLayout(managed_action_row)
+        managed_action_layout.setContentsMargins(0, 0, 0, 0)
+        managed_action_layout.setSpacing(8)
+        migrate_managed_folders_button.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Fixed,
         )
-        managed_intro_label.setObjectName("setup_managed_folders_intro_label")
-        managed_intro_label.setWordWrap(True)
-        managed_layout.addWidget(managed_intro_label)
+        managed_action_layout.addWidget(migrate_managed_folders_button)
+        managed_action_layout.addStretch(1)
         managed_layout.addWidget(managed_folders_summary_label)
+        managed_layout.addWidget(managed_action_row)
         managed_layout.addWidget(
             _build_read_only_path_row(
                 object_name="setup_managed_sandbox_mods_row",
@@ -357,7 +363,6 @@ class SetupConfigurationSurface(QScrollArea):
                 open_button=open_managed_sandbox_logs_button,
             )
         )
-        managed_layout.addWidget(migrate_managed_folders_button)
 
         setup_output_group = QGroupBox("Restore and setup details")
         setup_output_group.setObjectName("setup_output_group")
@@ -431,6 +436,8 @@ class SetupConfigurationSurface(QScrollArea):
 
         workspace_layout.addWidget(main_column, 8)
         workspace_layout.addWidget(secondary_column, 3)
+        workspace_layout.setAlignment(main_column, Qt.AlignmentFlag.AlignTop)
+        workspace_layout.setAlignment(secondary_column, Qt.AlignmentFlag.AlignTop)
         content_layout.addWidget(workspace_band)
 
         self.setWidget(content_widget)

@@ -4,7 +4,7 @@
 
 `for Stardew Valley` is a descriptive subtitle, not an official affiliation. Cinderleaf is an independent community tool and is not affiliated with or endorsed by ConcernedApe.
 
-Current public release: **1.1.6**
+Current public release: **1.1.7**
 
 ## Why use it
 
@@ -39,11 +39,11 @@ These screenshots reflect the current low-height-compatible UI at `1366x768`.
 The supported public build is a Windows portable zip published to GitHub Releases.
 
 1. Open the repository's [GitHub Releases page](https://github.com/meiameiameia/stardew-mod-manager/releases).
-2. Download `cinderleaf-1.1.6-windows-portable.zip`.
+2. Download `cinderleaf-1.1.7-windows-portable.zip`.
 3. Extract it to a normal folder.
 4. Run `Cinderleaf.exe`.
 
-If a checksum file is published with the release, verify `cinderleaf-1.1.6-windows-portable.zip.sha256` before announcing or mirroring the build.
+If a checksum file is published with the release, verify `cinderleaf-1.1.7-windows-portable.zip.sha256` before announcing or mirroring the build.
 
 Current release caveats:
 
@@ -76,9 +76,9 @@ py -3.12 -m venv .venv
 The build script produces:
 
 ```text
-dist\cinderleaf-1.1.6-windows-portable\
-dist\cinderleaf-1.1.6-windows-portable.zip
-dist\cinderleaf-1.1.6-windows-portable.zip.sha256
+dist\cinderleaf-1.1.7-windows-portable\
+dist\cinderleaf-1.1.7-windows-portable.zip
+dist\cinderleaf-1.1.7-windows-portable.zip.sha256
 ```
 
 ## Current limitations

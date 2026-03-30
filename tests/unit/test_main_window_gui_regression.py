@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -205,8 +205,8 @@ def test_main_window_startup_auto_checks_run_in_sequence_when_game_path_is_ready
     )
     app_update_status = AppUpdateStatus(
         state="up_to_date",
-        current_version="1.1.6",
-        latest_version="1.1.6",
+        current_version="1.1.7",
+        latest_version="1.1.7",
         update_page_url="https://example.test/cinderleaf/releases/latest",
         message="Cinderleaf is up to date.",
     )
@@ -245,7 +245,7 @@ def test_main_window_startup_auto_checks_run_in_sequence_when_game_path_is_ready
     assert window._smapi_update_status_label.text() == "Up to date (4.1.0)"
     assert window._smapi_log_status_label.text() == "Log not found"
     assert window._setup_app_update_status_label.text() == "Cinderleaf is up to date."
-    assert window._workspace_nav_release_status_label.text() == "App up to date (1.1.6)"
+    assert window._workspace_nav_release_status_label.text() == "App up to date (1.1.7)"
     assert window._status_strip_label.text() == "Cinderleaf is up to date."
     assert window._startup_checks_completed is True
 
@@ -313,8 +313,8 @@ def test_main_window_startup_auto_scans_real_and_sandbox_without_switching_selec
     )
     app_update_status = AppUpdateStatus(
         state="up_to_date",
-        current_version="1.1.6",
-        latest_version="1.1.6",
+        current_version="1.1.7",
+        latest_version="1.1.7",
         update_page_url="https://example.test/cinderleaf/releases/latest",
         message="Cinderleaf is up to date.",
     )
@@ -1336,7 +1336,7 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     assert review_button.property("navRole") == "workspace"
     assert brand_title.text() == "Cinderleaf"
     assert brand_subtitle.text() == "for Stardew Valley"
-    assert brand_version.text() == "Version 1.1.6"
+    assert brand_version.text() == "Version 1.1.7"
     brand_layout = brand_panel.layout()
     assert brand_layout is not None
     assert brand_layout.itemAt(1).widget() is brand_title
@@ -3143,6 +3143,43 @@ def test_main_window_setup_surface_group_and_scroll_exist(
     }
 
 
+def test_main_window_setup_surface_columns_align_to_top_of_workspace_band(
+    main_window: MainWindow,
+    qapp: QApplication,
+) -> None:
+    setup_scroll = main_window._setup_scroll
+    setup_page = main_window._setup_page
+
+    assert setup_scroll is not None
+    assert setup_page is not None
+
+    main_window._context_tabs.setCurrentWidget(setup_page)
+    qapp.processEvents()
+
+    workspace_band = setup_scroll.findChild(QWidget, "setup_surface_workspace_band")
+    main_column = setup_scroll.findChild(QWidget, "setup_surface_main_column")
+    secondary_column = setup_scroll.findChild(QWidget, "setup_surface_secondary_column")
+    main_intro_label = setup_scroll.findChild(QLabel, "setup_main_column_intro_label")
+    secondary_panel = setup_scroll.findChild(QFrame, "setup_secondary_panel")
+
+    assert workspace_band is not None
+    assert main_column is not None
+    assert secondary_column is not None
+    assert main_intro_label is not None
+    assert secondary_panel is not None
+
+    workspace_top_left = workspace_band.mapTo(setup_scroll.viewport(), QPoint(0, 0))
+    main_column_top_left = main_column.mapTo(setup_scroll.viewport(), QPoint(0, 0))
+    secondary_column_top_left = secondary_column.mapTo(setup_scroll.viewport(), QPoint(0, 0))
+    main_intro_top_left = main_intro_label.mapTo(setup_scroll.viewport(), QPoint(0, 0))
+    secondary_panel_top_left = secondary_panel.mapTo(setup_scroll.viewport(), QPoint(0, 0))
+
+    assert main_column_top_left.y() == workspace_top_left.y()
+    assert secondary_column_top_left.y() == workspace_top_left.y()
+    assert main_intro_top_left.y() - workspace_top_left.y() <= 4
+    assert secondary_panel_top_left.y() - workspace_top_left.y() <= 4
+
+
 def test_main_window_top_level_context_tabs_follow_v1_workflow_order(
     main_window: MainWindow,
 ) -> None:
@@ -3299,26 +3336,62 @@ def test_main_window_setup_managed_folders_surface_tracks_game_folder(
     qapp: QApplication,
     tmp_path: Path,
 ) -> None:
+    main_window.showMaximized()
+    qapp.processEvents()
+    main_window._context_tabs.setCurrentWidget(main_window._setup_page)
+    qapp.processEvents()
+
     summary_label = main_window.findChild(QLabel, "setup_managed_folders_summary_label")
     sandbox_mods_label = main_window.findChild(QLabel, "setup_managed_sandbox_mods_path_label")
     sandbox_logs_label = main_window.findChild(QLabel, "setup_managed_sandbox_logs_path_label")
+    sandbox_mods_row = main_window.findChild(QWidget, "setup_managed_sandbox_mods_row")
+    setup_scroll = main_window.findChild(QScrollArea, "setup_workspace_tab")
     migrate_button = main_window.findChild(QPushButton, "setup_migrate_managed_folders_button")
+    managed_action_intro = main_window.findChild(
+        QLabel, "setup_managed_folders_action_intro_label"
+    )
+    managed_intro = main_window.findChild(QLabel, "setup_managed_folders_intro_label")
 
     assert summary_label is not None
     assert sandbox_mods_label is not None
     assert sandbox_logs_label is not None
+    assert sandbox_mods_row is not None
+    assert setup_scroll is not None
     assert migrate_button is not None
+    assert managed_action_intro is None
+    assert managed_intro is None
+    assert migrate_button.text() == "Migrate configured folders"
+    assert "configured Sandbox Mods and archive folders" in migrate_button.toolTip()
+    assert migrate_button.property("buttonRole") == "secondary"
     assert migrate_button.isEnabled() is False
+    assert migrate_button.isVisible() is True
+    assert (
+        migrate_button.sizePolicy().horizontalPolicy()
+        == QSizePolicy.Policy.Maximum
+    )
+    setup_viewport = setup_scroll.viewport()
+    migrate_top_left = migrate_button.mapTo(setup_viewport, QPoint(0, 0))
+    sandbox_row_top_left = sandbox_mods_row.mapTo(setup_viewport, QPoint(0, 0))
+    assert migrate_top_left.y() >= 0
+    assert migrate_top_left.y() < sandbox_row_top_left.y()
 
     game_path = tmp_path / "Game"
     game_path.mkdir()
     main_window._game_path_input.setText(str(game_path))
     qapp.processEvents()
 
-    assert "Derived from the game folder" in summary_label.text()
+    assert (
+        summary_label.text()
+        == "Derived from the game folder. Optional: migrate the configured Sandbox Mods and archive folders here when you are ready."
+    )
     assert sandbox_mods_label.text() == str(game_path / "Cinderleaf" / "Sandbox Mods")
     assert sandbox_logs_label.text() == str(game_path / "Cinderleaf" / "Logs" / "Sandbox")
     assert migrate_button.isEnabled() is True
+    assert 22 <= migrate_button.height() <= 28
+    migrate_top_left = migrate_button.mapTo(setup_viewport, QPoint(0, 0))
+    sandbox_row_top_left = sandbox_mods_row.mapTo(setup_viewport, QPoint(0, 0))
+    assert migrate_top_left.y() >= 0
+    assert migrate_top_left.y() < sandbox_row_top_left.y()
 
 
 def test_main_window_managed_folder_migration_moves_paths_and_updates_config(

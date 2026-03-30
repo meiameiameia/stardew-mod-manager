@@ -2,16 +2,22 @@
 
 All notable user-facing changes for this repository are tracked here.
 
-## [1.1.5]
+## [1.1.7]
 
-- Fixed Windows dark-theme confirmation dialog readability so confirmation prompts stay legible in the shipped portable app.
-- Shipped as a small UI/readability hotfix with no workflow-semantics change.
+- Added optional Cinderleaf-managed folder guidance and migration so Setup can derive managed paths from the game folder without changing existing user paths until explicitly confirmed.
+- Improved package, discovery, and review context handoff so Open Review and Stage update keep the current package intent clearer while install review stays read-only until a write summary is generated.
+- Added archive cleanup for older retained copies, including explicit cleanup-candidate labeling, confirmation before deletion, and retention of the latest archived copies per mod.
 
 ## [1.1.6]
 
 - Improved SMAPI troubleshooting so missing dependencies surface as actionable targets with clearer context and Discover handoff.
 - Tightened startup and workflow usability with the already-landed shell/status, startup scan, and troubleshooting consistency improvements.
 - Fixed low-height workspace and table usability on `1366x768`, including better scrolling, denser controls, stronger table row budgets, and user-resizable long-text columns.
+
+## [1.1.5]
+
+- Fixed Windows dark-theme confirmation dialog readability so confirmation prompts stay legible in the shipped portable app.
+- Shipped as a small UI/readability hotfix with no workflow-semantics change.
 
 ## [1.1.4]
 
