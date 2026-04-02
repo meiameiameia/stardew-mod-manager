@@ -50,6 +50,7 @@ from sdvmm.app.shell_service import SandboxModProfileCreateResult
 from sdvmm.app.shell_service import SandboxModProfileDeleteResult
 from sdvmm.app.shell_service import SandboxModProfileSelectResult
 from sdvmm.domain.install_codes import BLOCKED
+from sdvmm.domain.dependency_codes import SATISFIED
 from sdvmm.domain.discovery_codes import COMPATIBLE
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_NEXUS
 from sdvmm.domain.discovery_codes import SMAPI_COMPATIBILITY_LIST_PROVIDER
@@ -64,6 +65,7 @@ from sdvmm.domain.models import AppUpdateStatus
 from sdvmm.domain.models import BackupBundleInspectionItem
 from sdvmm.domain.models import BackupBundleInspectionResult
 from sdvmm.domain.models import DownloadsIntakeResult
+from sdvmm.domain.models import DependencyPreflightFinding
 from sdvmm.domain.models import GameEnvironmentStatus
 from sdvmm.domain.models import InstalledMod
 from sdvmm.domain.models import InstallOperationEntryRecord
@@ -7992,6 +7994,11 @@ def test_main_window_plan_install_stores_real_destination_plan_and_sets_status(
         return real_plan
 
     monkeypatch.setattr(main_window._shell_service, "build_install_plan", fake_build_install_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
 
     main_window._on_plan_install()
 
@@ -8019,6 +8026,11 @@ def test_main_window_plan_install_blocked_review_clears_pending_plan_and_sets_st
     review = main_window._shell_service.review_install_execution(blocked_plan)
 
     monkeypatch.setattr(main_window._shell_service, "build_install_plan", lambda **_: blocked_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
 
     main_window._pending_install_plan = _sandbox_install_plan()
     main_window._on_plan_install()
@@ -8050,6 +8062,11 @@ def test_main_window_plan_install_blocked_by_package_issues_sets_summary(
         ),
     )
     monkeypatch.setattr(main_window._shell_service, "build_install_plan", lambda **_: blocked_package_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
 
     main_window._on_plan_install()
 
@@ -8069,6 +8086,11 @@ def test_main_window_plan_install_runnable_with_warnings_sets_summary(
         warnings=("Optional compatibility warning.",),
     )
     monkeypatch.setattr(main_window._shell_service, "build_install_plan", lambda **_: warning_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
 
     main_window._on_plan_install()
 
@@ -8082,6 +8104,80 @@ def test_main_window_plan_install_runnable_with_warnings_sets_summary(
         "Archive writes: no\n"
         "Approval required: no\n"
         "Blocked entries: 0"
+    )
+
+
+def test_main_window_plan_install_shows_staged_dependency_cue_for_batch(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_entry = SandboxInstallPlanEntry(
+        name="Content Patcher",
+        unique_id="Pathoschild.ContentPatcher",
+        version="2.0.0",
+        source_package_path=Path(r"C:\Packages\ContentPatcher.zip"),
+        source_manifest_path=r"C:\Packages\ContentPatcher\manifest.json",
+        source_root_path=r"C:\Packages\ContentPatcher",
+        target_path=Path(r"C:\Sandbox\Mods\ContentPatcher"),
+        action=INSTALL_NEW,
+        target_exists=False,
+        archive_path=None,
+        can_install=True,
+        warnings=tuple(),
+    )
+    dependent_entry = SandboxInstallPlanEntry(
+        name="CP Pack",
+        unique_id="Sample.ContentPack",
+        version="1.0.0",
+        source_package_path=Path(r"C:\Packages\Pack.zip"),
+        source_manifest_path=r"C:\Packages\Pack\manifest.json",
+        source_root_path=r"C:\Packages\Pack",
+        target_path=Path(r"C:\Sandbox\Mods\[CP] Pack"),
+        action=INSTALL_NEW,
+        target_exists=False,
+        archive_path=None,
+        can_install=True,
+        warnings=tuple(),
+    )
+    dependency_plan = SandboxInstallPlan(
+        package_path=Path(r"C:\Packages\ContentPatcher.zip"),
+        sandbox_mods_path=Path(r"C:\Sandbox\Mods"),
+        sandbox_archive_path=Path(r"C:\Sandbox\.sdvmm-sandbox-archive"),
+        entries=(provider_entry, dependent_entry),
+        package_findings=tuple(),
+        package_warnings=tuple(),
+        plan_warnings=tuple(),
+        dependency_findings=(
+            DependencyPreflightFinding(
+                source="sandbox_plan",
+                state=SATISFIED,
+                required_by_unique_id="Sample.ContentPack",
+                required_by_name="CP Pack",
+                dependency_unique_id="Pathoschild.ContentPatcher",
+                required=True,
+            ),
+        ),
+        destination_kind=INSTALL_TARGET_SANDBOX_MODS,
+        package_paths=(
+            Path(r"C:\Packages\ContentPatcher.zip"),
+            Path(r"C:\Packages\Pack.zip"),
+        ),
+    )
+    monkeypatch.setattr(main_window._shell_service, "build_install_plan", lambda **_: dependency_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
+
+    main_window._on_plan_install()
+
+    assert (
+        main_window._plan_review_explanation_label.text()
+        == "Ready: 1 staged dependency satisfied for 1 queued mod via 1 staged provider."
+    )
+    assert "Batch dependencies: 1 satisfied in batch via 1 staged provider" in (
+        main_window._plan_facts_label.text()
     )
 
 

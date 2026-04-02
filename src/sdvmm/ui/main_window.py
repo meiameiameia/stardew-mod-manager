@@ -152,6 +152,7 @@ from sdvmm.domain.models import (
     SandboxInstallPlan,
 )
 from sdvmm.domain.unique_id import canonicalize_unique_id
+from sdvmm.domain.dependency_codes import SATISFIED
 from sdvmm.domain.smapi_codes import (
     SMAPI_DETECTED_VERSION_KNOWN,
     SMAPI_NOT_DETECTED_FOR_UPDATE,
@@ -9872,6 +9873,7 @@ def _build_plan_review_explanation_text(
     dependency_warning = _first_dependency_warning_text(plan)
     package_issue = _first_package_issue_text(plan)
     runnable_warning = _first_runnable_warning_text(plan, review)
+    staged_dependency_note = _staged_dependency_note_text(plan)
 
     if not review.allowed:
         if dependency_warning:
@@ -9886,6 +9888,8 @@ def _build_plan_review_explanation_text(
 
     if runnable_warning:
         return f"Warning: {runnable_warning}"
+    if staged_dependency_note is not None:
+        return staged_dependency_note
     return "Ready: no blocking issues detected."
 
 
@@ -9896,14 +9900,18 @@ def _build_plan_facts_text(
     summary = review.summary
     blocked_entry_count = _count_blocked_plan_entries(plan)
     package_count = _plan_source_package_count(plan)
-    return (
+    lines = [
         f"Packages: {package_count}\n"
         f"Entries: {summary.total_entry_count}\n"
         f"Replace existing: {'yes' if summary.has_existing_targets_to_replace else 'no'}\n"
         f"Archive writes: {'yes' if summary.has_archive_writes else 'no'}\n"
         f"Approval required: {'yes' if review.requires_explicit_approval else 'no'}\n"
         f"Blocked entries: {blocked_entry_count}"
-    )
+    ]
+    staged_dependency_fact = _staged_dependency_fact_text(plan)
+    if staged_dependency_fact is not None:
+        lines.append(staged_dependency_fact)
+    return "".join(lines)
 
 
 def _count_blocked_plan_entries(plan: SandboxInstallPlan) -> int:
@@ -9916,6 +9924,60 @@ def _count_blocked_plan_entries(plan: SandboxInstallPlan) -> int:
 
 def _plan_source_package_count(plan: SandboxInstallPlan) -> int:
     return len(plan.package_paths) if plan.package_paths else 1
+
+
+def _staged_dependency_relation_counts(plan: SandboxInstallPlan) -> tuple[int, int, int]:
+    if _plan_source_package_count(plan) <= 1:
+        return (0, 0, 0)
+
+    installable_keys = {
+        canonicalize_unique_id(entry.unique_id)
+        for entry in plan.entries
+        if entry.can_install and entry.action != "blocked"
+    }
+    if not installable_keys:
+        return (0, 0, 0)
+
+    relation_count = 0
+    provider_keys: set[str] = set()
+    dependent_keys: set[str] = set()
+    for finding in plan.dependency_findings:
+        if finding.state != SATISFIED:
+            continue
+        dependency_key = canonicalize_unique_id(finding.dependency_unique_id)
+        dependent_key = canonicalize_unique_id(finding.required_by_unique_id)
+        if dependency_key == dependent_key:
+            continue
+        if dependency_key not in installable_keys or dependent_key not in installable_keys:
+            continue
+        relation_count += 1
+        provider_keys.add(dependency_key)
+        dependent_keys.add(dependent_key)
+    return (relation_count, len(provider_keys), len(dependent_keys))
+
+
+def _staged_dependency_note_text(plan: SandboxInstallPlan) -> str | None:
+    relation_count, provider_count, dependent_count = _staged_dependency_relation_counts(plan)
+    if relation_count == 0:
+        return None
+    relation_label = "dependency" if relation_count == 1 else "dependencies"
+    dependent_label = "mod" if dependent_count == 1 else "mods"
+    provider_label = "provider" if provider_count == 1 else "providers"
+    return (
+        f"Ready: {relation_count} staged {relation_label} satisfied for "
+        f"{dependent_count} queued {dependent_label} via {provider_count} staged {provider_label}."
+    )
+
+
+def _staged_dependency_fact_text(plan: SandboxInstallPlan) -> str | None:
+    relation_count, provider_count, _ = _staged_dependency_relation_counts(plan)
+    if relation_count == 0:
+        return None
+    provider_label = "provider" if provider_count == 1 else "providers"
+    return (
+        f"\nBatch dependencies: {relation_count} satisfied in batch "
+        f"via {provider_count} staged {provider_label}"
+    )
 
 
 def _first_dependency_warning_text(plan: SandboxInstallPlan) -> str | None:

@@ -3890,6 +3890,142 @@ def test_build_install_plan_accepts_multiple_package_paths_and_executes_as_a_bat
     assert (sandbox / "Beta" / "file.txt").read_text(encoding="utf-8") == "beta"
 
 
+def test_build_install_plan_batch_satisfies_staged_required_dependency(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    real_mods.mkdir()
+    sandbox.mkdir()
+    archive_root.mkdir()
+
+    provider_package = tmp_path / "ContentPatcher.zip"
+    with ZipFile(provider_package, "w") as archive:
+        archive.writestr(
+            "ContentPatcher/manifest.json",
+            (
+                "{"
+                '"Name":"Content Patcher",'
+                '"UniqueID":"Pathoschild.ContentPatcher",'
+                '"Version":"2.0.0"'
+                "}"
+            ),
+        )
+
+    dependent_package = tmp_path / "Pack.zip"
+    with ZipFile(dependent_package, "w") as archive:
+        archive.writestr(
+            "[CP] Pack/manifest.json",
+            (
+                "{"
+                '"Name":"CP Pack",'
+                '"UniqueID":"Sample.ContentPack",'
+                '"Version":"1.0.0",'
+                '"ContentPackFor":{"UniqueID":"Pathoschild.ContentPatcher"}'
+                "}"
+            ),
+        )
+
+    plan = service.build_install_plan(
+        package_paths_text=(str(provider_package), str(dependent_package)),
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox),
+        real_archive_path_text="",
+        sandbox_archive_path_text=str(archive_root),
+        allow_overwrite=False,
+        configured_real_mods_path=real_mods,
+    )
+
+    assert len(plan.entries) == 2
+    assert all(entry.can_install for entry in plan.entries)
+    assert not any(
+        "Missing required dependencies" in warning
+        for entry in plan.entries
+        for warning in entry.warnings
+    )
+    assert any(
+        finding.required_by_unique_id == "Sample.ContentPack"
+        and finding.dependency_unique_id == "Pathoschild.ContentPatcher"
+        and finding.state == "satisfied"
+        for finding in plan.dependency_findings
+    )
+
+
+def test_build_install_plan_batch_does_not_treat_blocked_staged_entry_as_dependency_provider(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    real_mods.mkdir()
+    sandbox.mkdir()
+    archive_root.mkdir()
+    existing_provider = sandbox / "ContentPatcher"
+    existing_provider.mkdir()
+    (existing_provider / "manifest.json").write_text(
+        '{"Name":"Old Content Patcher","UniqueID":"Different.Provider","Version":"1.0.0"}',
+        encoding="utf-8",
+    )
+
+    provider_package = tmp_path / "ContentPatcher.zip"
+    with ZipFile(provider_package, "w") as archive:
+        archive.writestr(
+            "ContentPatcher/manifest.json",
+            (
+                "{"
+                '"Name":"Content Patcher",'
+                '"UniqueID":"Pathoschild.ContentPatcher",'
+                '"Version":"2.0.0"'
+                "}"
+            ),
+        )
+
+    dependent_package = tmp_path / "Pack.zip"
+    with ZipFile(dependent_package, "w") as archive:
+        archive.writestr(
+            "[CP] Pack/manifest.json",
+            (
+                "{"
+                '"Name":"CP Pack",'
+                '"UniqueID":"Sample.ContentPack",'
+                '"Version":"1.0.0",'
+                '"ContentPackFor":{"UniqueID":"Pathoschild.ContentPatcher"}'
+                "}"
+            ),
+        )
+
+    plan = service.build_install_plan(
+        package_paths_text=(str(provider_package), str(dependent_package)),
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox),
+        real_archive_path_text="",
+        sandbox_archive_path_text=str(archive_root),
+        allow_overwrite=False,
+        configured_real_mods_path=real_mods,
+    )
+
+    entries_by_unique_id = {entry.unique_id: entry for entry in plan.entries}
+    provider_entry = entries_by_unique_id["Pathoschild.ContentPatcher"]
+    dependent_entry = entries_by_unique_id["Sample.ContentPack"]
+
+    assert provider_entry.can_install is False
+    assert provider_entry.action == BLOCKED
+    assert dependent_entry.can_install is False
+    assert dependent_entry.action == BLOCKED
+    assert any(
+        finding.required_by_unique_id == "Sample.ContentPack"
+        and finding.dependency_unique_id == "Pathoschild.ContentPatcher"
+        and finding.state == "missing_required_dependency"
+        for finding in plan.dependency_findings
+    )
+    assert any("Missing required dependencies" in warning for warning in dependent_entry.warnings)
+
+
 def test_build_install_plan_uses_archive_overwrite_for_real_mods_destination(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
     real_mods = tmp_path / "RealMods"
