@@ -337,8 +337,7 @@ QFrame#workspace_nav_rail {
     border-radius: 15px;
 }
 
-QFrame#workspace_nav_brand_panel,
-QFrame#workspace_nav_footer_panel {
+QFrame#workspace_nav_brand_panel {
     background: #1b1f23;
     border: 1px solid rgba(224, 216, 203, 0.05);
     border-radius: 11px;
@@ -362,8 +361,7 @@ QLabel#workspace_nav_brand_title {
 }
 
 QLabel#workspace_nav_brand_version,
-QLabel#workspace_nav_section_label,
-QLabel#workspace_nav_footer_label {
+QLabel#workspace_nav_section_label {
     color: #bcaea1;
     font-size: 7.8pt;
 }
@@ -378,14 +376,6 @@ QLabel#workspace_nav_brand_version {
     color: #d6c7b8;
     font-size: 8pt;
     font-weight: 600;
-}
-
-QLabel#workspace_nav_section_label {
-    color: #9a8d7f;
-    font-size: 7pt;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
 }
 
 QPushButton[navRole="workspace"] {
@@ -454,11 +444,12 @@ QTabBar#workspace_nav_tabbar::tab:first {
 QTabWidget#mods_workspace_mode_tabs::pane {
     border: none;
     background: transparent;
-    top: -1px;
+    top: 4px;
 }
 
 QTabBar#mods_workspace_mode_tabbar {
     background: transparent;
+    margin-bottom: 10px;
 }
 
 QTabBar#mods_workspace_mode_tabbar::tab {
@@ -482,6 +473,13 @@ QTabBar#mods_workspace_mode_tabbar::tab:selected {
     background: #24372b;
     border-color: rgba(156, 195, 143, 0.22);
     color: #eef5e9;
+}
+
+QFrame#mods_inventory_controls_panel,
+QFrame#mods_smapi_controls_panel {
+    background: rgba(22, 27, 31, 0.92);
+    border: 1px solid rgba(224, 216, 203, 0.07);
+    border-radius: 12px;
 }
 
 QPushButton {
@@ -756,6 +754,15 @@ QGroupBox#plan_install_execute_group,
 QGroupBox#plan_install_staged_package_group {
     background: #1a2023;
     border-color: rgba(156, 195, 143, 0.09);
+}
+
+QGroupBox#packages_review_target_group::title,
+QGroupBox#plan_install_execute_group::title,
+QGroupBox#plan_install_staged_package_group::title,
+QGroupBox#plan_install_safety_panel_group::title,
+QGroupBox#mods_selected_actions_group::title {
+    left: 8px;
+    padding: 0px 3px 0px 3px;
 }
 
 QLabel#compact_hint_label,

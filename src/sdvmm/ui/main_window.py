@@ -743,7 +743,7 @@ class MainWindow(QMainWindow):
         )
         self._package_queue_list.setAlternatingRowColors(True)
         self._package_queue_list.setMinimumHeight(72)
-        self._package_queue_list.setMaximumHeight(188)
+        self._package_queue_list.setMaximumHeight(300)
         self._package_queue_filter_input = QLineEdit()
         self._package_queue_filter_input.setObjectName("packages_queue_filter_input")
         self._package_queue_filter_input.setPlaceholderText(
@@ -942,7 +942,7 @@ class MainWindow(QMainWindow):
         self._review_output_box = QPlainTextEdit()
         self._review_output_box.setObjectName("plan_install_output_box")
         self._review_output_box.setReadOnly(True)
-        self._review_output_box.setMinimumHeight(112)
+        self._review_output_box.setMinimumHeight(168)
         self._review_output_box.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
@@ -1337,24 +1337,8 @@ class MainWindow(QMainWindow):
         nav_buttons_layout.addStretch(1)
         rail_layout.addWidget(nav_buttons_widget, 1)
 
-        footer_panel = QFrame()
-        footer_panel.setObjectName("workspace_nav_footer_panel")
-        footer_layout = QVBoxLayout(footer_panel)
-        footer_layout.setContentsMargins(10, 8, 10, 8)
-        footer_layout.setSpacing(1)
-        footer_title = QLabel("Workflow")
-        footer_title.setObjectName("workspace_nav_section_label")
-        footer_hint = QLabel(
-            "Discover or import, inspect, install to sandbox, compare, then promote when the live update is ready."
-        )
-        footer_hint.setObjectName("workspace_nav_footer_label")
-        footer_hint.setWordWrap(True)
-        footer_layout.addWidget(footer_title)
-        footer_layout.addWidget(footer_hint)
-        rail_layout.addWidget(footer_panel)
         _apply_surface_shadow(rail, blur_radius=22, y_offset=2, alpha=72)
         _apply_surface_shadow(brand_panel, blur_radius=16, y_offset=1, alpha=52)
-        _apply_surface_shadow(footer_panel, blur_radius=14, y_offset=1, alpha=46)
         return rail
 
     def _build_page_shell(
@@ -1435,8 +1419,7 @@ class MainWindow(QMainWindow):
                 eyebrow="Library and launch",
                 title="Library",
                 subtitle=(
-                    "Scan the current environment, check update guidance, launch the game, "
-                    "and keep selected-mod actions in the right rail."
+                    "Scan the current environment, check update guidance, and keep mod actions in the right rail."
                 ),
             )
         )
@@ -1471,7 +1454,7 @@ class MainWindow(QMainWindow):
         table_layout.addWidget(self._mods_inventory_state_label)
         table_layout.addWidget(self._mods_table, 1)
 
-        inspector_panel = QGroupBox("Selected mod")
+        inspector_panel = QGroupBox("Mod details")
         inspector_panel.setObjectName("mods_selection_context_group")
         inspector_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         inspector_layout = QVBoxLayout(inspector_panel)
@@ -1502,7 +1485,7 @@ class MainWindow(QMainWindow):
         inspector_content_layout.setSpacing(8)
 
         inspector_intro = QLabel(
-            "Use the current selection to inspect guidance and keep source intent, sandbox sync, and promotion actions together."
+            "Inspect guidance for the current selection and keep source intent, sandbox sync, and promotion together."
         )
         inspector_intro.setObjectName("mods_selection_context_intro_label")
         inspector_intro.setWordWrap(True)
@@ -1521,7 +1504,7 @@ class MainWindow(QMainWindow):
         selection_summary_layout.addWidget(self._inventory_update_guidance_label)
         selection_summary_layout.addWidget(self._inventory_blocked_detail_label)
 
-        selected_actions_card = QGroupBox("Selected mod actions")
+        selected_actions_card = QGroupBox("Actions")
         selected_actions_card.setObjectName("mods_selected_actions_group")
         selected_actions_card.setSizePolicy(
             QSizePolicy.Policy.Preferred,
@@ -1531,7 +1514,7 @@ class MainWindow(QMainWindow):
         selected_actions_layout.setContentsMargins(9, 8, 9, 9)
         selected_actions_layout.setSpacing(5)
         selected_actions_hint = QLabel(
-            "Archive the selected mod to the sandbox archive, or restore an archived copy."
+            "Archive to the sandbox archive or restore an archived copy."
         )
         selected_actions_hint.setWordWrap(True)
         _set_auxiliary_label_style(selected_actions_hint)
@@ -1803,8 +1786,13 @@ class MainWindow(QMainWindow):
         inventory_tab = QWidget()
         inventory_tab.setObjectName("mods_inventory_controls_tab")
         inventory_tab_layout = QVBoxLayout(inventory_tab)
-        inventory_tab_layout.setContentsMargins(6, 3, 6, 3)
-        inventory_tab_layout.setSpacing(4)
+        inventory_tab_layout.setContentsMargins(0, 0, 0, 0)
+        inventory_tab_layout.setSpacing(0)
+        inventory_controls_panel = QFrame()
+        inventory_controls_panel.setObjectName("mods_inventory_controls_panel")
+        inventory_controls_panel_layout = QVBoxLayout(inventory_controls_panel)
+        inventory_controls_panel_layout.setContentsMargins(10, 9, 10, 10)
+        inventory_controls_panel_layout.setSpacing(8)
         inventory_action_band = QWidget()
         inventory_action_band.setObjectName("mods_inventory_action_band")
         inventory_action_band_layout = QVBoxLayout(inventory_action_band)
@@ -1868,45 +1856,60 @@ class MainWindow(QMainWindow):
         launch_actions_layout.addWidget(self._launch_vanilla_button)
         launch_actions_layout.addWidget(self._launch_smapi_button)
         launch_actions_layout.addWidget(self._launch_sandbox_dev_button)
-        inventory_tab_layout.addWidget(inventory_action_band)
-        inventory_tab_layout.insertWidget(1, launch_actions_widget)
+        inventory_controls_panel_layout.addWidget(inventory_action_band)
+        inventory_controls_panel_layout.addWidget(launch_actions_widget)
+        inventory_tab_layout.addWidget(inventory_controls_panel)
         inventory_tab_layout.addStretch(1)
         inventory_controls_tabs.addTab(inventory_tab, "Library")
 
         game_smapi_tab = QWidget()
         game_smapi_tab.setObjectName("mods_smapi_controls_tab")
-        game_smapi_layout = QGridLayout(game_smapi_tab)
-        game_smapi_layout.setContentsMargins(6, 4, 6, 4)
-        game_smapi_layout.setHorizontalSpacing(10)
-        game_smapi_layout.setVerticalSpacing(8)
+        game_smapi_tab_layout = QVBoxLayout(game_smapi_tab)
+        game_smapi_tab_layout.setContentsMargins(0, 0, 0, 0)
+        game_smapi_tab_layout.setSpacing(0)
+        game_smapi_panel = QFrame()
+        game_smapi_panel.setObjectName("mods_smapi_controls_panel")
+        game_smapi_panel_layout = QVBoxLayout(game_smapi_panel)
+        game_smapi_panel_layout.setContentsMargins(10, 10, 10, 10)
+        game_smapi_panel_layout.setSpacing(8)
         self._check_smapi_update_button = QPushButton("Check SMAPI version")
         self._check_smapi_update_button.clicked.connect(self._on_check_smapi_update)
         _set_utility_button_style(self._check_smapi_update_button)
         self._check_smapi_update_button.setFixedHeight(24)
         self._check_smapi_update_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        game_smapi_layout.addWidget(self._check_smapi_update_button, 0, 0)
         self._check_smapi_log_button = QPushButton("Check latest SMAPI log")
         self._check_smapi_log_button.clicked.connect(self._on_check_smapi_log)
         _set_utility_button_style(self._check_smapi_log_button)
         self._check_smapi_log_button.setFixedHeight(24)
         self._check_smapi_log_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        game_smapi_layout.addWidget(self._check_smapi_log_button, 0, 1)
         self._load_smapi_log_button = QPushButton("Open SMAPI log")
         self._load_smapi_log_button.clicked.connect(self._on_load_smapi_log)
         _set_utility_button_style(self._load_smapi_log_button)
         self._load_smapi_log_button.setFixedHeight(24)
         self._load_smapi_log_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        game_smapi_layout.addWidget(self._load_smapi_log_button, 0, 2)
         self._open_smapi_page_button = QPushButton("Open SMAPI website")
         self._open_smapi_page_button.clicked.connect(self._on_open_smapi_page)
         _set_utility_button_style(self._open_smapi_page_button)
         self._open_smapi_page_button.setFixedHeight(24)
         self._open_smapi_page_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        game_smapi_layout.addWidget(self._open_smapi_page_button, 1, 0)
-        game_smapi_layout.setRowMinimumHeight(0, 24)
-        game_smapi_layout.setRowMinimumHeight(1, 27)
-        game_smapi_layout.setColumnStretch(1, 1)
-        game_smapi_layout.setColumnStretch(2, 1)
+        smapi_primary_row = QWidget()
+        smapi_primary_row.setObjectName("mods_smapi_primary_row")
+        smapi_primary_row_layout = QHBoxLayout(smapi_primary_row)
+        smapi_primary_row_layout.setContentsMargins(0, 0, 0, 0)
+        smapi_primary_row_layout.setSpacing(8)
+        smapi_primary_row_layout.addWidget(self._check_smapi_update_button)
+        smapi_primary_row_layout.addWidget(self._check_smapi_log_button)
+        smapi_secondary_row = QWidget()
+        smapi_secondary_row.setObjectName("mods_smapi_secondary_row")
+        smapi_secondary_row_layout = QHBoxLayout(smapi_secondary_row)
+        smapi_secondary_row_layout.setContentsMargins(0, 0, 0, 0)
+        smapi_secondary_row_layout.setSpacing(8)
+        smapi_secondary_row_layout.addWidget(self._load_smapi_log_button)
+        smapi_secondary_row_layout.addWidget(self._open_smapi_page_button)
+        game_smapi_panel_layout.addWidget(smapi_primary_row)
+        game_smapi_panel_layout.addWidget(smapi_secondary_row)
+        game_smapi_tab_layout.addWidget(game_smapi_panel)
+        game_smapi_tab_layout.addStretch(1)
         inventory_controls_tabs.addTab(game_smapi_tab, "SMAPI")
 
         flow_hint_label = QLabel(
@@ -2190,14 +2193,14 @@ class MainWindow(QMainWindow):
         packages_top_grid_layout.setColumnStretch(1, 1)
         intake_layout.addWidget(packages_top_grid)
 
-        detected_group = QGroupBox("Current install target")
+        detected_group = QGroupBox("Install target")
         detected_group.setObjectName("packages_review_target_group")
         detected_group.setFlat(True)
         detected_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         detected_layout = QGridLayout(detected_group)
-        detected_layout.setContentsMargins(6, 4, 6, 4)
+        detected_layout.setContentsMargins(8, 10, 8, 6)
         detected_layout.setHorizontalSpacing(8)
-        detected_layout.setVerticalSpacing(3)
+        detected_layout.setVerticalSpacing(6)
         detected_layout.setColumnStretch(1, 1)
         detected_layout.addWidget(self._packages_workspace_state_label, 0, 0, 1, 4)
         detected_layout.addWidget(QLabel("Filter"), 1, 0)
@@ -2217,7 +2220,7 @@ class MainWindow(QMainWindow):
         detected_layout.addWidget(queue_label, 5, 0, 1, 4)
         detected_layout.addWidget(self._package_queue_list, 6, 0, 1, 4)
         review_flow_label = QLabel(
-            "Check one or more watched packages, then use Open Install to carry the batch into Install."
+            "Check watched packages, then use Open Install to carry the batch into Install."
         )
         review_flow_label.setObjectName("packages_intake_review_flow_label")
         review_flow_label.setWordWrap(True)
@@ -2372,8 +2375,8 @@ class MainWindow(QMainWindow):
             staged_package_layout.addWidget(QLabel("Current package"))
             staged_package_layout.addWidget(self._staged_package_label)
             review_top_row_layout.addWidget(staged_package_group, 3)
-            review_top_row_layout.addWidget(safety_group, 2)
             review_top_row_layout.addWidget(plan_tab.execute_group, 2)
+            review_top_row_layout.addWidget(safety_group, 2)
             plan_tab_layout.insertWidget(2, review_top_row)
 
             review_middle_row = QWidget()

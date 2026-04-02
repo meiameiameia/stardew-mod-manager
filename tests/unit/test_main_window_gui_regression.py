@@ -981,6 +981,7 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
     status_strip_group = main_window.findChild(QGroupBox, "global_status_strip_group")
     mods_button = main_window.findChild(QPushButton, "workspace_nav_button_library")
     setup_button = main_window.findChild(QPushButton, "workspace_nav_button_setup")
+    inventory_tabs = main_window._inventory_controls_tabs
     library_tab_index = main_window._inventory_controls_tabs.indexOf(
         main_window._inventory_controls_tabs.widget(0)
     )
@@ -990,7 +991,10 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
     check_smapi_update_button = main_window._check_smapi_update_button
     check_smapi_log_button = main_window._check_smapi_log_button
     open_smapi_page_button = main_window._open_smapi_page_button
+    open_smapi_log_button = main_window._load_smapi_log_button
     launch_actions_band = main_window.findChild(QWidget, "mods_inventory_launch_actions_widget")
+    inventory_controls_panel = main_window.findChild(QFrame, "mods_inventory_controls_panel")
+    smapi_controls_panel = main_window.findChild(QFrame, "mods_smapi_controls_panel")
     launch_vanilla_button = main_window._launch_vanilla_button
     launch_smapi_button = main_window._launch_smapi_button
     launch_button = main_window.findChild(QPushButton, "launch_sandbox_dev_button")
@@ -1002,7 +1006,10 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
     assert check_smapi_update_button is not None
     assert check_smapi_log_button is not None
     assert open_smapi_page_button is not None
+    assert open_smapi_log_button is not None
     assert launch_actions_band is not None
+    assert inventory_controls_panel is not None
+    assert smapi_controls_panel is not None
     assert launch_vanilla_button is not None
     assert launch_smapi_button is not None
     assert launch_button is not None
@@ -1016,6 +1023,7 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
     assert 116 <= main_window._inventory_controls_tabs.maximumHeight() <= 132
     assert mods_button.maximumHeight() == 30
     assert setup_button.maximumHeight() == 30
+    assert inventory_controls_panel.parentWidget() is inventory_tabs.widget(0)
     assert launch_actions_band.layout().count() == 3
     assert launch_vanilla_button.maximumHeight() == 26
     assert launch_smapi_button.maximumHeight() == 27
@@ -1024,8 +1032,10 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
     main_window._inventory_controls_tabs.setCurrentIndex(smapi_tab_index)
     qapp.processEvents()
 
+    assert smapi_controls_panel.parentWidget() is inventory_tabs.widget(1)
     assert check_smapi_update_button.maximumHeight() == 24
     assert check_smapi_log_button.maximumHeight() == 24
+    assert open_smapi_log_button.maximumHeight() == 24
     assert open_smapi_page_button.maximumHeight() == 24
     assert 74 <= main_window._smapi_troubleshooting_details_box.minimumHeight() <= 80
     assert 90 <= main_window._smapi_troubleshooting_details_box.maximumHeight() <= 100
@@ -4508,6 +4518,14 @@ def test_main_window_left_inventory_tabs_are_simplified_for_v1_shell(
     ]
 
 
+def test_main_window_left_nav_omits_workflow_footer_panel(
+    main_window: MainWindow,
+) -> None:
+    assert (
+        main_window.findChild(QFrame, "workspace_nav_footer_panel") is None
+    )
+
+
 def test_main_window_setup_surface_onboarding_copy_is_user_facing(
     main_window: MainWindow,
 ) -> None:
@@ -6906,13 +6924,14 @@ def test_main_window_plan_install_surface_has_expected_structure(
     review_top_row_layout = review_top_row.layout()
     assert isinstance(review_top_row_layout, QHBoxLayout)
     assert review_top_row_layout.itemAt(0).widget() is staged_package_group
-    assert review_top_row_layout.itemAt(1).widget() is safety_panel_group
-    assert review_top_row_layout.itemAt(2).widget() is execute_group
+    assert review_top_row_layout.itemAt(1).widget() is execute_group
+    assert review_top_row_layout.itemAt(2).widget() is safety_panel_group
     assert plan_layout.indexOf(intro_label) < plan_layout.indexOf(review_state_label)
     assert plan_layout.indexOf(review_state_label) < plan_layout.indexOf(review_top_row)
     assert plan_layout.indexOf(review_top_row) < plan_layout.indexOf(destination_group)
     assert plan_layout.indexOf(destination_group) < plan_layout.indexOf(review_middle_row)
     assert plan_layout.indexOf(review_middle_row) < plan_layout.indexOf(review_output_group)
+    assert main_window._review_output_box.minimumHeight() >= 168
 
 
 def test_main_window_plan_install_tab_hosts_scroll_content_for_constrained_height(
@@ -6952,13 +6971,16 @@ def test_main_window_mods_workspace_uses_compact_action_band_above_inventory(
     main_window: MainWindow,
 ) -> None:
     action_band = main_window.findChild(QWidget, "mods_inventory_action_band")
+    controls_panel = main_window.findChild(QFrame, "mods_inventory_controls_panel")
     selected_actions_group = main_window.findChild(QGroupBox, "mods_selected_actions_group")
     inventory_tabs = main_window._inventory_controls_tabs
 
     assert action_band is not None
+    assert controls_panel is not None
     assert selected_actions_group is not None
     assert inventory_tabs is not None
-    assert action_band.parentWidget() is inventory_tabs.widget(0)
+    assert controls_panel.parentWidget() is inventory_tabs.widget(0)
+    assert action_band.parentWidget() is controls_panel
     assert selected_actions_group.parentWidget() is main_window._mods_selection_context_scroll_area.widget()
 
 
