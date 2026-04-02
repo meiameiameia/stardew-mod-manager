@@ -98,6 +98,66 @@ def test_content_pack_for_dependency_is_visible_in_inventory(tmp_path) -> None:
     assert inventory.missing_required_dependencies[0].missing_unique_id == "Pathoschild.ContentPatcher"
 
 
+def test_dot_prefixed_top_level_mod_is_reported_as_disabled(tmp_path) -> None:
+    mods_root = tmp_path / "Mods"
+    mods_root.mkdir()
+
+    active_mod = mods_root / "ActiveMod"
+    active_mod.mkdir()
+    (active_mod / "manifest.json").write_text(
+        '{"Name":"Active Mod","UniqueID":"Sample.Active","Version":"1.0.0"}',
+        encoding="utf-8",
+    )
+
+    disabled_mod = mods_root / ".DisabledMod"
+    disabled_mod.mkdir()
+    (disabled_mod / "manifest.json").write_text(
+        '{"Name":"Disabled Mod","UniqueID":"Sample.Disabled","Version":"2.0.0"}',
+        encoding="utf-8",
+    )
+
+    inventory = scan_mods_directory(mods_root)
+
+    assert [mod.unique_id for mod in inventory.mods] == ["Sample.Active"]
+    assert [mod.unique_id for mod in inventory.disabled_mods] == ["Sample.Disabled"]
+    assert inventory.disabled_mods[0].folder_path.name == ".DisabledMod"
+    assert inventory.duplicate_unique_ids == ()
+    assert inventory.missing_required_dependencies == ()
+
+
+def test_disabled_mod_does_not_clear_active_missing_dependency(tmp_path) -> None:
+    mods_root = tmp_path / "Mods"
+    mods_root.mkdir()
+
+    consumer = mods_root / "ConsumerMod"
+    consumer.mkdir()
+    (consumer / "manifest.json").write_text(
+        (
+            "{"
+            '"Name":"Consumer Mod",'
+            '"UniqueID":"Sample.Consumer",'
+            '"Version":"1.0.0",'
+            '"Dependencies":[{"UniqueID":"Sample.DisabledProvider","IsRequired":true}]'
+            "}"
+        ),
+        encoding="utf-8",
+    )
+
+    disabled_provider = mods_root / ".DisabledProvider"
+    disabled_provider.mkdir()
+    (disabled_provider / "manifest.json").write_text(
+        '{"Name":"Disabled Provider","UniqueID":"Sample.DisabledProvider","Version":"1.0.0"}',
+        encoding="utf-8",
+    )
+
+    inventory = scan_mods_directory(mods_root)
+
+    assert [mod.unique_id for mod in inventory.mods] == ["Sample.Consumer"]
+    assert [mod.unique_id for mod in inventory.disabled_mods] == ["Sample.DisabledProvider"]
+    assert len(inventory.missing_required_dependencies) == 1
+    assert inventory.missing_required_dependencies[0].missing_unique_id == "Sample.DisabledProvider"
+
+
 def test_dependency_match_is_case_insensitive(mods_case_path) -> None:
     inventory = scan_mods_directory(mods_case_path("dependency_case_match"))
 

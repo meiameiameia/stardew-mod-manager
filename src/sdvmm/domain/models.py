@@ -47,6 +47,27 @@ class AppConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SandboxModProfileEntry:
+    folder_name: str
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxModProfile:
+    profile_id: str
+    name: str
+    entries: tuple[SandboxModProfileEntry, ...] = tuple()
+    storage_dir_name: str | None = None
+    is_default: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxModProfileCatalog:
+    profiles: tuple[SandboxModProfile, ...]
+    active_profile_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class NexusIntegrationStatus:
     state: NexusIntegrationState
     source: NexusCredentialSource
@@ -676,6 +697,7 @@ class SandboxInstallPlanEntry:
     name: str
     unique_id: str
     version: str
+    source_package_path: Path
     source_manifest_path: str
     source_root_path: str
     target_path: Path
@@ -698,6 +720,7 @@ class SandboxInstallPlan:
     dependency_findings: tuple[DependencyPreflightFinding, ...] = tuple()
     remote_requirements: tuple[RemoteRequirementGuidance, ...] = tuple()
     destination_kind: str = "sandbox_mods"
+    package_paths: tuple[Path, ...] = tuple()
 
 
 @dataclass(frozen=True, slots=True)
@@ -987,3 +1010,4 @@ class ModsInventory:
     missing_required_dependencies: tuple[MissingDependencyFinding, ...]
     scan_entry_findings: tuple[ScanEntryFinding, ...]
     ignored_entries: tuple[Path, ...]
+    disabled_mods: tuple[InstalledMod, ...] = tuple()

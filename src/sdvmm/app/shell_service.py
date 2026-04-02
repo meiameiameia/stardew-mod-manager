@@ -60,6 +60,9 @@ from sdvmm.domain.models import (
     InstallRecoveryPlanSummary,
     RecoveryExecutionHistory,
     RecoveryExecutionRecord,
+    SandboxModProfile,
+    SandboxModProfileCatalog,
+    SandboxModProfileEntry,
     ModDiscoveryEntry,
     ModDiscoveryResult,
     ModsCompareEntry,
@@ -96,6 +99,7 @@ from sdvmm.domain.dependency_codes import (
     SATISFIED,
     UNRESOLVED_DEPENDENCY_CONTEXT,
 )
+from sdvmm.domain.scan_codes import DIRECT_MOD, MULTI_MOD_CONTAINER, NESTED_MOD_CONTAINER
 from sdvmm.domain.unique_id import canonicalize_unique_id
 from sdvmm.services.app_state_store import (
     AppStateStoreError,
@@ -103,10 +107,16 @@ from sdvmm.services.app_state_store import (
     append_recovery_execution_record,
     install_operation_history_file,
     load_install_operation_history,
+    load_real_mod_profile_catalog,
     load_recovery_execution_history,
     load_app_config,
+    load_sandbox_mod_profile_catalog,
+    real_mod_profile_catalog_file,
     recovery_execution_history_file,
+    save_real_mod_profile_catalog,
+    sandbox_mod_profile_catalog_file,
     save_app_config,
+    save_sandbox_mod_profile_catalog,
     load_update_source_intent_overlay,
     save_update_source_intent_overlay,
     update_source_intent_overlay_file,
@@ -120,8 +130,10 @@ from sdvmm.services.downloads_intake import (
     inspect_downloads_intake_package,
     poll_watched_directory,
 )
+from sdvmm.services.manifest_parser import parse_manifest_file
 from sdvmm.services.environment_detection import detect_game_environment as detect_game_environment_service
 from sdvmm.services.environment_detection import derive_mods_path
+from sdvmm.app.paths import platform_default_stardew_save_directory
 from sdvmm.services.dependency_preflight import (
     evaluate_installed_dependencies,
     evaluate_package_dependencies,
@@ -214,6 +226,16 @@ ArchiveSourceKind = Literal["real_archive", "sandbox_archive"]
 ARCHIVE_SOURCE_REAL: ArchiveSourceKind = "real_archive"
 ARCHIVE_SOURCE_SANDBOX: ArchiveSourceKind = "sandbox_archive"
 ARCHIVE_RETENTION_KEEP_LATEST_COUNT = 3
+BACKUP_BUNDLE_FORMAT = "cinderleaf-local-backup"
+LEGACY_BACKUP_BUNDLE_FORMATS = {"sdvmm-local-backup", BACKUP_BUNDLE_FORMAT}
+DEFAULT_REAL_PROFILE_ID = "default"
+DEFAULT_REAL_PROFILE_NAME = "Default"
+DEFAULT_SANDBOX_PROFILE_ID = "default"
+DEFAULT_SANDBOX_PROFILE_NAME = "Default"
+_PROFILES_DIRNAME = "Profiles"
+_SANDBOX_PROFILE_GROUP_DIRNAME = "Sandbox Mods"
+_REAL_PROFILE_GROUP_DIRNAME = "Real Mods"
+_SANDBOX_PROFILE_MODS_DIRNAME = "Mods"
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +243,58 @@ class ScanResult:
     target_kind: ScanTargetKind
     scan_path: Path
     inventory: ModsInventory
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxModProfileCreateResult:
+    profile: SandboxModProfile
+    profiles: SandboxModProfileCatalog
+    scan_result: ScanResult
+    linked_mod_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxModProfileSelectResult:
+    profile: SandboxModProfile
+    profiles: SandboxModProfileCatalog
+    scan_result: ScanResult
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxModProfileDeleteResult:
+    profile: SandboxModProfile
+    profiles: SandboxModProfileCatalog
+    scan_result: ScanResult | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RealModProfileCreateResult:
+    profile: SandboxModProfile
+    profiles: SandboxModProfileCatalog
+    scan_result: ScanResult
+    linked_mod_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class RealModProfileSelectResult:
+    profile: SandboxModProfile
+    profiles: SandboxModProfileCatalog
+    scan_result: ScanResult
+
+
+@dataclass(frozen=True, slots=True)
+class RealModProfileDeleteResult:
+    profile: SandboxModProfile
+    profiles: SandboxModProfileCatalog
+    scan_result: ScanResult | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ProfileEntryState:
+    folder_name: str
+    entry_path: Path
+    enabled: bool
+    mods: tuple[InstalledMod, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,6 +447,14 @@ class BackupBundleExportItem:
     relative_path: Path
     source_path: Path | None
     note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BackupBundleExportSelection:
+    include_manager_state: bool = True
+    include_managed_mods: bool = True
+    include_archives: bool = True
+    include_save_files: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -570,6 +652,7 @@ class AppShellService:
         *,
         destination_root_text: str,
         bundle_storage_kind: Literal["directory", "zip"] = "directory",
+        artifact_selection: BackupBundleExportSelection | None = None,
         game_path_text: str,
         mods_dir_text: str,
         sandbox_mods_path_text: str,
@@ -589,6 +672,8 @@ class AppShellService:
             if bundle_storage_kind == "zip":
                 raise AppShellError("Select a destination .zip path for the backup export first.")
             raise AppShellError("Select a destination folder for the backup export first.")
+
+        selection = artifact_selection or BackupBundleExportSelection()
 
         destination_path = Path(destination_text).expanduser()
         if bundle_storage_kind == "directory":
@@ -612,7 +697,7 @@ class AppShellService:
                     f"Backup zip export destination already exists: {destination_path}"
                 )
             export_work_root_parent = Path(
-                tempfile.mkdtemp(prefix="sdvmm-backup-export-", dir=str(destination_parent))
+                tempfile.mkdtemp(prefix="cinderleaf-backup-export-", dir=str(destination_parent))
             )
             export_work_root = self._allocate_backup_bundle_path(export_work_root_parent)
             final_bundle_path = destination_path
@@ -647,12 +732,47 @@ class AppShellService:
             export_config.sandbox_archive_path,
             field_label="Sandbox archive root",
         )
+        real_profile_catalog_source = self._resolve_existing_export_source(
+            self._real_mod_profile_catalog_file,
+            field_label="Real Mods profile catalog",
+        )
+        sandbox_profile_catalog_source = self._resolve_existing_export_source(
+            self._sandbox_mod_profile_catalog_file,
+            field_label="Sandbox Mods profile catalog",
+        )
+        stardew_save_root = platform_default_stardew_save_directory()
+        stardew_save_source = _BackupBundleSourceResolution(
+            path=stardew_save_root,
+            missing_status="not_present",
+            note=(
+                None
+                if stardew_save_root.exists()
+                else f"No Stardew save folder was found at {stardew_save_root}."
+            ),
+        )
+        real_profile_catalog_item = self._backup_bundle_item_plan(
+            key="real_mod_profiles",
+            label="Real Mods profile catalog",
+            kind="file",
+            resolution=real_profile_catalog_source,
+            relative_path=Path("manager-state") / self._real_mod_profile_catalog_file.name,
+            selected=selection.include_manager_state,
+        )
+        sandbox_profile_catalog_item = self._backup_bundle_item_plan(
+            key="sandbox_mod_profiles",
+            label="Sandbox Mods profile catalog",
+            kind="file",
+            resolution=sandbox_profile_catalog_source,
+            relative_path=Path("manager-state") / self._sandbox_mod_profile_catalog_file.name,
+            selected=selection.include_manager_state,
+        )
         prepared_real_mod_configs = self._prepare_mod_config_snapshot_export_item(
             key="real_mod_configs",
             label="Real Mods config snapshot",
             mods_source=real_mods_source,
             excluded_paths=_non_null_paths((export_config.real_archive_path,)),
             relative_path=Path("mod-config") / "real-mods",
+            selected=selection.include_managed_mods,
         )
         prepared_sandbox_mod_configs = self._prepare_mod_config_snapshot_export_item(
             key="sandbox_mod_configs",
@@ -660,6 +780,15 @@ class AppShellService:
             mods_source=sandbox_mods_source,
             excluded_paths=_non_null_paths((export_config.sandbox_archive_path,)),
             relative_path=Path("mod-config") / "sandbox-mods",
+            selected=selection.include_managed_mods,
+        )
+        save_files_item = self._backup_bundle_item_plan(
+            key="stardew_save_files",
+            label="Stardew save files",
+            kind="directory",
+            resolution=stardew_save_source,
+            relative_path=Path("saves") / "stardew-valley",
+            selected=selection.include_save_files,
         )
         temp_snapshot_roots = tuple(
             snapshot.temp_root
@@ -679,14 +808,17 @@ class AppShellService:
         )
         created_at_utc = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         plan = (
-            BackupBundleExportItem(
+            self._backup_bundle_item_plan(
                 key="app_state",
                 label="App state/config",
                 kind="file",
-                status="copied",
+                resolution=_BackupBundleSourceResolution(
+                    path=self._state_file,
+                    missing_status="not_present",
+                    note="Generated from the current export configuration snapshot.",
+                ),
                 relative_path=Path("manager-state") / self._state_file.name,
-                source_path=None,
-                note="Generated from the current export configuration snapshot.",
+                selected=selection.include_manager_state,
             ),
             self._backup_bundle_item_plan(
                 key="install_history",
@@ -698,6 +830,7 @@ class AppShellService:
                     note="No install history has been recorded yet.",
                 ),
                 relative_path=Path("manager-state") / self._install_operation_history_file.name,
+                selected=selection.include_manager_state,
             ),
             self._backup_bundle_item_plan(
                 key="recovery_history",
@@ -709,6 +842,7 @@ class AppShellService:
                     note="No recovery history has been recorded yet.",
                 ),
                 relative_path=Path("manager-state") / self._recovery_execution_history_file.name,
+                selected=selection.include_manager_state,
             ),
             self._backup_bundle_item_plan(
                 key="update_source_intent_overlay",
@@ -720,6 +854,7 @@ class AppShellService:
                     note="No persisted update-source intent overlay exists yet.",
                 ),
                 relative_path=Path("manager-state") / self._update_source_intent_overlay_file.name,
+                selected=selection.include_manager_state,
             ),
             self._backup_bundle_item_plan(
                 key="real_mods",
@@ -727,6 +862,7 @@ class AppShellService:
                 kind="directory",
                 resolution=real_mods_source,
                 relative_path=Path("mods") / "real-mods",
+                selected=selection.include_managed_mods,
             ),
             self._backup_bundle_item_plan(
                 key="sandbox_mods",
@@ -734,6 +870,7 @@ class AppShellService:
                 kind="directory",
                 resolution=sandbox_mods_source,
                 relative_path=Path("mods") / "sandbox-mods",
+                selected=selection.include_managed_mods,
             ),
             prepared_real_mod_configs.item,
             prepared_sandbox_mod_configs.item,
@@ -743,6 +880,7 @@ class AppShellService:
                 kind="directory",
                 resolution=real_archive_source,
                 relative_path=Path("archives") / "real-archive",
+                selected=selection.include_archives,
             ),
             self._backup_bundle_item_plan(
                 key="sandbox_archive",
@@ -750,18 +888,28 @@ class AppShellService:
                 kind="directory",
                 resolution=sandbox_archive_source,
                 relative_path=Path("archives") / "sandbox-archive",
+                selected=selection.include_archives,
             ),
+            real_profile_catalog_item,
+            sandbox_profile_catalog_item,
+            save_files_item,
         )
 
         if not any(item.status == "copied" for item in plan):
             raise AppShellError(
-                "Nothing is available to export yet. Save config or create managed history/archive data first."
+                "No selected artifacts are available to export yet. Choose an available artifact group first."
             )
 
         try:
             export_work_root.mkdir(parents=True, exist_ok=False)
-            save_app_config(export_work_root / "manager-state" / self._state_file.name, export_config)
+            if selection.include_manager_state:
+                save_app_config(
+                    export_work_root / "manager-state" / self._state_file.name,
+                    export_config,
+                )
             for item in plan:
+                if item.key == "app_state":
+                    continue
                 self._copy_backup_bundle_item(bundle_path=export_work_root, item=item)
             summary_text = build_backup_bundle_export_text(
                 BackupBundleExportResult(
@@ -1538,10 +1686,16 @@ class AppShellService:
         self,
         *,
         game_path_text: str,
+        configured_mods_path_text: str = "",
         existing_config: AppConfig | None = None,
         steam_auto_start_enabled: bool | None = None,
     ) -> LaunchStartResult:
         game_path = self._resolve_game_path(game_path_text, existing_config)
+        command = self._resolve_real_smapi_launch_command(
+            game_path=game_path,
+            configured_mods_path_text=configured_mods_path_text,
+            existing_config=existing_config,
+        )
         steam_prelaunch = self._prepare_steam_prelaunch_for_game_launch(
             enabled=self._resolve_steam_auto_start_enabled(
                 requested_value=steam_auto_start_enabled,
@@ -1549,7 +1703,6 @@ class AppShellService:
             )
         )
         try:
-            command = resolve_launch_command(game_path=game_path, mode="smapi")
             pid = launch_game_process(command)
         except GameLaunchError as exc:
             raise AppShellError(str(exc)) from exc
@@ -1558,6 +1711,7 @@ class AppShellService:
             game_path=game_path,
             executable_path=command.executable_path,
             pid=pid,
+            mods_path_override=_launch_command_mods_override(command),
             steam_prelaunch_state=steam_prelaunch.state,
             steam_prelaunch_message=steam_prelaunch.message,
         )
@@ -2061,10 +2215,46 @@ class AppShellService:
             return True
         return False
 
+    def is_process_running(self, pid: int) -> bool | None:
+        return self._is_process_running_best_effort(pid)
+
     def _attempt_steam_start_best_effort(self) -> None:
         if os.name != "nt" or not hasattr(os, "startfile"):
             raise OSError("automatic Steam start is unavailable on this platform")
         os.startfile("steam://open/main")
+
+    @staticmethod
+    def _is_process_running_best_effort(pid: int) -> bool | None:
+        if os.name != "nt":
+            return None
+        try:
+            completed = subprocess.run(
+                [
+                    "tasklist",
+                    "/FI",
+                    f"PID eq {pid}",
+                    "/FO",
+                    "CSV",
+                    "/NH",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if completed.returncode != 0:
+            return None
+        stdout = completed.stdout.casefold()
+        if f'"{pid}"' in stdout:
+            return True
+        if "no tasks are running" in stdout or "no instance running" in stdout:
+            return False
+        return False
 
     def get_sandbox_mods_sync_readiness(
         self,
@@ -2121,6 +2311,1246 @@ class AppShellService:
             source_mod_paths=source_paths,
             synced_target_paths=tuple(synced_target_paths),
         )
+
+    def set_sandbox_mod_enabled_state(
+        self,
+        *,
+        sandbox_mods_path_text: str,
+        mod_folder_path_text: str,
+        enabled: bool,
+        profile_id: str | None = None,
+        sandbox_archive_path_text: str = "",
+        existing_config: AppConfig | None = None,
+    ) -> ScanResult:
+        sandbox_mods_path = self._resolve_optional_sandbox_mods_path(
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            existing_config=existing_config,
+        )
+        if sandbox_mods_path is None:
+            raise AppShellError("Sandbox Mods directory is required before toggling sandbox mods.")
+        sandbox_mods_path = self._prepare_canonical_sandbox_profile_library(sandbox_mods_path)
+        catalog = self.load_sandbox_mod_profiles()
+        requested_profile_id = (
+            profile_id.strip() if isinstance(profile_id, str) and profile_id.strip() else None
+        )
+        profile_root, updated_catalog, profile = self._resolve_selected_sandbox_profile_path(
+            catalog=catalog,
+            sandbox_mods_path=sandbox_mods_path,
+            requested_profile_id=requested_profile_id,
+        )
+        if updated_catalog != catalog:
+            self._save_normalized_sandbox_profile_catalog(updated_catalog)
+        if profile.is_default:
+            raise AppShellError(
+                "Default sandbox profile mirrors the canonical sandbox library. "
+                "Create or select a custom profile to change enabled mods."
+            )
+
+        mod_folder_path = Path(os.path.abspath(os.path.normpath(str(Path(mod_folder_path_text).expanduser()))))
+        profile_inventory = self._scan_sandbox_inventory_for_profiles(
+            sandbox_mods_path=profile_root,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            existing_config=existing_config,
+        )
+        canonical_inventory = self._scan_sandbox_inventory_for_profiles(
+            sandbox_mods_path=sandbox_mods_path,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            existing_config=existing_config,
+        )
+        entry_state = _profile_entry_state_for_mod(
+            inventory=profile_inventory,
+            root=profile_root,
+            mod_folder_path=mod_folder_path,
+        ) or _profile_entry_state_for_mod(
+            inventory=canonical_inventory,
+            root=sandbox_mods_path,
+            mod_folder_path=mod_folder_path,
+        )
+        if entry_state is None:
+            raise AppShellError("Only top-level sandbox profile entries can be toggled right now.")
+        folder_name = entry_state.folder_name
+        canonical_mod_path = sandbox_mods_path / folder_name
+        if not canonical_mod_path.exists():
+            raise AppShellError(
+                "Sandbox profile toggle is blocked because the canonical mod folder is missing: "
+                f"{canonical_mod_path}"
+            )
+
+        profile_mod_path = profile_root / folder_name
+        performed_action: Literal["created", "removed"] | None = None
+        try:
+            if enabled:
+                if profile_mod_path.exists():
+                    raise AppShellError(f"Sandbox mod is already enabled in profile: {folder_name}")
+                _create_directory_link(profile_mod_path, canonical_mod_path)
+                performed_action = "created"
+            else:
+                if not profile_mod_path.exists():
+                    raise AppShellError(
+                        f"Sandbox mod is already disabled in profile: {folder_name}"
+                    )
+                _remove_directory_link(profile_mod_path)
+                performed_action = "removed"
+
+            scan_result, rescan_catalog, _ = self._scan_selected_sandbox_profile(
+                sandbox_mods_path=sandbox_mods_path,
+                sandbox_archive_path_text=sandbox_archive_path_text,
+                existing_config=existing_config,
+                catalog=updated_catalog,
+                requested_profile_id=profile.profile_id,
+            )
+        except (OSError, AppShellError) as exc:
+            rollback_error: OSError | None = None
+            try:
+                if performed_action == "created" and profile_mod_path.exists():
+                    _remove_directory_link(profile_mod_path)
+                elif performed_action == "removed" and not profile_mod_path.exists():
+                    _create_directory_link(profile_mod_path, canonical_mod_path)
+            except OSError as rollback_exc:
+                rollback_error = rollback_exc
+            message = f"Could not {'enable' if enabled else 'disable'} sandbox profile mod: {exc}"
+            if rollback_error is not None:
+                message += f" Rollback also failed: {rollback_error}"
+            raise AppShellError(message) from exc
+
+        if rescan_catalog != updated_catalog:
+            self._save_normalized_sandbox_profile_catalog(rescan_catalog)
+        return scan_result
+
+    def set_real_mod_enabled_state(
+        self,
+        *,
+        configured_mods_path_text: str,
+        mod_folder_path_text: str,
+        enabled: bool,
+        profile_id: str | None = None,
+        existing_config: AppConfig | None = None,
+    ) -> ScanResult:
+        real_mods_path = self._resolve_optional_real_mods_path(
+            configured_mods_path_text=configured_mods_path_text,
+            existing_config=existing_config,
+        )
+        if real_mods_path is None:
+            raise AppShellError("Configured real Mods directory is required before toggling real profile mods.")
+        catalog = self.load_real_mod_profiles()
+        requested_profile_id = (
+            profile_id.strip() if isinstance(profile_id, str) and profile_id.strip() else None
+        )
+        profile_root, updated_catalog, profile = self._resolve_selected_real_profile_path(
+            catalog=catalog,
+            real_mods_path=real_mods_path,
+            requested_profile_id=requested_profile_id,
+        )
+        if updated_catalog != catalog:
+            self._save_normalized_real_profile_catalog(updated_catalog)
+        if profile.is_default:
+            raise AppShellError(
+                "Default real profile mirrors the canonical real Mods library. "
+                "Create or select a custom profile to change enabled mods."
+            )
+
+        mod_folder_path = Path(os.path.abspath(os.path.normpath(str(Path(mod_folder_path_text).expanduser()))))
+        profile_inventory = self._scan_real_inventory_for_profiles(
+            real_mods_path=profile_root,
+            existing_config=existing_config,
+        )
+        canonical_inventory = self._scan_real_inventory_for_profiles(
+            real_mods_path=real_mods_path,
+            existing_config=existing_config,
+        )
+        entry_state = _profile_entry_state_for_mod(
+            inventory=profile_inventory,
+            root=profile_root,
+            mod_folder_path=mod_folder_path,
+        ) or _profile_entry_state_for_mod(
+            inventory=canonical_inventory,
+            root=real_mods_path,
+            mod_folder_path=mod_folder_path,
+        )
+        if entry_state is None:
+            raise AppShellError("Only top-level real profile entries can be toggled right now.")
+
+        folder_name = entry_state.folder_name
+        canonical_mod_path = real_mods_path / folder_name
+        if not canonical_mod_path.exists():
+            raise AppShellError(
+                "Real profile toggle is blocked because the canonical mod folder is missing: "
+                f"{canonical_mod_path}"
+            )
+
+        profile_mod_path = profile_root / folder_name
+        performed_action: str | None = None
+        try:
+            if enabled:
+                if profile_mod_path.exists():
+                    raise AppShellError(f"Real mod is already enabled in profile: {folder_name}")
+                _create_directory_link(profile_mod_path, canonical_mod_path)
+                performed_action = "created"
+            else:
+                if not profile_mod_path.exists():
+                    raise AppShellError(f"Real mod is already disabled in profile: {folder_name}")
+                _remove_directory_link(profile_mod_path)
+                performed_action = "removed"
+
+            scan_result, rescan_catalog, _ = self._scan_selected_real_profile(
+                real_mods_path=real_mods_path,
+                existing_config=existing_config,
+                catalog=updated_catalog,
+                requested_profile_id=profile.profile_id,
+            )
+        except (OSError, AppShellError) as exc:
+            rollback_error: OSError | None = None
+            try:
+                if performed_action == "created" and profile_mod_path.exists():
+                    _remove_directory_link(profile_mod_path)
+                elif performed_action == "removed" and not profile_mod_path.exists():
+                    _create_directory_link(profile_mod_path, canonical_mod_path)
+            except OSError as rollback_exc:
+                rollback_error = rollback_exc
+            message = f"Could not {'enable' if enabled else 'disable'} real profile mod: {exc}"
+            if rollback_error is not None:
+                message += f" Rollback also failed: {rollback_error}"
+            raise AppShellError(message) from exc
+
+        if rescan_catalog != updated_catalog:
+            self._save_normalized_real_profile_catalog(rescan_catalog)
+        return scan_result
+
+    def load_sandbox_mod_profiles(self) -> SandboxModProfileCatalog:
+        try:
+            catalog = load_sandbox_mod_profile_catalog(self._sandbox_mod_profile_catalog_file)
+        except AppStateStoreError as exc:
+            raise AppShellError(f"Could not load sandbox mod profiles: {exc}") from exc
+        normalized_catalog = _normalize_sandbox_mod_profile_catalog(catalog)
+        if normalized_catalog != catalog:
+            try:
+                save_sandbox_mod_profile_catalog(
+                    self._sandbox_mod_profile_catalog_file,
+                    normalized_catalog,
+                )
+            except AppStateStoreError as exc:
+                raise AppShellError(f"Could not normalize sandbox mod profiles: {exc}") from exc
+        return normalized_catalog
+
+    def create_sandbox_mod_profile(
+        self,
+        *,
+        name: str,
+        sandbox_mods_path_text: str,
+        sandbox_archive_path_text: str = "",
+        existing_config: AppConfig | None = None,
+    ) -> SandboxModProfileCreateResult:
+        profile_name = _normalize_sandbox_profile_name(name)
+        if profile_name.casefold() == DEFAULT_SANDBOX_PROFILE_NAME.casefold():
+            raise AppShellError(
+                f"'{DEFAULT_SANDBOX_PROFILE_NAME}' is reserved for the canonical sandbox library."
+            )
+        sandbox_mods_path = self._resolve_optional_sandbox_mods_path(
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            existing_config=existing_config,
+        )
+        if sandbox_mods_path is None:
+            raise AppShellError("Sandbox Mods directory is required before creating profiles.")
+        sandbox_mods_path = self._prepare_canonical_sandbox_profile_library(sandbox_mods_path)
+
+        catalog = self.load_sandbox_mod_profiles()
+        if any(profile.name.casefold() == profile_name.casefold() for profile in catalog.profiles):
+            raise AppShellError(f"A sandbox profile named '{profile_name}' already exists.")
+
+        profile = SandboxModProfile(
+            profile_id=uuid4().hex,
+            name=profile_name,
+            storage_dir_name=uuid4().hex,
+        )
+        try:
+            linked_mod_count = self._materialize_profile_from_canonical_library(
+                profile=profile,
+                sandbox_mods_path=sandbox_mods_path,
+            )
+        except OSError as exc:
+            raise AppShellError(f"Could not create sandbox profile: {exc}") from exc
+
+        updated_catalog = SandboxModProfileCatalog(
+            profiles=_upsert_sandbox_mod_profile(catalog.profiles, profile),
+            active_profile_id=profile.profile_id,
+        )
+        try:
+            save_sandbox_mod_profile_catalog(
+                self._sandbox_mod_profile_catalog_file,
+                updated_catalog,
+            )
+        except AppStateStoreError as exc:
+            self._remove_materialized_profile_root(
+                profile,
+                sandbox_mods_path=sandbox_mods_path,
+            )
+            raise AppShellError(f"Could not save sandbox mod profiles: {exc}") from exc
+
+        scan_result, _, _ = self._scan_selected_sandbox_profile(
+            sandbox_mods_path=sandbox_mods_path,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            existing_config=existing_config,
+            catalog=updated_catalog,
+            requested_profile_id=profile.profile_id,
+        )
+        return SandboxModProfileCreateResult(
+            profile=profile,
+            profiles=updated_catalog,
+            scan_result=scan_result,
+            linked_mod_count=linked_mod_count,
+        )
+
+    def select_sandbox_mod_profile(
+        self,
+        *,
+        profile_id: str,
+        sandbox_mods_path_text: str,
+        sandbox_archive_path_text: str = "",
+        existing_config: AppConfig | None = None,
+    ) -> SandboxModProfileSelectResult:
+        sandbox_mods_path = self._resolve_optional_sandbox_mods_path(
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            existing_config=existing_config,
+        )
+        if sandbox_mods_path is None:
+            raise AppShellError("Sandbox Mods directory is required before selecting profiles.")
+        sandbox_mods_path = self._prepare_canonical_sandbox_profile_library(sandbox_mods_path)
+        catalog = self.load_sandbox_mod_profiles()
+        scan_result, updated_catalog, profile = self._scan_selected_sandbox_profile(
+            sandbox_mods_path=sandbox_mods_path,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            existing_config=existing_config,
+            catalog=catalog,
+            requested_profile_id=profile_id,
+        )
+        if updated_catalog != catalog:
+            try:
+                save_sandbox_mod_profile_catalog(
+                    self._sandbox_mod_profile_catalog_file,
+                    updated_catalog,
+                )
+            except AppStateStoreError as exc:
+                raise AppShellError(f"Could not update sandbox profile selection: {exc}") from exc
+        return SandboxModProfileSelectResult(
+            profile=profile,
+            profiles=updated_catalog,
+            scan_result=scan_result,
+        )
+
+    def delete_sandbox_mod_profile(
+        self,
+        *,
+        profile_id: str,
+        sandbox_mods_path_text: str,
+        sandbox_archive_path_text: str = "",
+        existing_config: AppConfig | None = None,
+    ) -> SandboxModProfileDeleteResult:
+        requested_profile_id = profile_id.strip()
+        if not requested_profile_id:
+            raise AppShellError("Select a sandbox profile first.")
+
+        existing_profiles = self.load_sandbox_mod_profiles()
+        profile = next(
+            (
+                candidate
+                for candidate in existing_profiles.profiles
+                if candidate.profile_id == requested_profile_id
+            ),
+            None,
+        )
+        if profile is None:
+            raise AppShellError("Selected sandbox profile no longer exists.")
+        if profile.is_default:
+            raise AppShellError("Default sandbox profile cannot be deleted.")
+
+        updated_profiles = SandboxModProfileCatalog(
+            profiles=tuple(
+                candidate
+                for candidate in existing_profiles.profiles
+                if candidate.profile_id != requested_profile_id
+            ),
+            active_profile_id=(
+                DEFAULT_SANDBOX_PROFILE_ID
+                if existing_profiles.active_profile_id == requested_profile_id
+                else existing_profiles.active_profile_id
+            ),
+        )
+        try:
+            save_sandbox_mod_profile_catalog(
+                self._sandbox_mod_profile_catalog_file,
+                updated_profiles,
+            )
+        except AppStateStoreError as exc:
+            raise AppShellError(f"Could not delete sandbox mod profile: {exc}") from exc
+
+        scan_result: ScanResult | None = None
+        sandbox_mods_path = self._resolve_optional_sandbox_mods_path(
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            existing_config=existing_config,
+        )
+        if sandbox_mods_path is not None:
+            self._remove_materialized_profile_root(
+                profile,
+                sandbox_mods_path=sandbox_mods_path,
+            )
+
+        if sandbox_mods_path is not None:
+            sandbox_mods_path = self._prepare_canonical_sandbox_profile_library(sandbox_mods_path)
+            scan_result, updated_profiles, _ = self._scan_selected_sandbox_profile(
+                sandbox_mods_path=sandbox_mods_path,
+                sandbox_archive_path_text=sandbox_archive_path_text,
+                existing_config=existing_config,
+                catalog=updated_profiles,
+                requested_profile_id=updated_profiles.active_profile_id or DEFAULT_SANDBOX_PROFILE_ID,
+            )
+            try:
+                save_sandbox_mod_profile_catalog(
+                    self._sandbox_mod_profile_catalog_file,
+                    updated_profiles,
+                )
+            except AppStateStoreError as exc:
+                raise AppShellError(
+                    f"Sandbox profile was deleted, but the fallback selection could not be saved: {exc}"
+                ) from exc
+
+        return SandboxModProfileDeleteResult(
+            profile=profile,
+            profiles=updated_profiles,
+            scan_result=scan_result,
+        )
+
+    def load_real_mod_profiles(self) -> SandboxModProfileCatalog:
+        try:
+            catalog = load_real_mod_profile_catalog(self._real_mod_profile_catalog_file)
+        except AppStateStoreError as exc:
+            raise AppShellError(f"Could not load real mod profiles: {exc}") from exc
+        normalized_catalog = _normalize_real_mod_profile_catalog(catalog)
+        if normalized_catalog != catalog:
+            try:
+                save_real_mod_profile_catalog(
+                    self._real_mod_profile_catalog_file,
+                    normalized_catalog,
+                )
+            except AppStateStoreError as exc:
+                raise AppShellError(f"Could not normalize real mod profiles: {exc}") from exc
+        return normalized_catalog
+
+    def create_real_mod_profile(
+        self,
+        *,
+        name: str,
+        configured_mods_path_text: str,
+        existing_config: AppConfig | None = None,
+    ) -> RealModProfileCreateResult:
+        profile_name = _normalize_sandbox_profile_name(name)
+        if profile_name.casefold() == DEFAULT_REAL_PROFILE_NAME.casefold():
+            raise AppShellError(
+                f"'{DEFAULT_REAL_PROFILE_NAME}' is reserved for the canonical real Mods library."
+            )
+        real_mods_path = self._resolve_optional_real_mods_path(
+            configured_mods_path_text=configured_mods_path_text,
+            existing_config=existing_config,
+        )
+        if real_mods_path is None:
+            raise AppShellError("Configured real Mods directory is required before creating profiles.")
+
+        catalog = self.load_real_mod_profiles()
+        if any(profile.name.casefold() == profile_name.casefold() for profile in catalog.profiles):
+            raise AppShellError(f"A real profile named '{profile_name}' already exists.")
+
+        profile = SandboxModProfile(
+            profile_id=uuid4().hex,
+            name=profile_name,
+            storage_dir_name=uuid4().hex,
+        )
+        try:
+            linked_mod_count = self._materialize_real_profile_from_canonical_library(
+                profile=profile,
+                real_mods_path=real_mods_path,
+            )
+        except OSError as exc:
+            raise AppShellError(f"Could not create real profile: {exc}") from exc
+
+        updated_catalog = SandboxModProfileCatalog(
+            profiles=_upsert_sandbox_mod_profile(catalog.profiles, profile),
+            active_profile_id=profile.profile_id,
+        )
+        try:
+            save_real_mod_profile_catalog(
+                self._real_mod_profile_catalog_file,
+                updated_catalog,
+            )
+        except AppStateStoreError as exc:
+            self._remove_materialized_real_profile_root(
+                profile,
+                real_mods_path=real_mods_path,
+            )
+            raise AppShellError(f"Could not save real mod profiles: {exc}") from exc
+
+        scan_result, _, _ = self._scan_selected_real_profile(
+            real_mods_path=real_mods_path,
+            existing_config=existing_config,
+            catalog=updated_catalog,
+            requested_profile_id=profile.profile_id,
+        )
+        return RealModProfileCreateResult(
+            profile=profile,
+            profiles=updated_catalog,
+            scan_result=scan_result,
+            linked_mod_count=linked_mod_count,
+        )
+
+    def select_real_mod_profile(
+        self,
+        *,
+        profile_id: str,
+        configured_mods_path_text: str,
+        existing_config: AppConfig | None = None,
+    ) -> RealModProfileSelectResult:
+        real_mods_path = self._resolve_optional_real_mods_path(
+            configured_mods_path_text=configured_mods_path_text,
+            existing_config=existing_config,
+        )
+        if real_mods_path is None:
+            raise AppShellError("Configured real Mods directory is required before selecting profiles.")
+        catalog = self.load_real_mod_profiles()
+        scan_result, updated_catalog, profile = self._scan_selected_real_profile(
+            real_mods_path=real_mods_path,
+            existing_config=existing_config,
+            catalog=catalog,
+            requested_profile_id=profile_id,
+        )
+        if updated_catalog != catalog:
+            try:
+                save_real_mod_profile_catalog(
+                    self._real_mod_profile_catalog_file,
+                    updated_catalog,
+                )
+            except AppStateStoreError as exc:
+                raise AppShellError(f"Could not update real profile selection: {exc}") from exc
+        return RealModProfileSelectResult(
+            profile=profile,
+            profiles=updated_catalog,
+            scan_result=scan_result,
+        )
+
+    def delete_real_mod_profile(
+        self,
+        *,
+        profile_id: str,
+        configured_mods_path_text: str,
+        existing_config: AppConfig | None = None,
+    ) -> RealModProfileDeleteResult:
+        requested_profile_id = profile_id.strip()
+        if not requested_profile_id:
+            raise AppShellError("Select a real profile first.")
+
+        existing_profiles = self.load_real_mod_profiles()
+        profile = next(
+            (
+                candidate
+                for candidate in existing_profiles.profiles
+                if candidate.profile_id == requested_profile_id
+            ),
+            None,
+        )
+        if profile is None:
+            raise AppShellError("Selected real profile no longer exists.")
+        if profile.is_default:
+            raise AppShellError("Default real profile cannot be deleted.")
+
+        updated_profiles = SandboxModProfileCatalog(
+            profiles=tuple(
+                candidate
+                for candidate in existing_profiles.profiles
+                if candidate.profile_id != requested_profile_id
+            ),
+            active_profile_id=(
+                DEFAULT_REAL_PROFILE_ID
+                if existing_profiles.active_profile_id == requested_profile_id
+                else existing_profiles.active_profile_id
+            ),
+        )
+        try:
+            save_real_mod_profile_catalog(
+                self._real_mod_profile_catalog_file,
+                updated_profiles,
+            )
+        except AppStateStoreError as exc:
+            raise AppShellError(f"Could not delete real mod profile: {exc}") from exc
+
+        scan_result: ScanResult | None = None
+        real_mods_path = self._resolve_optional_real_mods_path(
+            configured_mods_path_text=configured_mods_path_text,
+            existing_config=existing_config,
+        )
+        if real_mods_path is not None:
+            self._remove_materialized_real_profile_root(
+                profile,
+                real_mods_path=real_mods_path,
+            )
+            scan_result, updated_profiles, _ = self._scan_selected_real_profile(
+                real_mods_path=real_mods_path,
+                existing_config=existing_config,
+                catalog=updated_profiles,
+                requested_profile_id=updated_profiles.active_profile_id or DEFAULT_REAL_PROFILE_ID,
+            )
+            try:
+                save_real_mod_profile_catalog(
+                    self._real_mod_profile_catalog_file,
+                    updated_profiles,
+                )
+            except AppStateStoreError as exc:
+                raise AppShellError(
+                    f"Real profile was deleted, but the fallback selection could not be saved: {exc}"
+                ) from exc
+
+        return RealModProfileDeleteResult(
+            profile=profile,
+            profiles=updated_profiles,
+            scan_result=scan_result,
+        )
+
+    def _scan_sandbox_inventory_for_profiles(
+        self,
+        *,
+        sandbox_mods_path: Path,
+        sandbox_archive_path_text: str,
+        existing_config: AppConfig | None,
+    ) -> ModsInventory:
+        excluded_paths = self._resolve_scan_excluded_paths(
+            scan_target=SCAN_TARGET_SANDBOX_MODS,
+            scan_path=sandbox_mods_path,
+            configured_archive_text=sandbox_archive_path_text,
+            configured_archive_fallback=(
+                existing_config.sandbox_archive_path if existing_config is not None else None
+            ),
+        )
+        try:
+            return scan_mods_directory(sandbox_mods_path, excluded_paths=excluded_paths)
+        except OSError as exc:
+            raise AppShellError(f"Could not scan sandbox Mods for profiles: {exc}") from exc
+
+    def _scan_real_inventory_for_profiles(
+        self,
+        *,
+        real_mods_path: Path,
+        existing_config: AppConfig | None,
+    ) -> ModsInventory:
+        excluded_paths = self._resolve_scan_excluded_paths(
+            scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_path,
+            configured_archive_text="",
+            configured_archive_fallback=(
+                existing_config.real_archive_path if existing_config is not None else None
+            ),
+        )
+        try:
+            return scan_mods_directory(real_mods_path, excluded_paths=excluded_paths)
+        except OSError as exc:
+            raise AppShellError(f"Could not scan real Mods for profiles: {exc}") from exc
+
+    def _scan_selected_sandbox_profile(
+        self,
+        *,
+        sandbox_mods_path: Path,
+        sandbox_archive_path_text: str,
+        existing_config: AppConfig | None,
+        catalog: SandboxModProfileCatalog,
+        requested_profile_id: str | None = None,
+    ) -> tuple[ScanResult, SandboxModProfileCatalog, SandboxModProfile]:
+        updated_catalog = catalog
+        selected_profile_id = requested_profile_id or catalog.active_profile_id or DEFAULT_SANDBOX_PROFILE_ID
+        profile = next(
+            (candidate for candidate in catalog.profiles if candidate.profile_id == selected_profile_id),
+            None,
+        )
+        if profile is None:
+            raise AppShellError("Selected sandbox profile no longer exists.")
+
+        if updated_catalog.active_profile_id != profile.profile_id:
+            updated_catalog = replace(updated_catalog, active_profile_id=profile.profile_id)
+
+        if profile.is_default:
+            inventory = self._scan_sandbox_inventory_for_profiles(
+                sandbox_mods_path=sandbox_mods_path,
+                sandbox_archive_path_text=sandbox_archive_path_text,
+                existing_config=existing_config,
+            )
+            return (
+                ScanResult(
+                    target_kind=SCAN_TARGET_SANDBOX_MODS,
+                    scan_path=sandbox_mods_path,
+                    inventory=inventory,
+                ),
+                updated_catalog,
+                profile,
+            )
+
+        profile, updated_catalog = self._materialize_sandbox_profile_if_needed(
+            catalog=updated_catalog,
+            profile=profile,
+            sandbox_mods_path=sandbox_mods_path,
+        )
+        profile_root = self._sandbox_mod_profile_mods_path(
+            profile,
+            sandbox_mods_path=sandbox_mods_path,
+        )
+        profile_inventory = self._scan_sandbox_inventory_for_profiles(
+            sandbox_mods_path=profile_root,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            existing_config=existing_config,
+        )
+        canonical_inventory = self._scan_sandbox_inventory_for_profiles(
+            sandbox_mods_path=sandbox_mods_path,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            existing_config=existing_config,
+        )
+        profile_state_by_folder, _ = _build_profile_entry_state_maps(
+            inventory=profile_inventory,
+            root=profile_root,
+        )
+        canonical_state_by_folder, _ = _build_profile_entry_state_maps(
+            inventory=canonical_inventory,
+            root=sandbox_mods_path,
+        )
+        disabled_rows = tuple(
+            mod
+            for key, state in sorted(canonical_state_by_folder.items())
+            if key not in profile_state_by_folder
+            for mod in state.mods
+        )
+        inventory = replace(
+            profile_inventory,
+            disabled_mods=disabled_rows,
+            scan_entry_findings=_merge_profile_scan_entry_findings(
+                profile_inventory,
+                canonical_inventory,
+            ),
+        )
+        return (
+            ScanResult(
+                target_kind=SCAN_TARGET_SANDBOX_MODS,
+                scan_path=profile_root,
+                inventory=inventory,
+            ),
+            updated_catalog,
+            profile,
+        )
+
+    def _scan_selected_real_profile(
+        self,
+        *,
+        real_mods_path: Path,
+        existing_config: AppConfig | None,
+        catalog: SandboxModProfileCatalog,
+        requested_profile_id: str | None = None,
+    ) -> tuple[ScanResult, SandboxModProfileCatalog, SandboxModProfile]:
+        updated_catalog = catalog
+        selected_profile_id = requested_profile_id or catalog.active_profile_id or DEFAULT_REAL_PROFILE_ID
+        profile = next(
+            (candidate for candidate in catalog.profiles if candidate.profile_id == selected_profile_id),
+            None,
+        )
+        if profile is None:
+            raise AppShellError("Selected real profile no longer exists.")
+
+        if updated_catalog.active_profile_id != profile.profile_id:
+            updated_catalog = replace(updated_catalog, active_profile_id=profile.profile_id)
+
+        if profile.is_default:
+            inventory = self._scan_real_inventory_for_profiles(
+                real_mods_path=real_mods_path,
+                existing_config=existing_config,
+            )
+            return (
+                ScanResult(
+                    target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+                    scan_path=real_mods_path,
+                    inventory=inventory,
+                ),
+                updated_catalog,
+                profile,
+            )
+
+        profile, updated_catalog = self._materialize_real_profile_if_needed(
+            catalog=updated_catalog,
+            profile=profile,
+            real_mods_path=real_mods_path,
+        )
+        profile_root = self._real_mod_profile_mods_path(
+            profile,
+            real_mods_path=real_mods_path,
+        )
+        profile_inventory = self._scan_real_inventory_for_profiles(
+            real_mods_path=profile_root,
+            existing_config=existing_config,
+        )
+        canonical_inventory = self._scan_real_inventory_for_profiles(
+            real_mods_path=real_mods_path,
+            existing_config=existing_config,
+        )
+        profile_state_by_folder, _ = _build_profile_entry_state_maps(
+            inventory=profile_inventory,
+            root=profile_root,
+        )
+        canonical_state_by_folder, _ = _build_profile_entry_state_maps(
+            inventory=canonical_inventory,
+            root=real_mods_path,
+        )
+        disabled_rows = tuple(
+            mod
+            for key, state in sorted(canonical_state_by_folder.items())
+            if key not in profile_state_by_folder
+            for mod in state.mods
+        )
+        inventory = replace(
+            profile_inventory,
+            disabled_mods=disabled_rows,
+            scan_entry_findings=_merge_profile_scan_entry_findings(
+                profile_inventory,
+                canonical_inventory,
+            ),
+        )
+        return (
+            ScanResult(
+                target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+                scan_path=profile_root,
+                inventory=inventory,
+            ),
+            updated_catalog,
+            profile,
+        )
+
+    def _resolve_selected_sandbox_profile_path(
+        self,
+        *,
+        catalog: SandboxModProfileCatalog,
+        sandbox_mods_path: Path,
+        requested_profile_id: str | None,
+    ) -> tuple[Path, SandboxModProfileCatalog, SandboxModProfile]:
+        selected_profile_id = requested_profile_id or catalog.active_profile_id or DEFAULT_SANDBOX_PROFILE_ID
+        profile = next(
+            (candidate for candidate in catalog.profiles if candidate.profile_id == selected_profile_id),
+            None,
+        )
+        if profile is None:
+            raise AppShellError("Selected sandbox profile no longer exists.")
+
+        updated_catalog = catalog
+        if updated_catalog.active_profile_id != profile.profile_id:
+            updated_catalog = replace(updated_catalog, active_profile_id=profile.profile_id)
+
+        if profile.is_default:
+            return sandbox_mods_path, updated_catalog, profile
+
+        profile, updated_catalog = self._materialize_sandbox_profile_if_needed(
+            catalog=updated_catalog,
+            profile=profile,
+            sandbox_mods_path=sandbox_mods_path,
+        )
+        return (
+            self._sandbox_mod_profile_mods_path(
+                profile,
+                sandbox_mods_path=sandbox_mods_path,
+            ),
+            updated_catalog,
+            profile,
+        )
+
+    def _resolve_selected_real_profile_path(
+        self,
+        *,
+        catalog: SandboxModProfileCatalog,
+        real_mods_path: Path,
+        requested_profile_id: str | None,
+    ) -> tuple[Path, SandboxModProfileCatalog, SandboxModProfile]:
+        selected_profile_id = requested_profile_id or catalog.active_profile_id or DEFAULT_REAL_PROFILE_ID
+        profile = next(
+            (candidate for candidate in catalog.profiles if candidate.profile_id == selected_profile_id),
+            None,
+        )
+        if profile is None:
+            raise AppShellError("Selected real profile no longer exists.")
+
+        updated_catalog = catalog
+        if updated_catalog.active_profile_id != profile.profile_id:
+            updated_catalog = replace(updated_catalog, active_profile_id=profile.profile_id)
+
+        if profile.is_default:
+            return real_mods_path, updated_catalog, profile
+
+        profile, updated_catalog = self._materialize_real_profile_if_needed(
+            catalog=updated_catalog,
+            profile=profile,
+            real_mods_path=real_mods_path,
+        )
+        return (
+            self._real_mod_profile_mods_path(
+                profile,
+                real_mods_path=real_mods_path,
+            ),
+            updated_catalog,
+            profile,
+        )
+
+    def _prepare_canonical_sandbox_profile_library(self, sandbox_mods_path: Path) -> Path:
+        canonical_root = sandbox_mods_path.expanduser().resolve(strict=False)
+        pending_renames: list[tuple[Path, Path]] = []
+        for child in canonical_root.iterdir():
+            if not child.is_dir():
+                continue
+            if not child.name.startswith("."):
+                continue
+            if child.name in {
+                _DEFAULT_SANDBOX_ARCHIVE_DIRNAME,
+                _DEFAULT_REAL_ARCHIVE_DIRNAME,
+                _LEGACY_ARCHIVE_DIRNAME,
+            }:
+                continue
+            normalized_name = child.name[1:]
+            if not normalized_name:
+                continue
+            target_path = child.with_name(normalized_name)
+            if target_path.exists():
+                raise AppShellError(
+                    "Sandbox profile migration is blocked because a canonical folder already exists: "
+                    f"{target_path}"
+                )
+            pending_renames.append((child, target_path))
+
+        for source_path, target_path in pending_renames:
+            try:
+                source_path.rename(target_path)
+            except OSError as exc:
+                raise AppShellError(
+                    f"Could not normalize canonical sandbox mod folder {source_path.name}: {exc}"
+                ) from exc
+        return canonical_root
+
+    def _materialize_sandbox_profile_if_needed(
+        self,
+        *,
+        catalog: SandboxModProfileCatalog,
+        profile: SandboxModProfile,
+        sandbox_mods_path: Path,
+    ) -> tuple[SandboxModProfile, SandboxModProfileCatalog]:
+        if profile.storage_dir_name:
+            profile_root = self._sandbox_mod_profile_mods_path(
+                profile,
+                sandbox_mods_path=sandbox_mods_path,
+            )
+            profile_root.mkdir(parents=True, exist_ok=True)
+            return profile, catalog
+
+        if not profile.entries:
+            raise AppShellError(
+                f"Sandbox profile '{profile.name}' cannot be used because it has no stored state."
+            )
+
+        materialized_profile = replace(
+            profile,
+            storage_dir_name=uuid4().hex,
+            entries=tuple(),
+        )
+        profile_root = self._sandbox_mod_profile_mods_path(
+            materialized_profile,
+            sandbox_mods_path=sandbox_mods_path,
+        )
+        profile_root.mkdir(parents=True, exist_ok=True)
+        performed_links: list[Path] = []
+        try:
+            for entry in profile.entries:
+                if not entry.enabled:
+                    continue
+                canonical_path = sandbox_mods_path / entry.folder_name
+                if not canonical_path.exists():
+                    continue
+                link_path = profile_root / entry.folder_name
+                if link_path.exists():
+                    continue
+                _create_directory_link(link_path, canonical_path)
+                performed_links.append(link_path)
+        except OSError as exc:
+            for link_path in reversed(performed_links):
+                try:
+                    if link_path.exists():
+                        _remove_directory_link(link_path)
+                except OSError:
+                    pass
+            raise AppShellError(f"Could not materialize sandbox profile '{profile.name}': {exc}") from exc
+
+        updated_catalog = replace(
+            catalog,
+            profiles=tuple(
+                materialized_profile if candidate.profile_id == profile.profile_id else candidate
+                for candidate in catalog.profiles
+            ),
+        )
+        return materialized_profile, updated_catalog
+
+    def _materialize_real_profile_if_needed(
+        self,
+        *,
+        catalog: SandboxModProfileCatalog,
+        profile: SandboxModProfile,
+        real_mods_path: Path,
+    ) -> tuple[SandboxModProfile, SandboxModProfileCatalog]:
+        if profile.storage_dir_name:
+            profile_root = self._real_mod_profile_mods_path(
+                profile,
+                real_mods_path=real_mods_path,
+            )
+            profile_root.mkdir(parents=True, exist_ok=True)
+            return profile, catalog
+
+        if not profile.entries:
+            raise AppShellError(
+                f"Real profile '{profile.name}' cannot be used because it has no stored state."
+            )
+
+        materialized_profile = replace(
+            profile,
+            storage_dir_name=uuid4().hex,
+            entries=tuple(),
+        )
+        profile_root = self._real_mod_profile_mods_path(
+            materialized_profile,
+            real_mods_path=real_mods_path,
+        )
+        profile_root.mkdir(parents=True, exist_ok=True)
+        performed_links: list[Path] = []
+        try:
+            for entry in profile.entries:
+                if not entry.enabled:
+                    continue
+                canonical_path = real_mods_path / entry.folder_name
+                if not canonical_path.exists():
+                    continue
+                link_path = profile_root / entry.folder_name
+                if link_path.exists():
+                    continue
+                _create_directory_link(link_path, canonical_path)
+                performed_links.append(link_path)
+        except OSError as exc:
+            for link_path in reversed(performed_links):
+                try:
+                    if link_path.exists():
+                        _remove_directory_link(link_path)
+                except OSError:
+                    pass
+            raise AppShellError(f"Could not materialize real profile '{profile.name}': {exc}") from exc
+
+        updated_catalog = replace(
+            catalog,
+            profiles=tuple(
+                materialized_profile if candidate.profile_id == profile.profile_id else candidate
+                for candidate in catalog.profiles
+            ),
+        )
+        return materialized_profile, updated_catalog
+
+    def _materialize_profile_from_canonical_library(
+        self,
+        *,
+        profile: SandboxModProfile,
+        sandbox_mods_path: Path,
+    ) -> int:
+        self._prepare_sandbox_profile_group_dirs(sandbox_mods_path)
+        profile_root = self._sandbox_mod_profile_mods_path(
+            profile,
+            sandbox_mods_path=sandbox_mods_path,
+        )
+        if profile_root.exists():
+            raise OSError(f"Profile root already exists: {profile_root}")
+        profile_root.mkdir(parents=True, exist_ok=False)
+        linked_count = 0
+        try:
+            for child in sorted(sandbox_mods_path.iterdir(), key=lambda path: path.name.casefold()):
+                if not child.is_dir():
+                    continue
+                link_path = profile_root / child.name
+                _create_directory_link(link_path, child)
+                linked_count += 1
+        except OSError:
+            self._remove_materialized_profile_root(
+                profile,
+                sandbox_mods_path=sandbox_mods_path,
+            )
+            raise
+        return linked_count
+
+    def _materialize_real_profile_from_canonical_library(
+        self,
+        *,
+        profile: SandboxModProfile,
+        real_mods_path: Path,
+    ) -> int:
+        self._prepare_sandbox_profile_group_dirs(real_mods_path)
+        profile_root = self._real_mod_profile_mods_path(
+            profile,
+            real_mods_path=real_mods_path,
+        )
+        if profile_root.exists():
+            raise OSError(f"Profile root already exists: {profile_root}")
+        profile_root.mkdir(parents=True, exist_ok=False)
+        linked_count = 0
+        try:
+            for child in sorted(real_mods_path.iterdir(), key=lambda path: path.name.casefold()):
+                if not child.is_dir():
+                    continue
+                link_path = profile_root / child.name
+                _create_directory_link(link_path, child)
+                linked_count += 1
+        except OSError:
+            self._remove_materialized_real_profile_root(
+                profile,
+                real_mods_path=real_mods_path,
+            )
+            raise
+        return linked_count
+
+    def _remove_materialized_profile_root(
+        self,
+        profile: SandboxModProfile,
+        *,
+        sandbox_mods_path: Path,
+    ) -> None:
+        if not profile.storage_dir_name:
+            return
+        profile_root = self._sandbox_mod_profile_mods_path(
+            profile,
+            sandbox_mods_path=sandbox_mods_path,
+        )
+        if profile_root.exists():
+            for child in list(profile_root.iterdir()):
+                if child.is_dir():
+                    _remove_directory_link(child)
+                else:
+                    child.unlink(missing_ok=True)
+            profile_root.rmdir()
+        container = self._sandbox_mod_profile_root_dir(
+            profile,
+            sandbox_mods_path=sandbox_mods_path,
+        )
+        if container.exists():
+            container.rmdir()
+
+    def _remove_materialized_real_profile_root(
+        self,
+        profile: SandboxModProfile,
+        *,
+        real_mods_path: Path,
+    ) -> None:
+        if not profile.storage_dir_name:
+            return
+        profile_root = self._real_mod_profile_mods_path(
+            profile,
+            real_mods_path=real_mods_path,
+        )
+        if profile_root.exists():
+            for child in list(profile_root.iterdir()):
+                if child.is_dir():
+                    _remove_directory_link(child)
+                else:
+                    child.unlink(missing_ok=True)
+            profile_root.rmdir()
+        container = self._real_mod_profile_root_dir(
+            profile,
+            real_mods_path=real_mods_path,
+        )
+        if container.exists():
+            container.rmdir()
+
+    def _prepare_sandbox_profile_group_dirs(self, sandbox_mods_path: Path) -> None:
+        profiles_root = self._cinderleaf_profiles_root_dir(sandbox_mods_path)
+        (profiles_root / _SANDBOX_PROFILE_GROUP_DIRNAME).mkdir(parents=True, exist_ok=True)
+        (profiles_root / _REAL_PROFILE_GROUP_DIRNAME).mkdir(parents=True, exist_ok=True)
+
+    def _cinderleaf_profiles_root_dir(self, sandbox_mods_path: Path) -> Path:
+        canonical_root = sandbox_mods_path.expanduser().resolve(strict=False)
+        if (
+            canonical_root.name.casefold() == _SANDBOX_PROFILE_GROUP_DIRNAME.casefold()
+            and canonical_root.parent.name.casefold() == "cinderleaf"
+        ):
+            cinderleaf_root = canonical_root.parent
+        else:
+            cinderleaf_root = canonical_root.parent / "Cinderleaf"
+        return cinderleaf_root / _PROFILES_DIRNAME
+
+    def _sandbox_mod_profile_root_dir(
+        self,
+        profile: SandboxModProfile,
+        *,
+        sandbox_mods_path: Path,
+    ) -> Path:
+        if not profile.storage_dir_name:
+            raise AppShellError(f"Sandbox profile '{profile.name}' does not have a storage root yet.")
+        return (
+            self._cinderleaf_profiles_root_dir(sandbox_mods_path)
+            / _SANDBOX_PROFILE_GROUP_DIRNAME
+            / profile.storage_dir_name
+        )
+
+    def _sandbox_mod_profile_mods_path(
+        self,
+        profile: SandboxModProfile,
+        *,
+        sandbox_mods_path: Path,
+    ) -> Path:
+        return (
+            self._sandbox_mod_profile_root_dir(
+                profile,
+                sandbox_mods_path=sandbox_mods_path,
+            )
+            / _SANDBOX_PROFILE_MODS_DIRNAME
+        )
+
+    def _real_mod_profile_root_dir(
+        self,
+        profile: SandboxModProfile,
+        *,
+        real_mods_path: Path,
+    ) -> Path:
+        if not profile.storage_dir_name:
+            raise AppShellError(f"Real profile '{profile.name}' does not have a storage root yet.")
+        return (
+            self._cinderleaf_profiles_root_dir(real_mods_path)
+            / _REAL_PROFILE_GROUP_DIRNAME
+            / profile.storage_dir_name
+        )
+
+    def _real_mod_profile_mods_path(
+        self,
+        profile: SandboxModProfile,
+        *,
+        real_mods_path: Path,
+    ) -> Path:
+        return (
+            self._real_mod_profile_root_dir(
+                profile,
+                real_mods_path=real_mods_path,
+            )
+            / _SANDBOX_PROFILE_MODS_DIRNAME
+        )
+
+    def _save_normalized_sandbox_profile_catalog(
+        self,
+        catalog: SandboxModProfileCatalog,
+    ) -> None:
+        try:
+            save_sandbox_mod_profile_catalog(self._sandbox_mod_profile_catalog_file, catalog)
+        except AppStateStoreError as exc:
+            raise AppShellError(f"Could not save sandbox mod profiles: {exc}") from exc
+
+    def _save_normalized_real_profile_catalog(
+        self,
+        catalog: SandboxModProfileCatalog,
+    ) -> None:
+        try:
+            save_real_mod_profile_catalog(self._real_mod_profile_catalog_file, catalog)
+        except AppStateStoreError as exc:
+            raise AppShellError(f"Could not save real mod profiles: {exc}") from exc
 
     def get_sandbox_mods_promotion_readiness(
         self,
@@ -2471,32 +3901,31 @@ class AppShellService:
         existing_config: AppConfig | None = None,
     ) -> ScanResult:
         if scan_target == SCAN_TARGET_CONFIGURED_REAL_MODS:
-            scan_path = self._parse_and_validate_mods_path(configured_mods_path_text)
-            configured_archive_text = real_archive_path_text
-            configured_archive_fallback = (
-                existing_config.real_archive_path if existing_config is not None else None
+            real_mods_path = self._parse_and_validate_mods_path(configured_mods_path_text)
+            catalog = self.load_real_mod_profiles()
+            scan_result, updated_catalog, _ = self._scan_selected_real_profile(
+                real_mods_path=real_mods_path,
+                existing_config=existing_config,
+                catalog=catalog,
             )
+            if updated_catalog != catalog:
+                self._save_normalized_real_profile_catalog(updated_catalog)
+            return scan_result
         elif scan_target == SCAN_TARGET_SANDBOX_MODS:
-            scan_path = self._parse_and_validate_sandbox_mods_path(sandbox_mods_path_text)
-            configured_archive_text = sandbox_archive_path_text
-            configured_archive_fallback = (
-                existing_config.sandbox_archive_path if existing_config is not None else None
+            sandbox_mods_path = self._parse_and_validate_sandbox_mods_path(sandbox_mods_path_text)
+            sandbox_mods_path = self._prepare_canonical_sandbox_profile_library(sandbox_mods_path)
+            catalog = self.load_sandbox_mod_profiles()
+            scan_result, updated_catalog, _ = self._scan_selected_sandbox_profile(
+                sandbox_mods_path=sandbox_mods_path,
+                sandbox_archive_path_text=sandbox_archive_path_text,
+                existing_config=existing_config,
+                catalog=catalog,
             )
+            if updated_catalog != catalog:
+                self._save_normalized_sandbox_profile_catalog(updated_catalog)
+            return scan_result
         else:
             raise AppShellError(f"Unknown scan target: {scan_target}")
-
-        excluded_paths = self._resolve_scan_excluded_paths(
-            scan_target=scan_target,
-            scan_path=scan_path,
-            configured_archive_text=configured_archive_text,
-            configured_archive_fallback=configured_archive_fallback,
-        )
-        try:
-            inventory = scan_mods_directory(scan_path, excluded_paths=excluded_paths)
-        except OSError as exc:
-            raise AppShellError(f"Could not scan selected target: {exc}") from exc
-
-        return ScanResult(target_kind=scan_target, scan_path=scan_path, inventory=inventory)
 
     def compare_real_and_sandbox_mods(
         self,
@@ -3141,10 +4570,10 @@ class AppShellService:
             existing_config=existing_config,
         )
 
-    def build_install_plan(
+    def _build_install_plan_for_package(
         self,
         *,
-        package_path_text: str,
+        package_path: Path,
         install_target: InstallTargetKind,
         configured_mods_path_text: str,
         sandbox_mods_path_text: str,
@@ -3155,7 +4584,6 @@ class AppShellService:
         nexus_api_key_text: str = "",
         existing_config: AppConfig | None = None,
     ) -> SandboxInstallPlan:
-        package_path = self._parse_and_validate_zip_path(package_path_text)
         nexus_api_key = self._resolve_nexus_api_key(
             nexus_api_key_text=nexus_api_key_text,
             existing_config=existing_config,
@@ -3217,6 +4645,112 @@ class AppShellService:
             raise AppShellError(str(exc)) from exc
         except OSError as exc:
             raise AppShellError(f"Could not build sandbox install plan: {exc}") from exc
+
+    def _combine_install_plans(
+        self,
+        plans: tuple[SandboxInstallPlan, ...],
+        *,
+        package_paths: tuple[Path, ...],
+        destination_kind: InstallTargetKind,
+    ) -> SandboxInstallPlan:
+        first_plan = plans[0]
+        return replace(
+            first_plan,
+            package_path=package_paths[0],
+            package_paths=package_paths,
+            entries=tuple(entry for plan in plans for entry in plan.entries),
+            package_findings=tuple(
+                finding for plan in plans for finding in plan.package_findings
+            ),
+            package_warnings=tuple(
+                warning for plan in plans for warning in plan.package_warnings
+            ),
+            plan_warnings=tuple(warning for plan in plans for warning in plan.plan_warnings),
+            dependency_findings=tuple(
+                finding for plan in plans for finding in plan.dependency_findings
+            ),
+            remote_requirements=tuple(
+                requirement for plan in plans for requirement in plan.remote_requirements
+            ),
+            destination_kind=destination_kind,
+        )
+
+    def build_install_plan(
+        self,
+        *,
+        package_path_text: str = "",
+        package_paths_text: tuple[str, ...] = tuple(),
+        install_target: InstallTargetKind,
+        configured_mods_path_text: str,
+        sandbox_mods_path_text: str,
+        real_archive_path_text: str,
+        sandbox_archive_path_text: str,
+        allow_overwrite: bool,
+        configured_real_mods_path: Path | None = None,
+        nexus_api_key_text: str = "",
+        existing_config: AppConfig | None = None,
+    ) -> SandboxInstallPlan:
+        selected_package_texts = tuple(
+            path_text.strip()
+            for path_text in package_paths_text
+            if path_text.strip()
+        )
+        if selected_package_texts:
+            package_paths = tuple(
+                self._parse_and_validate_zip_path(path_text)
+                for path_text in selected_package_texts
+            )
+            if len(package_paths) == 1:
+                return self._build_install_plan_for_package(
+                    package_path=package_paths[0],
+                    install_target=install_target,
+                    configured_mods_path_text=configured_mods_path_text,
+                    sandbox_mods_path_text=sandbox_mods_path_text,
+                    real_archive_path_text=real_archive_path_text,
+                    sandbox_archive_path_text=sandbox_archive_path_text,
+                    allow_overwrite=allow_overwrite,
+                    configured_real_mods_path=configured_real_mods_path,
+                    nexus_api_key_text=nexus_api_key_text,
+                    existing_config=existing_config,
+                )
+
+            batch_plans = tuple(
+                self._build_install_plan_for_package(
+                    package_path=package_path,
+                    install_target=install_target,
+                    configured_mods_path_text=configured_mods_path_text,
+                    sandbox_mods_path_text=sandbox_mods_path_text,
+                    real_archive_path_text=real_archive_path_text,
+                    sandbox_archive_path_text=sandbox_archive_path_text,
+                    allow_overwrite=allow_overwrite,
+                    configured_real_mods_path=configured_real_mods_path,
+                    nexus_api_key_text=nexus_api_key_text,
+                    existing_config=existing_config,
+                )
+                for package_path in package_paths
+            )
+            return self._combine_install_plans(
+                batch_plans,
+                package_paths=package_paths,
+                destination_kind=install_target,
+            )
+
+        if not package_path_text.strip():
+            raise AppShellError("No package selected for install planning.")
+
+        package_path = self._parse_and_validate_zip_path(package_path_text)
+        return self._build_install_plan_for_package(
+            package_path=package_path,
+            install_target=install_target,
+            configured_mods_path_text=configured_mods_path_text,
+            sandbox_mods_path_text=sandbox_mods_path_text,
+            real_archive_path_text=real_archive_path_text,
+            sandbox_archive_path_text=sandbox_archive_path_text,
+            allow_overwrite=allow_overwrite,
+            configured_real_mods_path=configured_real_mods_path,
+            nexus_api_key_text=nexus_api_key_text,
+            existing_config=existing_config,
+        )
 
     def execute_sandbox_install_plan(
         self,
@@ -3960,13 +5494,22 @@ class AppShellService:
         )
         if sandbox_mods_path is None:
             raise AppShellError("Sandbox Mods directory is required for sandbox dev launch.")
+        sandbox_mods_path = self._prepare_canonical_sandbox_profile_library(sandbox_mods_path)
+        catalog = self.load_sandbox_mod_profiles()
+        active_mods_path, updated_catalog, _ = self._resolve_selected_sandbox_profile_path(
+            catalog=catalog,
+            sandbox_mods_path=sandbox_mods_path,
+            requested_profile_id=None,
+        )
+        if updated_catalog != catalog:
+            self._save_normalized_sandbox_profile_catalog(updated_catalog)
 
         real_mods_path = self._resolve_optional_real_mods_path(
             configured_mods_path_text=configured_mods_path_text,
             existing_config=existing_config,
         )
         if real_mods_path is not None and _paths_deterministically_match(
-            sandbox_mods_path,
+            active_mods_path,
             real_mods_path,
         ):
             raise AppShellError(
@@ -3986,9 +5529,50 @@ class AppShellService:
         sandbox_command = LaunchCommand(
             mode=command.mode,
             executable_path=command.executable_path,
-            argv=(*command.argv, "--mods-path", str(sandbox_mods_path)),
+            argv=(*command.argv, "--mods-path", str(active_mods_path)),
         )
-        return game_path, sandbox_mods_path, sandbox_command
+        return game_path, active_mods_path, sandbox_command
+
+    def _resolve_real_smapi_launch_command(
+        self,
+        *,
+        game_path: Path,
+        configured_mods_path_text: str,
+        existing_config: AppConfig | None,
+    ) -> LaunchCommand:
+        try:
+            command = resolve_launch_command(game_path=game_path, mode="smapi")
+        except GameLaunchError as exc:
+            raise AppShellError(str(exc)) from exc
+
+        real_mods_path = self._resolve_optional_real_mods_path(
+            configured_mods_path_text=configured_mods_path_text,
+            existing_config=existing_config,
+        )
+        if real_mods_path is None:
+            return command
+
+        catalog = self.load_real_mod_profiles()
+        active_mods_path, updated_catalog, profile = self._resolve_selected_real_profile_path(
+            catalog=catalog,
+            real_mods_path=real_mods_path,
+            requested_profile_id=None,
+        )
+        if updated_catalog != catalog:
+            self._save_normalized_real_profile_catalog(updated_catalog)
+        if profile.is_default:
+            return command
+
+        if command.executable_path.suffix.casefold() == ".sh":
+            raise AppShellError(
+                "Real profile launch requires a direct SMAPI executable target; shell-script SMAPI wrappers are not supported in this stage."
+            )
+
+        return LaunchCommand(
+            mode=command.mode,
+            executable_path=command.executable_path,
+            argv=(str(command.executable_path), "--mods-path", str(active_mods_path)),
+        )
 
     def _resolve_sandbox_mod_sync_context(
         self,
@@ -4110,6 +5694,21 @@ class AppShellService:
             action = INSTALL_NEW
             warnings = ["Promoted from sandbox Mods selection via explicit managed action."]
             source_mod = selected_mods_by_path.get(str(source_path))
+            if source_mod is None:
+                manifest_result = parse_manifest_file(source_path / "manifest.json", source_path)
+                if manifest_result.manifest is None:
+                    raise AppShellError(
+                        "Could not resolve a manifest for the selected sandbox mod folder."
+                    )
+                source_name = manifest_result.manifest.name
+                source_unique_id = manifest_result.manifest.unique_id
+                source_version = manifest_result.manifest.version
+                source_manifest_path = str(source_path / "manifest.json")
+            else:
+                source_name = source_mod.name
+                source_unique_id = source_mod.unique_id
+                source_version = source_mod.version
+                source_manifest_path = str(source_mod.manifest_path)
 
             if target_exists:
                 has_replace_entries = True
@@ -4124,16 +5723,11 @@ class AppShellService:
 
             entries.append(
                 SandboxInstallPlanEntry(
-                    name=source_mod.name if source_mod is not None else source_path.name,
-                    unique_id=(
-                        source_mod.unique_id if source_mod is not None else source_path.name
-                    ),
-                    version=source_mod.version if source_mod is not None else "",
-                    source_manifest_path=(
-                        str(source_mod.manifest_path)
-                        if source_mod is not None
-                        else str(source_path / "manifest.json")
-                    ),
+                    name=source_name,
+                    unique_id=source_unique_id,
+                    version=source_version,
+                    source_package_path=source_path,
+                    source_manifest_path=source_manifest_path,
                     source_root_path=str(source_path),
                     target_path=target_path,
                     action=action,
@@ -4948,7 +6542,7 @@ class AppShellService:
             cached.temp_dir.cleanup()
             self._prepared_backup_bundle_zip_content.pop(resolved_bundle_path, None)
 
-        temp_dir = tempfile.TemporaryDirectory(prefix="sdvmm-backup-zip-")
+        temp_dir = tempfile.TemporaryDirectory(prefix="cinderleaf-backup-zip-")
         extracted_root = Path(temp_dir.name)
         try:
             with zipfile.ZipFile(resolved_bundle_path) as bundle_zip:
@@ -4998,7 +6592,21 @@ class AppShellService:
         mods_source: _BackupBundleSourceResolution,
         excluded_paths: tuple[Path, ...],
         relative_path: Path,
+        selected: bool = True,
     ) -> _PreparedModConfigSnapshot:
+        if not selected:
+            return _PreparedModConfigSnapshot(
+                item=BackupBundleExportItem(
+                    key=key,
+                    label=label,
+                    kind="directory",
+                    status="not_present",
+                    relative_path=relative_path,
+                    source_path=mods_source.path,
+                    note="Excluded by export selection.",
+                )
+            )
+
         mods_path = mods_source.path
         if mods_path is None:
             return _PreparedModConfigSnapshot(
@@ -5064,7 +6672,7 @@ class AppShellService:
     @staticmethod
     def _allocate_backup_bundle_path(destination_root: Path) -> Path:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
-        base_name = f"sdvmm-backup-{timestamp}"
+        base_name = f"Cinderleaf-backup-{timestamp}"
         candidate = destination_root / base_name
         suffix = 2
         while candidate.exists():
@@ -5080,8 +6688,20 @@ class AppShellService:
         kind: Literal["file", "directory"],
         resolution: _BackupBundleSourceResolution,
         relative_path: Path,
+        selected: bool = True,
     ) -> BackupBundleExportItem:
         source_path = resolution.path
+        if not selected:
+            return BackupBundleExportItem(
+                key=key,
+                label=label,
+                kind=kind,
+                status="not_present",
+                relative_path=relative_path,
+                source_path=source_path,
+                note="Excluded by export selection.",
+            )
+
         if source_path is None:
             return BackupBundleExportItem(
                 key=key,
@@ -5173,7 +6793,7 @@ class AppShellService:
     ) -> dict[str, object]:
         status_counts = Counter(item.status for item in items)
         return {
-            "bundle_format": "sdvmm-local-backup",
+            "bundle_format": BACKUP_BUNDLE_FORMAT,
             "format_version": 1,
             "created_at_utc": created_at_utc,
             "bundle_folder_name": bundle_path.name,
@@ -5215,6 +6835,14 @@ class AppShellService:
     @property
     def _update_source_intent_overlay_file(self) -> Path:
         return update_source_intent_overlay_file(self._state_file)
+
+    @property
+    def _sandbox_mod_profile_catalog_file(self) -> Path:
+        return sandbox_mod_profile_catalog_file(self._state_file)
+
+    @property
+    def _real_mod_profile_catalog_file(self) -> Path:
+        return real_mod_profile_catalog_file(self._state_file)
 
     def _record_completed_install_operation(
         self,
@@ -5328,7 +6956,7 @@ def _build_mod_config_snapshot(
     except OSError as exc:
         return None, 0, 0, f"Config snapshot scan failed: {exc}"
 
-    temp_root = Path(tempfile.mkdtemp(prefix="sdvmm-config-snapshot-"))
+    temp_root = Path(tempfile.mkdtemp(prefix="cinderleaf-config-snapshot-"))
     copied_mod_folders: set[Path] = set()
     copied_count = 0
     try:
@@ -5489,7 +7117,7 @@ def _build_backup_bundle_inspection_result(
         if isinstance(raw_manifest.get("created_at_utc"), str)
         else None
     )
-    if bundle_format != "sdvmm-local-backup":
+    if bundle_format not in LEGACY_BACKUP_BUNDLE_FORMATS:
         warnings.append(
             "Manifest bundle_format is missing or unsupported for the current backup format."
         )
@@ -5523,7 +7151,7 @@ def _build_backup_bundle_inspection_result(
         )
 
     items: list[BackupBundleInspectionItem] = []
-    structurally_usable = bundle_format == "sdvmm-local-backup" and format_version == 1
+    structurally_usable = bundle_format in LEGACY_BACKUP_BUNDLE_FORMATS and format_version == 1
     for index, raw_item in enumerate(raw_items):
         parsed_item, item_warning, item_valid_for_restore = _parse_backup_bundle_inspection_item(
             bundle_content_root=bundle_content_root,
@@ -5857,6 +7485,28 @@ def _build_restore_import_file_item_plan(
     state: RestoreImportPlanningItemState
     message: str
     note = item.note
+
+    if item.key in {"real_mod_profiles", "sandbox_mod_profiles", "stardew_save_files"}:
+        message = (
+            f"{item.label} is exported for backup only in this stage. "
+            "Restore/import does not yet restore this artifact type."
+        )
+        return (
+            RestoreImportPlanningItem(
+                key=item.key,
+                label=item.label,
+                state="blocked",
+                message=message,
+                bundle_relative_path=item.relative_path,
+                local_target_path=local_target_path,
+                bundle_declared_status=item.declared_status,
+                bundle_structure_state=item.structure_state,
+                note=item.note,
+            ),
+            tuple(),
+            tuple(),
+            tuple(),
+        )
 
     if item.structure_state == "unexpected_present":
         state = "needs_review"
@@ -7483,7 +9133,7 @@ def _build_sandbox_install_review_message(summary: InstallExecutionSummary) -> s
         f"{_entry_count_label(summary.total_entry_count)}."
     )
     if summary.has_existing_targets_to_replace or summary.has_archive_writes:
-        message += " Review archive/replace actions before execution."
+        message += " Inspect archive/replace actions before execution."
     else:
         message += " No explicit approval is required."
     return message
@@ -7496,7 +9146,7 @@ def _build_real_install_review_message(summary: InstallExecutionSummary) -> str:
         "Explicit approval is required before execution."
     )
     if summary.has_existing_targets_to_replace or summary.has_archive_writes:
-        message += " Review archive/replace actions carefully."
+        message += " Inspect archive/replace actions carefully."
     return message
 
 
@@ -7815,7 +9465,7 @@ def build_backup_bundle_export_text(result: BackupBundleExportResult) -> str:
             "This export intentionally does not include:",
             "- Game binaries, Steam files, or SMAPI runtime executables.",
             "- Watcher download folders or unmanaged caches.",
-            "- Only common per-mod config artifacts inside installed Mods trees are included in this stage; other external mod-created state folders are not yet covered.",
+            "- Only the artifact groups selected in the export dialog are included; unselected groups are recorded as not_present in the manifest.",
             "- Transient UI state such as selections, filters, or pending plans.",
             "- Restore/import automation. This bundle is export-only in this stage.",
         )
@@ -8120,7 +9770,7 @@ def _build_intake_flow_messages(
     if comparison_state == "target_inventory_unavailable":
         return (
             f"Packages are set to compare against {comparison_target_label}, but that inventory has not been scanned in this session yet.",
-            f"Scan {comparison_target_label} if you want truthful version comparison, or use Open Review for a manual review now.",
+            f"Scan {comparison_target_label} if you want truthful version comparison, or use Open Install for a manual plan now.",
         )
 
     if comparison_state == "newer_than_installed":
@@ -8129,58 +9779,58 @@ def _build_intake_flow_messages(
             joined = ", ".join(matched_guided)
             return (
                 f"Package is newer than the installed version in {comparison_target_label}. {detail} Guided target match: {joined}.",
-                f"Use Review as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
+                f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
             )
         if matched_update_available:
             joined = ", ".join(matched_update_available)
             return (
                 f"Package is newer than the installed version in {comparison_target_label}. {detail} Update-available match: {joined}.",
-                f"Use Review as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
+                f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
             )
         return (
             f"Package is newer than the installed version in {comparison_target_label}. {detail}",
-            f"Use Review as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
+            f"Use Open as update for {comparison_target_label}, then confirm the archive-aware replace plan.",
         )
 
     if comparison_state == "same_version_installed":
         return (
             f"Same version is already installed in {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}",
-            "Open Review stays available for inspection, but this package is not a truthful update candidate.",
+            "Open Install stays available for inspection, but this package is not a truthful update candidate.",
         )
 
     if comparison_state == "older_than_installed":
         return (
             f"Installed version in {comparison_target_label} is newer than this package. {_first_version_comparison_detail(version_comparisons)}",
-            "Open Review if you still need a manual check, but Review as update stays off for older packages.",
+            "Open Install if you still need a manual check, but Open as update stays off for older packages.",
         )
 
     if comparison_state == "not_installed_in_target":
         return (
             f"This package is not installed in {comparison_target_label} yet.",
-            f"Use Open Review to plan it as a new install against {comparison_target_label}.",
+            f"Use Open Install to plan it as a new install against {comparison_target_label}.",
         )
 
     if comparison_state == "version_comparison_unavailable":
         return (
             f"Version comparison against {comparison_target_label} is unavailable for this package. {_first_version_comparison_detail(version_comparisons)}",
-            "Open Review if you need manual inspection. Review as update stays off until the version comparison is clear.",
+            "Open Install if you need manual inspection. Open as update stays off until the version comparison is clear.",
         )
 
     if comparison_state == "mixed_version_state":
         return (
             f"This package has mixed install/update state against {comparison_target_label}. {_first_version_comparison_detail(version_comparisons)}",
-            "Open Review for a manual review. Review as update stays off because the package is not a clear newer-than-installed update.",
+            "Open Install for a manual inspection. Open as update stays off because the package is not a clear newer-than-installed update.",
         )
 
     if intake.classification == "multi_mod_package":
         return (
             f"Detected package contains multiple mods for {comparison_target_label}.",
-            "Open Review and inspect the per-entry plan before any write action.",
+            "Open Install and inspect the per-entry plan before any write action.",
         )
 
     return (
-        f"Detected package is ready to review against {comparison_target_label}.",
-        "Use Open Review to continue into the read-only install review.",
+        f"Detected package is ready to install against {comparison_target_label}.",
+        "Use Open Install to continue into the read-only install plan.",
     )
 
 
@@ -8201,31 +9851,31 @@ def _build_legacy_intake_flow_messages(
         joined = ", ".join(matched_guided)
         return (
             f"Detected package matches a guided update target: {joined}.",
-            "Stage update for archive-aware review before install.",
+            "Open as update for archive-aware planning before install.",
         )
 
     if matched_update_available:
         joined = ", ".join(matched_update_available)
         return (
             f"Detected package matches an installed mod with an update available: {joined}.",
-            "Stage update for archive-aware review before install.",
+            "Open as update for archive-aware planning before install.",
         )
 
     if intake.classification == "new_install_candidate":
         return (
             "Detected package is a new install candidate.",
-            "Open Review to plan install and inspect the read-only summary.",
+            "Open Install to plan install and inspect the read-only summary.",
         )
 
     if intake.classification == "multi_mod_package":
         return (
             "Detected package contains multiple mods.",
-            "Open Review to inspect the per-entry install plan before any write action.",
+            "Open Install to inspect the per-entry install plan before any write action.",
         )
 
     return (
-        "Detected package is ready to review.",
-        "Open Review to continue into the read-only install review.",
+        "Detected package is ready to install.",
+        "Open Install to continue into the read-only install plan.",
     )
 
 
@@ -8473,6 +10123,270 @@ def _apply_dependency_preflight_to_plan(
         plan_warnings=tuple(plan_warnings),
         dependency_findings=dependency_findings,
     )
+
+
+def _normalize_sandbox_profile_name(name: str) -> str:
+    normalized = name.strip()
+    if not normalized:
+        raise AppShellError("Sandbox profile name is required.")
+    return normalized
+
+
+def _normalized_sandbox_profile_folder_name(folder_name: str) -> str:
+    normalized = folder_name.strip()
+    if normalized.startswith("."):
+        normalized = normalized[1:]
+    if not normalized:
+        raise AppShellError("Sandbox profile entry must resolve to a non-empty folder name.")
+    return normalized
+
+
+def _normalize_sandbox_mod_profile_catalog(
+    catalog: SandboxModProfileCatalog,
+) -> SandboxModProfileCatalog:
+    default_profile = SandboxModProfile(
+        profile_id=DEFAULT_SANDBOX_PROFILE_ID,
+        name=DEFAULT_SANDBOX_PROFILE_NAME,
+        is_default=True,
+    )
+    profiles_by_id: dict[str, SandboxModProfile] = {}
+    for profile in catalog.profiles:
+        profiles_by_id[profile.profile_id] = profile
+    profiles_by_id.setdefault(DEFAULT_SANDBOX_PROFILE_ID, default_profile)
+    profiles = tuple(
+        sorted(
+            profiles_by_id.values(),
+            key=lambda item: (0 if item.is_default else 1, item.name.casefold(), item.profile_id),
+        )
+    )
+    active_profile_id = catalog.active_profile_id or DEFAULT_SANDBOX_PROFILE_ID
+    if active_profile_id not in {profile.profile_id for profile in profiles}:
+        active_profile_id = DEFAULT_SANDBOX_PROFILE_ID
+    return SandboxModProfileCatalog(
+        profiles=profiles,
+        active_profile_id=active_profile_id,
+    )
+
+
+def _normalize_real_mod_profile_catalog(
+    catalog: SandboxModProfileCatalog,
+) -> SandboxModProfileCatalog:
+    default_profile = SandboxModProfile(
+        profile_id=DEFAULT_REAL_PROFILE_ID,
+        name=DEFAULT_REAL_PROFILE_NAME,
+        is_default=True,
+    )
+    profiles_by_id: dict[str, SandboxModProfile] = {}
+    for profile in catalog.profiles:
+        profiles_by_id[profile.profile_id] = profile
+    profiles_by_id.setdefault(DEFAULT_REAL_PROFILE_ID, default_profile)
+    profiles = tuple(
+        sorted(
+            profiles_by_id.values(),
+            key=lambda item: (0 if item.is_default else 1, item.name.casefold(), item.profile_id),
+        )
+    )
+    active_profile_id = catalog.active_profile_id or DEFAULT_REAL_PROFILE_ID
+    if active_profile_id not in {profile.profile_id for profile in profiles}:
+        active_profile_id = DEFAULT_REAL_PROFILE_ID
+    return SandboxModProfileCatalog(
+        profiles=profiles,
+        active_profile_id=active_profile_id,
+    )
+
+
+def _path_lookup_key(path: Path) -> str:
+    key = str(Path(os.path.abspath(os.path.normpath(str(path.expanduser())))))
+    if os.name == "nt":
+        return key.casefold()
+    return key
+
+
+def _merge_profile_scan_entry_findings(*inventories: ModsInventory) -> tuple:
+    merged = []
+    seen: set[tuple[str, str, tuple[str, ...], str]] = set()
+    for inventory in inventories:
+        for finding in inventory.scan_entry_findings:
+            key = (
+                finding.kind,
+                _path_lookup_key(finding.entry_path),
+                tuple(_path_lookup_key(path) for path in finding.mod_paths),
+                finding.message,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(finding)
+    return tuple(
+        sorted(
+            merged,
+            key=lambda finding: (
+                finding.kind,
+                _path_lookup_key(finding.entry_path),
+                tuple(_path_lookup_key(path) for path in finding.mod_paths),
+            ),
+        )
+    )
+
+
+def _build_profile_entry_state_maps(
+    *,
+    inventory: ModsInventory,
+    root: Path,
+) -> tuple[dict[str, _ProfileEntryState], dict[str, _ProfileEntryState]]:
+    expected_root_key = _path_lookup_key(root)
+    row_by_path: dict[str, tuple[InstalledMod, bool]] = {}
+    for mod, enabled in (
+        *((mod, True) for mod in inventory.mods),
+        *((mod, False) for mod in inventory.disabled_mods),
+    ):
+        row_by_path[_path_lookup_key(mod.folder_path)] = (mod, enabled)
+
+    state_by_folder: dict[str, _ProfileEntryState] = {}
+    state_by_mod_path: dict[str, _ProfileEntryState] = {}
+    consumed_mod_paths: set[str] = set()
+
+    def add_state(
+        *,
+        folder_name: str,
+        entry_path: Path,
+        enabled: bool,
+        mods: tuple[InstalledMod, ...],
+    ) -> None:
+        entry_key = folder_name.casefold()
+        existing = state_by_folder.get(entry_key)
+        normalized_entry_path = Path(os.path.abspath(os.path.normpath(str(entry_path.expanduser()))))
+        if existing is not None and _path_lookup_key(existing.entry_path) != _path_lookup_key(
+            normalized_entry_path
+        ):
+            raise AppShellError(
+                "Profile entry state is ambiguous because multiple top-level entries map to "
+                f"{folder_name}."
+            )
+        state = _ProfileEntryState(
+            folder_name=folder_name,
+            entry_path=normalized_entry_path,
+            enabled=enabled,
+            mods=mods,
+        )
+        state_by_folder[entry_key] = state
+        for mod in mods:
+            state_by_mod_path[_path_lookup_key(mod.folder_path)] = state
+
+    for finding in inventory.scan_entry_findings:
+        if finding.kind not in {DIRECT_MOD, NESTED_MOD_CONTAINER, MULTI_MOD_CONTAINER}:
+            continue
+        entry_path = Path(os.path.abspath(os.path.normpath(str(finding.entry_path.expanduser()))))
+        if _path_lookup_key(entry_path.parent) != expected_root_key:
+            continue
+        matched_rows: list[tuple[InstalledMod, bool]] = []
+        for mod_path in finding.mod_paths:
+            row = row_by_path.get(_path_lookup_key(mod_path))
+            if row is None:
+                continue
+            matched_rows.append(row)
+        if not matched_rows:
+            continue
+        mods = tuple(mod for mod, _ in matched_rows)
+        enabled = any(flag for _, flag in matched_rows)
+        add_state(
+            folder_name=_normalized_sandbox_profile_folder_name(entry_path.name),
+            entry_path=entry_path,
+            enabled=enabled,
+            mods=mods,
+        )
+        consumed_mod_paths.update(_path_lookup_key(mod.folder_path) for mod, _ in matched_rows)
+
+    for mod, enabled in (
+        *((mod, True) for mod in inventory.mods),
+        *((mod, False) for mod in inventory.disabled_mods),
+    ):
+        mod_key = _path_lookup_key(mod.folder_path)
+        if mod_key in consumed_mod_paths:
+            continue
+        if _path_lookup_key(mod.folder_path.parent) != expected_root_key:
+            continue
+        add_state(
+            folder_name=_normalized_sandbox_profile_folder_name(mod.folder_path.name),
+            entry_path=mod.folder_path,
+            enabled=enabled,
+            mods=(mod,),
+        )
+
+    return state_by_folder, state_by_mod_path
+
+
+def _profile_entry_state_for_mod(
+    *,
+    inventory: ModsInventory,
+    root: Path,
+    mod_folder_path: Path,
+) -> _ProfileEntryState | None:
+    _, state_by_mod_path = _build_profile_entry_state_maps(
+        inventory=inventory,
+        root=root,
+    )
+    return state_by_mod_path.get(_path_lookup_key(mod_folder_path))
+
+
+def _upsert_sandbox_mod_profile(
+    existing_profiles: tuple[SandboxModProfile, ...],
+    profile: SandboxModProfile,
+) -> tuple[SandboxModProfile, ...]:
+    retained = tuple(
+        existing
+        for existing in existing_profiles
+        if existing.profile_id != profile.profile_id
+        and existing.name.casefold() != profile.name.casefold()
+    )
+    ordered = (*retained, profile)
+    return tuple(
+        sorted(
+            ordered,
+            key=lambda item: (0 if item.is_default else 1, item.name.casefold(), item.profile_id),
+        )
+    )
+
+
+def _create_directory_link(link_path: Path, target_path: Path) -> None:
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link_path), str(target_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise OSError(detail or f"mklink /J failed for {link_path}")
+        return
+    os.symlink(target_path, link_path, target_is_directory=True)
+
+
+def _launch_command_mods_override(command: LaunchCommand) -> Path | None:
+    argv = tuple(command.argv)
+    for index, value in enumerate(argv[:-1]):
+        if value == "--mods-path":
+            return Path(argv[index + 1]).expanduser()
+    return None
+
+
+def _remove_directory_link(link_path: Path) -> None:
+    if not link_path.exists():
+        return
+    if os.name == "nt":
+        result = subprocess.run(
+            ["cmd", "/c", "rmdir", str(link_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise OSError(detail or f"rmdir failed for {link_path}")
+        return
+    link_path.unlink()
 
 
 def _inspect_package_mod_entries(package_path: Path) -> tuple[PackageModEntry, ...]:

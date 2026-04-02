@@ -32,6 +32,7 @@ def scan_mods_directory(
     excluded_paths: tuple[Path, ...] = tuple(),
 ) -> ModsInventory:
     installed_mods: list[InstalledMod] = []
+    disabled_mods: list[InstalledMod] = []
     warnings: list[ParseWarning] = []
     scan_entry_findings: list[ScanEntryFinding] = []
     ignored_entries: list[Path] = []
@@ -46,11 +47,17 @@ def scan_mods_directory(
             continue
 
         entry_mods, entry_warnings, entry_findings = _scan_top_level_entry(entry)
-        installed_mods.extend(entry_mods)
+        if _is_disabled_top_level_entry(entry):
+            disabled_mods.extend(entry_mods)
+        else:
+            installed_mods.extend(entry_mods)
         warnings.extend(entry_warnings)
         scan_entry_findings.extend(entry_findings)
 
     installed_mods.sort(
+        key=lambda mod: (canonicalize_unique_id(mod.unique_id), mod.folder_path.name.lower())
+    )
+    disabled_mods.sort(
         key=lambda mod: (canonicalize_unique_id(mod.unique_id), mod.folder_path.name.lower())
     )
 
@@ -71,6 +78,7 @@ def scan_mods_directory(
             )
         ),
         ignored_entries=tuple(sorted(ignored_entries, key=lambda path: path.name.lower())),
+        disabled_mods=tuple(disabled_mods),
     )
 
 
@@ -301,6 +309,11 @@ def _find_missing_required_dependencies(
 
 def _resolve_path_for_match(path: Path) -> Path:
     return path.expanduser().resolve(strict=False)
+
+
+def _is_disabled_top_level_entry(entry: Path) -> bool:
+    name = entry.name.strip()
+    return name.startswith(".") and name not in {".", ".."}
 
 
 def _is_excluded_entry(entry: Path, excluded_resolved: tuple[Path, ...]) -> bool:

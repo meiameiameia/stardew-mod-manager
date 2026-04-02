@@ -47,13 +47,13 @@ class PlanInstallTabSurface(QWidget):
         content.setObjectName("plan_install_tab_content")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(10)
+        content_layout.setSpacing(8)
 
         scroll_area.setWidget(content)
         layout.addWidget(scroll_area)
 
         intro_label = QLabel(
-            "Bring a package in from Packages, generate the read-only review, then apply only when the write summary looks right."
+            "Bring packages in from Packages, generate the read-only install plan, then apply only when the plan looks right."
         )
         intro_label.setObjectName("plan_install_intro_label")
         intro_label.setWordWrap(True)
@@ -68,7 +68,7 @@ class PlanInstallTabSurface(QWidget):
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
         )
         destination_layout = QGridLayout(destination_group)
-        destination_layout.setContentsMargins(10, 10, 10, 10)
+        destination_layout.setContentsMargins(8, 8, 8, 8)
         destination_layout.setHorizontalSpacing(10)
         destination_layout.setVerticalSpacing(6)
         destination_layout.setColumnStretch(1, 1)
@@ -92,8 +92,8 @@ class PlanInstallTabSurface(QWidget):
         execute_group.setFlat(True)
         execute_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         execute_layout = QVBoxLayout(execute_group)
-        execute_layout.setContentsMargins(10, 10, 10, 10)
-        execute_layout.setSpacing(8)
+        execute_layout.setContentsMargins(8, 8, 8, 8)
+        execute_layout.setSpacing(6)
 
         plan_actions = QHBoxLayout()
         plan_actions.setSpacing(8)
@@ -103,7 +103,7 @@ class PlanInstallTabSurface(QWidget):
         execute_layout.addLayout(plan_actions)
 
         caution_label = QLabel(
-            "Review install is read-only. Apply install stays unavailable until the review is ready."
+            "Install planning is read-only. Apply install stays unavailable until the plan is ready."
         )
         caution_label.setObjectName("plan_install_execute_help_label")
         caution_label.setWordWrap(True)
@@ -112,12 +112,15 @@ class PlanInstallTabSurface(QWidget):
 
         content_layout.addWidget(execute_group)
 
-        review_output_group = QGroupBox("Review detail")
+        review_output_group = QGroupBox("Install detail")
         review_output_group.setObjectName("plan_install_output_group")
         review_output_group.setFlat(True)
-        review_output_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        review_output_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
+        )
         review_output_layout = QVBoxLayout(review_output_group)
-        review_output_layout.setContentsMargins(10, 10, 10, 10)
+        review_output_layout.setContentsMargins(8, 8, 8, 8)
         review_output_layout.setSpacing(6)
         review_output_layout.addWidget(review_output_box)
         content_layout.addWidget(review_output_group)

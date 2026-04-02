@@ -344,17 +344,20 @@ QFrame#workspace_nav_footer_panel {
     border-radius: 11px;
 }
 
-QLabel#workspace_nav_brand_eyebrow {
-    color: #9cc38f;
-    font-size: 7.5pt;
-    font-weight: 700;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
+QWidget#workspace_nav_brand_header,
+QWidget#workspace_nav_brand_text_stack {
+    background: transparent;
+}
+
+QLabel#workspace_nav_brand_icon {
+    background: #171b1e;
+    border: 1px solid rgba(156, 195, 143, 0.14);
+    border-radius: 13px;
 }
 
 QLabel#workspace_nav_brand_title {
     color: #f4f1eb;
-    font-size: 12.25pt;
+    font-size: 12.5pt;
     font-weight: 700;
 }
 
@@ -484,15 +487,15 @@ QTabBar#mods_workspace_mode_tabbar::tab:selected {
 QPushButton {
     min-height: 0px;
     padding: 2px 8px;
-    border: 1px solid rgba(224, 216, 203, 0.06);
+    border: 1px solid rgba(224, 216, 203, 0.08);
     border-radius: 8px;
-    background: #23282d;
+    background: #252b31;
     color: #efe9e2;
 }
 
 QPushButton:hover {
-    background: #2b3136;
-    border-color: rgba(224, 216, 203, 0.12);
+    background: #2d343a;
+    border-color: rgba(224, 216, 203, 0.16);
 }
 
 QPushButton:pressed {
@@ -542,33 +545,35 @@ QPushButton[buttonRole="primary"]:disabled {
 }
 
 QPushButton[buttonRole="secondary"] {
-    background: #202a23;
-    color: #d0e1ca;
+    background: #405047;
+    color: #f5f7f1;
     padding: 2px 8px;
-    border-color: rgba(156, 195, 143, 0.13);
+    border-color: rgba(170, 207, 157, 0.44);
+    font-weight: 600;
 }
 
 QPushButton[buttonRole="secondary"]:hover {
-    background: #283329;
-    border-color: rgba(156, 195, 143, 0.18);
+    background: #4b5a50;
+    border-color: rgba(191, 227, 175, 0.54);
 }
 
 QPushButton[buttonRole="secondary"]:pressed {
-    background: #1b241e;
+    background: #2f372f;
 }
 
 QPushButton[buttonRole="secondary"]:disabled {
-    background: #1a1e1b;
-    color: #6b726b;
-    border-color: rgba(224, 216, 203, 0.025);
+    background: #242a24;
+    color: #9aa393;
+    border-color: rgba(224, 216, 203, 0.05);
 }
 
 QPushButton[buttonRole="utility"] {
-    background: #171b1e;
-    color: #c3b7ab;
+    background: #404a52;
+    color: #f7f1e8;
     padding: 1px 6px;
     font-size: 8.35pt;
-    border-color: rgba(224, 216, 203, 0.045);
+    border-color: rgba(224, 216, 203, 0.34);
+    font-weight: 600;
 }
 
 QScrollArea#discovery_workspace_page_scroll_area,
@@ -594,25 +599,25 @@ QWidget#recovery_tab_scroll_area_content {
 }
 
 QWidget#mods_inventory_controls_tab QPushButton,
-QWidget#mods_launch_controls_tab QPushButton {
+QWidget#mods_smapi_controls_tab QPushButton {
     min-height: 0px;
     padding: 1px 7px;
 }
 
 QWidget#mods_inventory_controls_tab QPushButton[buttonRole="primary"],
-QWidget#mods_launch_controls_tab QPushButton[buttonRole="primary"] {
+QWidget#mods_smapi_controls_tab QPushButton[buttonRole="primary"] {
     min-height: 0px;
     padding: 2px 9px;
 }
 
 QWidget#mods_inventory_controls_tab QPushButton[buttonRole="secondary"],
-QWidget#mods_launch_controls_tab QPushButton[buttonRole="secondary"] {
+QWidget#mods_smapi_controls_tab QPushButton[buttonRole="secondary"] {
     min-height: 0px;
     padding: 2px 7px;
 }
 
 QWidget#mods_inventory_controls_tab QPushButton[buttonRole="utility"],
-QWidget#mods_launch_controls_tab QPushButton[buttonRole="utility"] {
+QWidget#mods_smapi_controls_tab QPushButton[buttonRole="utility"] {
     min-height: 0px;
     padding: 1px 6px;
 }
@@ -625,6 +630,37 @@ QGroupBox#mods_smapi_troubleshooting_group::title {
     subcontrol-origin: margin;
     left: 8px;
     padding: 0px 3px 0px 3px;
+}
+
+QFrame#mods_selection_summary_card,
+QGroupBox#mods_selected_actions_group,
+QFrame#inventory_update_source_intent_actions,
+QFrame#inventory_sandbox_sync_actions,
+QFrame#inventory_real_profile_actions,
+QFrame#inventory_sandbox_profile_actions,
+QGroupBox#mods_smapi_troubleshooting_group {
+    background: #171b1e;
+    border: 1px solid rgba(224, 216, 203, 0.05);
+    border-radius: 10px;
+}
+
+QFrame#mods_selection_summary_card QLabel,
+QGroupBox#mods_selected_actions_group QLabel,
+QFrame#inventory_update_source_intent_actions QLabel,
+QFrame#inventory_sandbox_sync_actions QLabel,
+QFrame#inventory_real_profile_actions QLabel,
+QFrame#inventory_sandbox_profile_actions QLabel {
+    background: transparent;
+}
+
+QGroupBox#mods_selected_actions_group::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0px 3px 0px 3px;
+}
+
+QFrame#mods_selection_summary_card QLabel#mods_selection_context_intro_label {
+    color: #d6cdc3;
 }
 
 QScrollArea#mods_selection_context_scroll_area {
@@ -646,18 +682,18 @@ QPlainTextEdit#mods_smapi_troubleshooting_details_box {
 }
 
 QPushButton[buttonRole="utility"]:hover {
-    background: #21262a;
-    border-color: rgba(224, 216, 203, 0.085);
+    background: #445058;
+    border-color: rgba(240, 230, 214, 0.3);
 }
 
 QPushButton[buttonRole="utility"]:pressed {
-    background: #15181b;
+    background: #2a3136;
 }
 
 QPushButton[buttonRole="utility"]:disabled {
-    background: #17191b;
-    color: #64605b;
-    border-color: rgba(224, 216, 203, 0.025);
+    background: #202428;
+    color: #949088;
+    border-color: rgba(224, 216, 203, 0.04);
 }
 
 QWidget#setup_surface_primary_actions QPushButton[buttonRole="primary"] {

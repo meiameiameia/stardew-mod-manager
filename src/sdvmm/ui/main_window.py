@@ -5,10 +5,27 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
+import os
+import sys
+from types import SimpleNamespace
 from pathlib import Path
 import time
 import tomllib
 
+from PySide6.QtCore import QTimer
+from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import QUrl
+from PySide6.QtCore import QRectF
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QBrush
+from PySide6.QtGui import QColor
+from PySide6.QtGui import QFont
+from PySide6.QtGui import QPainter
+from PySide6.QtGui import QImage
+from PySide6.QtGui import QPalette
+from PySide6.QtGui import QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -29,6 +46,8 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QScrollArea,
     QSplitter,
@@ -39,15 +58,6 @@ from PySide6.QtWidgets import (
     QWidget,
     QSizePolicy,
 )
-from PySide6.QtCore import QTimer
-from PySide6.QtCore import QThreadPool
-from PySide6.QtCore import QUrl
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtGui import QBrush
-from PySide6.QtGui import QColor
-from PySide6.QtGui import QFont
-from PySide6.QtGui import QPalette
 
 from sdvmm.app.inventory_presenter import (
     build_archive_cleanup_result_text,
@@ -76,6 +86,9 @@ from sdvmm.app.shell_service import (
     ARCHIVE_SOURCE_SANDBOX,
     ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
     BackupBundleExportResult,
+    BackupBundleExportSelection,
+    DEFAULT_REAL_PROFILE_ID,
+    DEFAULT_SANDBOX_PROFILE_ID,
     DiscoveryContextCorrelation,
     INSTALL_TARGET_CONFIGURED_REAL_MODS,
     INSTALL_TARGET_SANDBOX_MODS,
@@ -84,16 +97,24 @@ from sdvmm.app.shell_service import (
     AppShellError,
     AppShellService,
     IntakeUpdateCorrelation,
+    RealModProfileCreateResult,
+    RealModProfileDeleteResult,
+    RealModProfileSelectResult,
     ScanResult,
+    SandboxModProfileCreateResult,
+    SandboxModProfileDeleteResult,
+    SandboxModProfileSelectResult,
     SandboxModsPromotionPreview,
     SandboxModsPromotionResult,
     SandboxModsSyncResult,
+    _profile_entry_state_for_mod,
     build_backup_bundle_inspection_text,
     build_backup_bundle_export_text,
     build_restore_import_execution_result_text,
     build_restore_import_planning_text,
     build_mods_compare_text,
 )
+from sdvmm.app.paths import platform_default_stardew_save_directory
 from sdvmm.domain.models import (
     AppConfig,
     AppUpdateStatus,
@@ -121,6 +142,7 @@ from sdvmm.domain.models import (
     ModUpdateStatus,
     ModUpdateReport,
     ModsInventory,
+    SandboxModProfile,
     PackageInspectionBatchEntry,
     PackageInspectionBatchResult,
     RestoreImportPlanningResult,
@@ -167,6 +189,7 @@ from sdvmm.ui.top_context_surface import TopContextSurface
 _APP_PACKAGE_NAME = "stardew-mod-manager"
 _APP_BRAND_NAME = "Cinderleaf"
 _APP_BRAND_DESCRIPTOR = "for Stardew Valley"
+_APP_RUNTIME_ICON_NAMES = ("cinderleaf-icon.svg", "app-icon.png", "stardew-mod-manager.ico")
 
 _ROLE_MOD_UPDATE_STATUS = int(Qt.ItemDataRole.UserRole) + 1
 _ROLE_REMOTE_LINK = int(Qt.ItemDataRole.UserRole) + 2
@@ -178,11 +201,14 @@ _ROLE_UPDATE_ACTIONABLE = int(Qt.ItemDataRole.UserRole) + 7
 _ROLE_UPDATE_BLOCK_REASON = int(Qt.ItemDataRole.UserRole) + 8
 _ROLE_COMPARE_STATE = int(Qt.ItemDataRole.UserRole) + 9
 _ROLE_COMPARE_UNIQUE_ID = int(Qt.ItemDataRole.UserRole) + 10
+_ROLE_MOD_IS_ENABLED = int(Qt.ItemDataRole.UserRole) + 11
+_ROLE_MOD_TOGGLEABLE = int(Qt.ItemDataRole.UserRole) + 12
+_ROLE_MOD_TOGGLE_REASON = int(Qt.ItemDataRole.UserRole) + 13
 
 _NO_PLAN_REVIEW_SUMMARY_TEXT = (
-    "Review summary: no plan yet. Click Review install to inspect changes."
+    "Install summary: no plan yet. Click Plan install to inspect changes."
 )
-_NO_PLAN_REVIEW_EXPLANATION_TEXT = "Review detail: no plan selected."
+_NO_PLAN_REVIEW_EXPLANATION_TEXT = "Install detail: no plan selected."
 _NO_PLAN_FACTS_TEXT = (
     "Entries: -\n"
     "Replace existing: -\n"
@@ -210,6 +236,7 @@ _SMAPI_TROUBLESHOOTING_DETAILS_MIN_HEIGHT = 74
 _SMAPI_TROUBLESHOOTING_DETAILS_MAX_HEIGHT = 96
 _SMAPI_TROUBLESHOOTING_DETAILS_COMPACT_MIN_HEIGHT = 88
 _SMAPI_TROUBLESHOOTING_DETAILS_COMPACT_MAX_HEIGHT = 136
+_SMAPI_LAUNCH_EXIT_REFRESH_ATTEMPTS = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +260,8 @@ class MainWindow(QMainWindow):
         self._current_mods_compare_result: ModsCompareResult | None = None
         self._current_discovery_result: ModDiscoveryResult | None = None
         self._discovery_correlations: tuple[DiscoveryContextCorrelation, ...] = tuple()
+        self._real_mod_profiles: tuple[SandboxModProfile, ...] = tuple()
+        self._sandbox_mod_profiles: tuple[SandboxModProfile, ...] = tuple()
         self._known_watched_zip_paths: tuple[Path, ...] = tuple()
         self._detected_intakes: tuple[DownloadsIntakeResult, ...] = tuple()
         self._intake_correlations: tuple[IntakeUpdateCorrelation, ...] = tuple()
@@ -253,14 +282,19 @@ class MainWindow(QMainWindow):
         self._last_smapi_launch_context: str | None = None
         self._last_smapi_launch_expected_log_path: Path | None = None
         self._last_smapi_launch_started_at_epoch: float | None = None
+        self._last_smapi_launch_pid: int | None = None
         self._last_smapi_log_capture_token = 0
+        self._smapi_launch_exit_refresh_token = 0
         self._last_smapi_update_status: SmapiUpdateStatus | None = None
         self._last_app_update_status: AppUpdateStatus | None = None
         self._thread_pool = QThreadPool.globalInstance()
         self._active_operation_name: str | None = None
         self._active_background_task: BackgroundTask | None = None
+        self._active_operation_button: QPushButton | None = None
+        self._active_operation_button_text: str | None = None
         self._pending_post_operation_callback: Callable[[], None] | None = None
         self._background_action_buttons: tuple[QPushButton, ...] = tuple()
+        self._packages_watch_controls: tuple[QWidget, ...] = tuple()
         self._startup_checks_scheduled = False
         self._startup_checks_completed = False
         self._startup_auto_scan_started = False
@@ -270,6 +304,7 @@ class MainWindow(QMainWindow):
         self._preserve_package_selection_on_zip_path_change = False
         self._preserve_package_inspection_on_zip_path_change = False
         self._auto_overwrite_package_path: str | None = None
+        self._suppress_intake_selection_sync = False
         self._syncing_auto_overwrite_checkbox = False
         self._app_version_text = _resolve_ui_app_version()
 
@@ -345,7 +380,7 @@ class MainWindow(QMainWindow):
         )
         self._inventory_update_guidance_label.setWordWrap(True)
         self._mods_inventory_state_label = QLabel(
-            "No inventory loaded yet. Scan the selected Mods source to populate the table."
+            "No library loaded yet. Scan the selected Library source to populate the table."
         )
         self._mods_inventory_state_label.setObjectName("mods_inventory_state_label")
         self._mods_inventory_state_label.setWordWrap(True)
@@ -429,22 +464,27 @@ class MainWindow(QMainWindow):
             self._clear_source_intent_button,
         ):
             _set_secondary_button_style(button)
-        self._inventory_source_intent_actions_widget = QWidget()
+        self._inventory_source_intent_actions_widget = QFrame()
         self._inventory_source_intent_actions_widget.setObjectName(
             "inventory_update_source_intent_actions"
         )
-        inventory_source_intent_actions_layout = QHBoxLayout(self._inventory_source_intent_actions_widget)
-        inventory_source_intent_actions_layout.setContentsMargins(0, 0, 0, 0)
-        inventory_source_intent_actions_layout.setSpacing(8)
+        _set_section_label_style(self._inventory_source_intent_actions_label)
+        inventory_source_intent_actions_layout = QVBoxLayout(self._inventory_source_intent_actions_widget)
+        inventory_source_intent_actions_layout.setContentsMargins(10, 9, 10, 10)
+        inventory_source_intent_actions_layout.setSpacing(6)
         inventory_source_intent_actions_layout.addWidget(self._inventory_source_intent_actions_label)
-        inventory_source_intent_actions_layout.addWidget(self._mark_local_private_button)
-        inventory_source_intent_actions_layout.addWidget(self._disable_tracking_button)
-        inventory_source_intent_actions_layout.addWidget(self._manual_source_intent_button)
-        inventory_source_intent_actions_layout.addWidget(self._clear_source_intent_button)
-        inventory_source_intent_actions_layout.addStretch(1)
+        inventory_source_intent_buttons_row = QHBoxLayout()
+        inventory_source_intent_buttons_row.setContentsMargins(0, 0, 0, 0)
+        inventory_source_intent_buttons_row.setSpacing(8)
+        inventory_source_intent_buttons_row.addWidget(self._mark_local_private_button)
+        inventory_source_intent_buttons_row.addWidget(self._disable_tracking_button)
+        inventory_source_intent_buttons_row.addWidget(self._manual_source_intent_button)
+        inventory_source_intent_buttons_row.addWidget(self._clear_source_intent_button)
+        inventory_source_intent_buttons_row.addStretch(1)
+        inventory_source_intent_actions_layout.addLayout(inventory_source_intent_buttons_row)
         self._inventory_source_intent_actions_widget.setVisible(False)
         self._inventory_sandbox_sync_actions_label = QLabel("Sandbox sync and promotion")
-        _set_auxiliary_label_style(self._inventory_sandbox_sync_actions_label)
+        _set_section_label_style(self._inventory_sandbox_sync_actions_label)
         self._sync_selected_to_sandbox_button = QPushButton("Copy selected to sandbox")
         self._sync_selected_to_sandbox_button.setObjectName(
             "inventory_sync_selected_to_sandbox_button"
@@ -455,22 +495,86 @@ class MainWindow(QMainWindow):
             "inventory_promote_selected_to_real_button"
         )
         _set_secondary_button_style(self._promote_selected_to_real_button)
-        self._inventory_sandbox_sync_actions_widget = QWidget()
+        self._inventory_sandbox_sync_actions_widget = QFrame()
         self._inventory_sandbox_sync_actions_widget.setObjectName(
             "inventory_sandbox_sync_actions"
         )
-        inventory_sandbox_sync_actions_layout = QHBoxLayout(
+        inventory_sandbox_sync_actions_layout = QVBoxLayout(
             self._inventory_sandbox_sync_actions_widget
         )
-        inventory_sandbox_sync_actions_layout.setContentsMargins(0, 0, 0, 0)
-        inventory_sandbox_sync_actions_layout.setSpacing(8)
+        inventory_sandbox_sync_actions_layout.setContentsMargins(10, 9, 10, 10)
+        inventory_sandbox_sync_actions_layout.setSpacing(6)
         inventory_sandbox_sync_actions_layout.addWidget(
             self._inventory_sandbox_sync_actions_label
         )
-        inventory_sandbox_sync_actions_layout.addWidget(self._sync_selected_to_sandbox_button)
-        inventory_sandbox_sync_actions_layout.addWidget(self._promote_selected_to_real_button)
-        inventory_sandbox_sync_actions_layout.addStretch(1)
+        inventory_sandbox_sync_buttons_row = QHBoxLayout()
+        inventory_sandbox_sync_buttons_row.setContentsMargins(0, 0, 0, 0)
+        inventory_sandbox_sync_buttons_row.setSpacing(8)
+        inventory_sandbox_sync_buttons_row.addWidget(self._sync_selected_to_sandbox_button)
+        inventory_sandbox_sync_buttons_row.addWidget(self._promote_selected_to_real_button)
+        inventory_sandbox_sync_buttons_row.addStretch(1)
+        inventory_sandbox_sync_actions_layout.addLayout(inventory_sandbox_sync_buttons_row)
         self._inventory_sandbox_sync_actions_widget.setVisible(False)
+        self._inventory_real_profile_actions_label = QLabel("Real Mods profiles")
+        _set_section_label_style(self._inventory_real_profile_actions_label)
+        self._real_profile_combo = QComboBox()
+        self._real_profile_combo.setObjectName("inventory_real_profile_combo")
+        self._create_real_profile_button = QPushButton("Create new profile...")
+        self._create_real_profile_button.setObjectName("inventory_create_real_profile_button")
+        _set_secondary_button_style(self._create_real_profile_button)
+        self._delete_real_profile_button = QPushButton("Delete selected")
+        self._delete_real_profile_button.setObjectName("inventory_delete_real_profile_button")
+        _set_utility_button_style(self._delete_real_profile_button)
+        self._inventory_real_profile_actions_widget = QFrame()
+        self._inventory_real_profile_actions_widget.setObjectName(
+            "inventory_real_profile_actions"
+        )
+        inventory_real_profile_actions_layout = QVBoxLayout(
+            self._inventory_real_profile_actions_widget
+        )
+        inventory_real_profile_actions_layout.setContentsMargins(10, 9, 10, 10)
+        inventory_real_profile_actions_layout.setSpacing(6)
+        inventory_real_profile_actions_layout.addWidget(
+            self._inventory_real_profile_actions_label
+        )
+        inventory_real_profile_row = QHBoxLayout()
+        inventory_real_profile_row.setContentsMargins(0, 0, 0, 0)
+        inventory_real_profile_row.setSpacing(8)
+        inventory_real_profile_row.addWidget(self._real_profile_combo, 1)
+        inventory_real_profile_row.addWidget(self._create_real_profile_button)
+        inventory_real_profile_row.addWidget(self._delete_real_profile_button)
+        inventory_real_profile_actions_layout.addLayout(inventory_real_profile_row)
+        self._inventory_real_profile_actions_widget.setVisible(False)
+        self._inventory_sandbox_profile_actions_label = QLabel("Sandbox profiles")
+        _set_section_label_style(self._inventory_sandbox_profile_actions_label)
+        self._sandbox_profile_combo = QComboBox()
+        self._sandbox_profile_combo.setObjectName("inventory_sandbox_profile_combo")
+        self._create_sandbox_profile_button = QPushButton("Create new profile...")
+        self._create_sandbox_profile_button.setObjectName("inventory_create_sandbox_profile_button")
+        _set_secondary_button_style(self._create_sandbox_profile_button)
+        self._delete_sandbox_profile_button = QPushButton("Delete selected")
+        self._delete_sandbox_profile_button.setObjectName("inventory_delete_sandbox_profile_button")
+        _set_utility_button_style(self._delete_sandbox_profile_button)
+        self._inventory_sandbox_profile_actions_widget = QFrame()
+        self._inventory_sandbox_profile_actions_widget.setObjectName(
+            "inventory_sandbox_profile_actions"
+        )
+        inventory_sandbox_profile_actions_layout = QVBoxLayout(
+            self._inventory_sandbox_profile_actions_widget
+        )
+        inventory_sandbox_profile_actions_layout.setContentsMargins(10, 9, 10, 10)
+        inventory_sandbox_profile_actions_layout.setSpacing(6)
+        inventory_sandbox_profile_actions_layout.addWidget(
+            self._inventory_sandbox_profile_actions_label
+        )
+        inventory_sandbox_profile_row = QHBoxLayout()
+        inventory_sandbox_profile_row.setContentsMargins(0, 0, 0, 0)
+        inventory_sandbox_profile_row.setSpacing(8)
+        inventory_sandbox_profile_row.addWidget(self._sandbox_profile_combo, 1)
+        inventory_sandbox_profile_row.addWidget(self._create_sandbox_profile_button)
+        inventory_sandbox_profile_row.addWidget(self._delete_sandbox_profile_button)
+        inventory_sandbox_profile_actions_layout.addLayout(inventory_sandbox_profile_row)
+        self._inventory_sandbox_profile_actions_widget.setVisible(False)
         self._compare_real_vs_sandbox_button = QPushButton("Compare real and sandbox")
         self._compare_real_vs_sandbox_button.setObjectName("compare_run_button")
         _set_primary_button_style(self._compare_real_vs_sandbox_button)
@@ -630,13 +734,27 @@ class MainWindow(QMainWindow):
         _configure_combo_box_readability(
             self._package_inspection_selector,
             minimum_contents_length=24,
-            sample_text="ExamplePack.zip [1 mod, ready to review]",
+            sample_text="ExamplePack.zip [1 mod, ready to install]",
         )
-        self._plan_selected_intake_button = QPushButton("Open Review")
-        self._plan_selected_intake_button.setObjectName("packages_open_review_button")
+        self._package_queue_list = QListWidget()
+        self._package_queue_list.setObjectName("packages_intake_queue_list")
+        self._package_queue_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection
+        )
+        self._package_queue_list.setAlternatingRowColors(True)
+        self._package_queue_list.setMinimumHeight(72)
+        self._package_queue_list.setMaximumHeight(188)
+        self._package_queue_filter_input = QLineEdit()
+        self._package_queue_filter_input.setObjectName("packages_queue_filter_input")
+        self._package_queue_filter_input.setPlaceholderText(
+            "Filter queue by name or status (e.g. not installed)"
+        )
+        self._package_queue_filter_input.textChanged.connect(self._refresh_package_queue)
+        self._plan_selected_intake_button = QPushButton("Open Install")
+        self._plan_selected_intake_button.setObjectName("packages_open_install_button")
         _set_primary_button_style(self._plan_selected_intake_button)
         self._plan_selected_intake_button.setEnabled(False)
-        self._stage_update_intake_button = QPushButton("Review as update")
+        self._stage_update_intake_button = QPushButton("Open as update")
         self._stage_update_intake_button.setObjectName("packages_intake_stage_update_button")
         self._stage_update_intake_button.setVisible(False)
         self._install_archive_label = QLabel("Archive path for selected install destination")
@@ -699,6 +817,7 @@ class MainWindow(QMainWindow):
             self._intake_filter_input,
             self._archive_filter_input,
             self._mods_update_actionability_filter_combo,
+            self._sandbox_profile_combo,
             self._nexus_api_key_input,
             self._scan_target_combo,
             self._install_target_combo,
@@ -728,6 +847,7 @@ class MainWindow(QMainWindow):
             minimum_section_size=64,
             initial_widths=(250, 220, 96, 96, 140, 180),
         )
+        self._suppress_mod_toggle_events = False
 
         self._discovery_table = QTableWidget(0, 8)
         self._discovery_table.setObjectName("discovery_results_table")
@@ -822,7 +942,7 @@ class MainWindow(QMainWindow):
         self._review_output_box = QPlainTextEdit()
         self._review_output_box.setObjectName("plan_install_output_box")
         self._review_output_box.setReadOnly(True)
-        self._review_output_box.setMinimumHeight(72)
+        self._review_output_box.setMinimumHeight(112)
         self._review_output_box.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
@@ -857,7 +977,7 @@ class MainWindow(QMainWindow):
         self._package_inspection_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._package_inspection_summary_label)
         self._zip_selection_summary_label = QLabel(
-            "No zip packages chosen yet. Choose zip files to start review."
+            "No watched packages queued yet. Check packages in the queue to start install planning."
         )
         self._zip_selection_summary_label.setObjectName(
             "packages_intake_zip_selection_summary_label"
@@ -865,7 +985,7 @@ class MainWindow(QMainWindow):
         self._zip_selection_summary_label.setWordWrap(True)
         _set_auxiliary_label_style(self._zip_selection_summary_label)
         self._zip_staging_rule_label = QLabel(
-            "Inspect first, then keep one package staged for Review at a time."
+            "Inspect first, then keep the staged package list ready for Install."
         )
         self._zip_staging_rule_label.setObjectName(
             "packages_intake_staging_rule_label"
@@ -873,7 +993,7 @@ class MainWindow(QMainWindow):
         self._zip_staging_rule_label.setWordWrap(True)
         _set_auxiliary_label_style(self._zip_staging_rule_label)
         self._packages_workspace_state_label = QLabel(
-            "Choose zip files or start intake watch to feed Review."
+            "Watch downloads, check packages in the queue, then feed Install."
         )
         self._packages_workspace_state_label.setObjectName(
             "packages_workspace_state_label"
@@ -881,7 +1001,7 @@ class MainWindow(QMainWindow):
         self._packages_workspace_state_label.setWordWrap(True)
         _set_auxiliary_label_style(self._packages_workspace_state_label)
         self._plan_install_state_label = QLabel(
-            "No package staged yet. Choose one in Packages to open Review."
+            "No package staged yet. Choose one in Packages to open Install."
         )
         self._plan_install_state_label.setObjectName("plan_install_state_label")
         self._plan_install_state_label.setWordWrap(True)
@@ -1020,7 +1140,9 @@ class MainWindow(QMainWindow):
         self._mods_path_input.textChanged.connect(self._refresh_install_destination_preview)
         self._mods_path_input.textChanged.connect(self._refresh_sandbox_dev_launch_state)
         self._mods_path_input.textChanged.connect(self._refresh_smapi_troubleshooting_surface)
+        self._mods_path_input.textChanged.connect(self._refresh_inventory_real_profile_action_state)
         self._mods_path_input.textChanged.connect(self._refresh_inventory_sandbox_sync_action_state)
+        self._mods_path_input.textChanged.connect(self._refresh_inventory_sandbox_profile_action_state)
         self._mods_path_input.textChanged.connect(self._clear_mods_compare_result)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_scan_context_preview)
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_install_destination_preview)
@@ -1028,6 +1150,9 @@ class MainWindow(QMainWindow):
         self._sandbox_mods_path_input.textChanged.connect(self._refresh_smapi_troubleshooting_surface)
         self._sandbox_mods_path_input.textChanged.connect(
             self._refresh_inventory_sandbox_sync_action_state
+        )
+        self._sandbox_mods_path_input.textChanged.connect(
+            self._refresh_inventory_sandbox_profile_action_state
         )
         self._sandbox_mods_path_input.textChanged.connect(self._clear_mods_compare_result)
         self._game_path_input.textChanged.connect(self._refresh_sandbox_dev_launch_state)
@@ -1044,6 +1169,7 @@ class MainWindow(QMainWindow):
         self._package_inspection_selector.currentIndexChanged.connect(
             self._on_package_inspection_selection_changed
         )
+        self._package_queue_list.itemChanged.connect(self._on_package_queue_item_changed)
         self._discovery_query_input.returnPressed.connect(self._on_search_discovery)
         self._mods_filter_input.textChanged.connect(self._apply_mods_filter)
         self._mods_update_actionability_filter_combo.currentIndexChanged.connect(
@@ -1055,6 +1181,13 @@ class MainWindow(QMainWindow):
         self._mods_table.itemSelectionChanged.connect(
             self._refresh_inventory_sandbox_sync_action_state
         )
+        self._mods_table.itemChanged.connect(self._on_mods_table_item_changed)
+        self._real_profile_combo.currentIndexChanged.connect(self._on_selected_real_profile_changed)
+        self._create_real_profile_button.clicked.connect(self._on_create_real_profile)
+        self._delete_real_profile_button.clicked.connect(self._on_delete_real_profile)
+        self._sandbox_profile_combo.currentIndexChanged.connect(self._on_selected_sandbox_profile_changed)
+        self._create_sandbox_profile_button.clicked.connect(self._on_create_sandbox_profile)
+        self._delete_sandbox_profile_button.clicked.connect(self._on_delete_sandbox_profile)
         self._mark_local_private_button.clicked.connect(self._on_mark_selected_mod_local_private)
         self._disable_tracking_button.clicked.connect(self._on_disable_selected_mod_tracking)
         self._manual_source_intent_button.clicked.connect(
@@ -1074,6 +1207,8 @@ class MainWindow(QMainWindow):
         self._build_layout()
         self._refresh_intake_selector()
         self._load_startup_state()
+        self._reload_real_mod_profiles()
+        self._reload_sandbox_mod_profiles()
         self._refresh_workflow_surface_states()
 
     def _build_page_header(
@@ -1126,10 +1261,28 @@ class MainWindow(QMainWindow):
         brand_panel.setObjectName("workspace_nav_brand_panel")
         brand_layout = QVBoxLayout(brand_panel)
         brand_layout.setContentsMargins(10, 10, 10, 10)
-        brand_layout.setSpacing(3)
+        brand_layout.setSpacing(6)
 
-        brand_eyebrow = QLabel("Local-first workflow")
-        brand_eyebrow.setObjectName("workspace_nav_brand_eyebrow")
+        brand_header = QWidget()
+        brand_header.setObjectName("workspace_nav_brand_header")
+        brand_header_layout = QHBoxLayout(brand_header)
+        brand_header_layout.setContentsMargins(0, 0, 0, 0)
+        brand_header_layout.setSpacing(10)
+
+        brand_icon = QLabel()
+        brand_icon.setObjectName("workspace_nav_brand_icon")
+        brand_icon.setFixedSize(46, 46)
+        brand_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        brand_icon_pixmap = _resolve_brand_icon_pixmap(40)
+        if brand_icon_pixmap is not None:
+            brand_icon.setPixmap(brand_icon_pixmap)
+
+        brand_text_stack = QWidget()
+        brand_text_stack.setObjectName("workspace_nav_brand_text_stack")
+        brand_text_layout = QVBoxLayout(brand_text_stack)
+        brand_text_layout.setContentsMargins(0, 0, 0, 0)
+        brand_text_layout.setSpacing(1)
+
         brand_title = QLabel(_APP_BRAND_NAME)
         brand_title.setObjectName("workspace_nav_brand_title")
         brand_version = QLabel(f"Version {self._app_version_text}")
@@ -1142,10 +1295,14 @@ class MainWindow(QMainWindow):
         brand_subtitle.setObjectName("workspace_nav_brand_subtitle")
         brand_subtitle.setWordWrap(True)
 
-        brand_layout.addWidget(brand_eyebrow)
-        brand_layout.addWidget(brand_title)
-        brand_layout.addWidget(brand_subtitle)
-        brand_layout.addWidget(brand_version)
+        brand_text_layout.addWidget(brand_title)
+        brand_text_layout.addWidget(brand_subtitle)
+        brand_text_layout.addWidget(brand_version)
+
+        brand_header_layout.addWidget(brand_icon)
+        brand_header_layout.addWidget(brand_text_stack, 1)
+
+        brand_layout.addWidget(brand_header)
         brand_layout.addWidget(brand_release_status)
         rail_layout.addWidget(brand_panel)
         self._workspace_nav_release_status_label = brand_release_status
@@ -1185,10 +1342,10 @@ class MainWindow(QMainWindow):
         footer_layout = QVBoxLayout(footer_panel)
         footer_layout.setContentsMargins(10, 8, 10, 8)
         footer_layout.setSpacing(1)
-        footer_title = QLabel("Typical loop")
+        footer_title = QLabel("Workflow")
         footer_title.setObjectName("workspace_nav_section_label")
         footer_hint = QLabel(
-            "Discover or import, review, install to sandbox, compare, then promote when the live update is ready."
+            "Discover or import, inspect, install to sandbox, compare, then promote when the live update is ready."
         )
         footer_hint.setObjectName("workspace_nav_footer_label")
         footer_hint.setWordWrap(True)
@@ -1276,10 +1433,10 @@ class MainWindow(QMainWindow):
         page_layout.addWidget(
             self._build_page_header(
                 eyebrow="Library and launch",
-                title="Installed workspace",
+                title="Library",
                 subtitle=(
                     "Scan the current environment, check update guidance, launch the game, "
-                    "and keep selected-mod actions beside the inventory."
+                    "and keep selected-mod actions in the right rail."
                 ),
             )
         )
@@ -1297,11 +1454,11 @@ class MainWindow(QMainWindow):
         workspace_splitter.setHandleWidth(6)
         workspace_splitter.setOpaqueResize(True)
 
-        table_panel = QGroupBox("Installed mods")
+        table_panel = QGroupBox("Library")
         table_panel.setObjectName("mods_inventory_table_group")
         table_layout = QVBoxLayout(table_panel)
-        table_layout.setContentsMargins(12, 10, 12, 12)
-        table_layout.setSpacing(8)
+        table_layout.setContentsMargins(11, 9, 11, 11)
+        table_layout.setSpacing(6)
 
         inventory_filter_row = QHBoxLayout()
         inventory_filter_row.setSpacing(8)
@@ -1341,11 +1498,11 @@ class MainWindow(QMainWindow):
         inspector_content.setObjectName("mods_selection_context_scroll_content")
         inspector_scroll_area.setWidget(inspector_content)
         inspector_content_layout = QVBoxLayout(inspector_content)
-        inspector_content_layout.setContentsMargins(12, 10, 12, 12)
+        inspector_content_layout.setContentsMargins(11, 9, 11, 11)
         inspector_content_layout.setSpacing(8)
 
         inspector_intro = QLabel(
-            "Use the current selection to inspect guidance and keep source-intent, sandbox sync, and promotion actions together."
+            "Use the current selection to inspect guidance and keep source intent, sandbox sync, and promotion actions together."
         )
         inspector_intro.setObjectName("mods_selection_context_intro_label")
         inspector_intro.setWordWrap(True)
@@ -1355,11 +1512,43 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Maximum,
         )
 
-        inspector_content_layout.addWidget(inspector_intro)
-        inspector_content_layout.addWidget(self._inventory_update_guidance_label)
-        inspector_content_layout.addWidget(self._inventory_blocked_detail_label)
+        selection_summary_card = QFrame()
+        selection_summary_card.setObjectName("mods_selection_summary_card")
+        selection_summary_layout = QVBoxLayout(selection_summary_card)
+        selection_summary_layout.setContentsMargins(10, 9, 10, 10)
+        selection_summary_layout.setSpacing(6)
+        selection_summary_layout.addWidget(inspector_intro)
+        selection_summary_layout.addWidget(self._inventory_update_guidance_label)
+        selection_summary_layout.addWidget(self._inventory_blocked_detail_label)
+
+        selected_actions_card = QGroupBox("Selected mod actions")
+        selected_actions_card.setObjectName("mods_selected_actions_group")
+        selected_actions_card.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
+        selected_actions_layout = QVBoxLayout(selected_actions_card)
+        selected_actions_layout.setContentsMargins(9, 8, 9, 9)
+        selected_actions_layout.setSpacing(5)
+        selected_actions_hint = QLabel(
+            "Archive the selected mod to the sandbox archive, or restore an archived copy."
+        )
+        selected_actions_hint.setWordWrap(True)
+        _set_auxiliary_label_style(selected_actions_hint)
+        selected_actions_layout.addWidget(selected_actions_hint)
+        selected_actions_row = QHBoxLayout()
+        selected_actions_row.setContentsMargins(0, 0, 0, 0)
+        selected_actions_row.setSpacing(8)
+        selected_actions_row.addWidget(self._remove_mod_button)
+        selected_actions_row.addWidget(self._rollback_mod_button)
+        selected_actions_row.addStretch(1)
+        selected_actions_layout.addLayout(selected_actions_row)
+        inspector_content_layout.addWidget(selected_actions_card)
+        inspector_content_layout.addWidget(selection_summary_card)
         inspector_content_layout.addWidget(self._inventory_source_intent_actions_widget)
         inspector_content_layout.addWidget(self._inventory_sandbox_sync_actions_widget)
+        inspector_content_layout.addWidget(self._inventory_real_profile_actions_widget)
+        inspector_content_layout.addWidget(self._inventory_sandbox_profile_actions_widget)
         inspector_content_layout.addWidget(flow_hint_label)
         smapi_troubleshooting_group = QGroupBox("SMAPI troubleshooting")
         smapi_troubleshooting_group.setObjectName("mods_smapi_troubleshooting_group")
@@ -1368,11 +1557,11 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Maximum,
         )
         smapi_troubleshooting_layout = QVBoxLayout(smapi_troubleshooting_group)
-        smapi_troubleshooting_layout.setContentsMargins(8, 6, 8, 8)
-        smapi_troubleshooting_layout.setSpacing(4)
+        smapi_troubleshooting_layout.setContentsMargins(10, 9, 10, 10)
+        smapi_troubleshooting_layout.setSpacing(6)
         smapi_dependency_actions_row = QHBoxLayout()
         smapi_dependency_actions_row.setContentsMargins(0, 0, 0, 0)
-        smapi_dependency_actions_row.setSpacing(4)
+        smapi_dependency_actions_row.setSpacing(6)
         smapi_dependency_actions_row.addWidget(self._smapi_dependency_selector, 1)
         smapi_dependency_actions_row.addWidget(self._open_smapi_dependency_in_discover_button)
         smapi_troubleshooting_layout.addWidget(self._smapi_troubleshooting_summary_label)
@@ -1383,9 +1572,9 @@ class MainWindow(QMainWindow):
 
         workspace_splitter.addWidget(table_panel)
         workspace_splitter.addWidget(inspector_panel)
-        workspace_splitter.setSizes([820, 340])
-        workspace_splitter.setStretchFactor(0, 5)
-        workspace_splitter.setStretchFactor(1, 2)
+        workspace_splitter.setSizes([920, 300])
+        workspace_splitter.setStretchFactor(0, 7)
+        workspace_splitter.setStretchFactor(1, 3)
 
         page_layout.addWidget(workspace_splitter, 1)
 
@@ -1393,6 +1582,8 @@ class MainWindow(QMainWindow):
         self._mods_table_group = table_panel
         self._mods_selection_context_group = inspector_panel
         self._mods_selection_context_scroll_area = inspector_scroll_area
+        self._mods_selection_summary_card = selection_summary_card
+        self._mods_selected_actions_group = selected_actions_card
         self._mods_selection_context_intro_label = inspector_intro
         self._mods_smapi_troubleshooting_group = smapi_troubleshooting_group
         return page
@@ -1507,13 +1698,16 @@ class MainWindow(QMainWindow):
             self._on_migrate_cinderleaf_managed_folders
         )
         _set_secondary_button_style(migrate_managed_folders_button)
+        self._migrate_managed_folders_button = migrate_managed_folders_button
         check_nexus_button = QPushButton("Check Nexus connection")
         check_nexus_button.clicked.connect(self._on_check_nexus_connection)
         _set_utility_button_style(check_nexus_button)
+        self._check_nexus_button = check_nexus_button
         check_app_update_button = QPushButton("Check for app updates")
         check_app_update_button.setObjectName("setup_check_app_update_button")
         check_app_update_button.clicked.connect(self._on_check_app_update)
         _set_utility_button_style(check_app_update_button)
+        self._check_app_update_button = check_app_update_button
         open_app_release_page_button = QPushButton("Open release page")
         open_app_release_page_button.setObjectName("setup_open_app_release_page_button")
         open_app_release_page_button.clicked.connect(self._on_open_app_release_page)
@@ -1530,10 +1724,12 @@ class MainWindow(QMainWindow):
         export_backup_button.setObjectName("setup_export_backup_button")
         export_backup_button.clicked.connect(self._on_export_backup_bundle)
         _set_utility_button_style(export_backup_button)
+        self._export_backup_button = export_backup_button
         inspect_backup_button = QPushButton("Inspect backup")
         inspect_backup_button.setObjectName("setup_inspect_backup_button")
         inspect_backup_button.clicked.connect(self._on_inspect_backup_bundle)
         _set_utility_button_style(inspect_backup_button)
+        self._inspect_backup_button = inspect_backup_button
         execute_restore_import_button = QPushButton("Execute restore")
         execute_restore_import_button.setObjectName("setup_execute_restore_import_button")
         execute_restore_import_button.clicked.connect(self._on_execute_restore_import)
@@ -1633,28 +1829,52 @@ class MainWindow(QMainWindow):
         _set_utility_button_style(self._open_remote_page_button)
         source_row.addWidget(self._open_remote_page_button)
         inventory_action_band_layout.addLayout(source_row)
-        selected_mod_actions_row = QHBoxLayout()
-        selected_mod_actions_row.setContentsMargins(0, 0, 0, 0)
-        selected_mod_actions_row.setSpacing(8)
-        selected_mod_actions_label = QLabel("Selected mod actions")
-        _set_auxiliary_label_style(selected_mod_actions_label)
-        selected_mod_actions_row.addWidget(selected_mod_actions_label)
         self._remove_mod_button = QPushButton("Archive selected mod")
         self._remove_mod_button.clicked.connect(self._on_remove_selected_mod)
         _set_utility_button_style(self._remove_mod_button)
-        selected_mod_actions_row.addWidget(self._remove_mod_button)
         self._rollback_mod_button = QPushButton("Restore archived mod")
         self._rollback_mod_button.clicked.connect(self._on_rollback_selected_mod)
         _set_utility_button_style(self._rollback_mod_button)
-        selected_mod_actions_row.addWidget(self._rollback_mod_button)
-        selected_mod_actions_row.addStretch(1)
-        inventory_action_band_layout.addLayout(selected_mod_actions_row)
+        self._launch_vanilla_button = QPushButton("Launch Stardew Valley")
+        self._launch_vanilla_button.clicked.connect(self._on_launch_vanilla)
+        _set_secondary_button_style(self._launch_vanilla_button)
+        self._launch_vanilla_button.setFixedHeight(26)
+        self._launch_vanilla_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._launch_smapi_button = QPushButton("Launch with SMAPI")
+        self._launch_smapi_button.clicked.connect(self._on_launch_smapi)
+        _set_primary_button_style(self._launch_smapi_button)
+        self._launch_smapi_button.setFixedHeight(27)
+        self._launch_smapi_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._launch_sandbox_dev_button = QPushButton("Launch sandbox test")
+        self._launch_sandbox_dev_button.setObjectName("launch_sandbox_dev_button")
+        self._launch_sandbox_dev_button.clicked.connect(self._on_launch_sandbox_dev)
+        _set_secondary_button_style(self._launch_sandbox_dev_button)
+        self._launch_sandbox_dev_button.setFixedHeight(26)
+        self._launch_sandbox_dev_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        launch_actions_widget = QWidget()
+        launch_actions_widget.setObjectName("mods_inventory_launch_actions_widget")
+        launch_actions_layout = QHBoxLayout(launch_actions_widget)
+        launch_actions_layout.setContentsMargins(0, 0, 0, 0)
+        launch_actions_layout.setSpacing(8)
+        launch_actions_layout.addWidget(self._launch_vanilla_button)
+        launch_actions_layout.addWidget(self._launch_smapi_button)
+        launch_actions_layout.addWidget(self._launch_sandbox_dev_button)
         inventory_tab_layout.addWidget(inventory_action_band)
+        inventory_tab_layout.insertWidget(1, launch_actions_widget)
         inventory_tab_layout.addStretch(1)
-        inventory_controls_tabs.addTab(inventory_tab, "Installed Mods")
+        inventory_controls_tabs.addTab(inventory_tab, "Library")
 
         game_smapi_tab = QWidget()
-        game_smapi_tab.setObjectName("mods_launch_controls_tab")
+        game_smapi_tab.setObjectName("mods_smapi_controls_tab")
         game_smapi_layout = QGridLayout(game_smapi_tab)
         game_smapi_layout.setContentsMargins(6, 4, 6, 4)
         game_smapi_layout.setHorizontalSpacing(10)
@@ -1683,31 +1903,11 @@ class MainWindow(QMainWindow):
         self._open_smapi_page_button.setFixedHeight(24)
         self._open_smapi_page_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         game_smapi_layout.addWidget(self._open_smapi_page_button, 1, 0)
-        self._launch_vanilla_button = QPushButton("Launch Stardew Valley")
-        self._launch_vanilla_button.clicked.connect(self._on_launch_vanilla)
-        _set_secondary_button_style(self._launch_vanilla_button)
-        self._launch_vanilla_button.setFixedHeight(26)
-        self._launch_vanilla_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        game_smapi_layout.addWidget(self._launch_vanilla_button, 1, 1)
-        self._launch_smapi_button = QPushButton("Launch with SMAPI")
-        self._launch_smapi_button.clicked.connect(self._on_launch_smapi)
-        _set_primary_button_style(self._launch_smapi_button)
-        self._launch_smapi_button.setFixedHeight(27)
-        self._launch_smapi_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        game_smapi_layout.addWidget(self._launch_smapi_button, 1, 2)
-        self._launch_sandbox_dev_button = QPushButton("Launch sandbox test")
-        self._launch_sandbox_dev_button.setObjectName("launch_sandbox_dev_button")
-        self._launch_sandbox_dev_button.clicked.connect(self._on_launch_sandbox_dev)
-        _set_secondary_button_style(self._launch_sandbox_dev_button)
-        self._launch_sandbox_dev_button.setFixedHeight(26)
-        self._launch_sandbox_dev_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        game_smapi_layout.addWidget(self._launch_sandbox_dev_button, 2, 0, 1, 3)
         game_smapi_layout.setRowMinimumHeight(0, 24)
         game_smapi_layout.setRowMinimumHeight(1, 27)
-        game_smapi_layout.setRowMinimumHeight(2, 26)
         game_smapi_layout.setColumnStretch(1, 1)
         game_smapi_layout.setColumnStretch(2, 1)
-        inventory_controls_tabs.addTab(game_smapi_tab, "Launch")
+        inventory_controls_tabs.addTab(game_smapi_tab, "SMAPI")
 
         flow_hint_label = QLabel(
             "Scanning and checking are read-only. Copy to sandbox, promote to real, apply install, apply recovery, and execute restore are the write actions."
@@ -1850,12 +2050,15 @@ class MainWindow(QMainWindow):
         packages_top_grid.setObjectName("packages_top_grid")
         packages_top_grid_layout = QGridLayout(packages_top_grid)
         packages_top_grid_layout.setContentsMargins(0, 0, 0, 0)
-        packages_top_grid_layout.setHorizontalSpacing(10)
-        packages_top_grid_layout.setVerticalSpacing(10)
+        packages_top_grid_layout.setHorizontalSpacing(8)
+        packages_top_grid_layout.setVerticalSpacing(8)
         inspect_group = QGroupBox("Import zip files")
         inspect_group.setObjectName("packages_import_group")
         inspect_group.setFlat(True)
         inspect_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        inspect_group.setVisible(False)
+        inspect_group.setParent(packages_top_grid)
+        self._package_inspection_group = inspect_group
         inspect_layout = QGridLayout(inspect_group)
         inspect_layout.setContentsMargins(8, 6, 8, 6)
         inspect_layout.setHorizontalSpacing(8)
@@ -1863,21 +2066,17 @@ class MainWindow(QMainWindow):
         inspect_layout.setColumnStretch(1, 1)
         inspect_layout.addWidget(QLabel("Downloaded zip file(s)"), 0, 0)
         inspect_layout.addWidget(self._zip_path_input, 0, 1)
-        browse_zip_button = QPushButton("Choose zip files")
-        browse_zip_button.clicked.connect(self._on_browse_zip)
-        _set_primary_button_style(browse_zip_button)
-        inspect_layout.addWidget(browse_zip_button, 0, 2)
-        inspect_layout.addWidget(self._zip_selection_summary_label, 1, 0, 1, 3)
-        inspect_layout.addWidget(self._zip_staging_rule_label, 2, 0, 1, 3)
+        inspect_layout.addWidget(self._zip_selection_summary_label, 1, 0, 1, 2)
+        inspect_layout.addWidget(self._zip_staging_rule_label, 2, 0, 1, 2)
 
         watcher_group = QGroupBox("Watch downloaded zip folders")
         watcher_group.setObjectName("packages_watcher_group")
         watcher_group.setFlat(True)
         watcher_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         watcher_layout = QGridLayout(watcher_group)
-        watcher_layout.setContentsMargins(8, 6, 8, 6)
+        watcher_layout.setContentsMargins(6, 4, 6, 4)
         watcher_layout.setHorizontalSpacing(8)
-        watcher_layout.setVerticalSpacing(4)
+        watcher_layout.setVerticalSpacing(3)
         watcher_layout.setColumnStretch(1, 1)
         watcher_layout.addWidget(QLabel("Watched downloads path 1"), 0, 0)
         watcher_layout.addWidget(self._watched_downloads_path_input, 0, 1, 1, 4)
@@ -1946,6 +2145,12 @@ class MainWindow(QMainWindow):
         )
         watcher_runtime_actions_widget.setLayout(watch_actions)
         watcher_layout.addWidget(watcher_runtime_actions_widget, 5, 1, 1, 4)
+        self._start_watch_button = start_watch_button
+        self._packages_watch_controls = (
+            watcher_group,
+            inspect_group,
+        )
+        packages_top_grid_layout.addWidget(inspect_group, 1, 0)
         inspection_result_group = QGroupBox("Inspection detail")
         inspection_result_group.setFlat(True)
         inspection_result_group.setSizePolicy(
@@ -1966,37 +2171,58 @@ class MainWindow(QMainWindow):
         self._package_inspection_selector_label = inspection_selector_label
         inspect_layout.addWidget(inspection_result_group, 3, 0, 1, 3)
 
-        packages_top_grid_layout.addWidget(inspect_group, 0, 0)
-        packages_top_grid_layout.addWidget(watcher_group, 0, 1)
-        packages_top_grid_layout.setColumnStretch(0, 3)
-        packages_top_grid_layout.setColumnStretch(1, 2)
+        packages_top_grid_layout.addWidget(watcher_group, 0, 0)
+        packages_output_group = QGroupBox("Packages detail")
+        packages_output_group.setObjectName("packages_output_group")
+        packages_output_group.setFlat(True)
+        packages_output_group.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Expanding,
+        )
+        packages_output_layout = QVBoxLayout(packages_output_group)
+        packages_output_layout.setContentsMargins(8, 6, 8, 6)
+        packages_output_layout.setSpacing(4)
+        packages_output_layout.addWidget(self._packages_output_box)
+        packages_top_grid_layout.addWidget(packages_output_group, 0, 1, 2, 1)
+        self._packages_output_group = packages_output_group
+        packages_output_group.setVisible(False)
+        packages_top_grid_layout.setColumnStretch(0, 1)
+        packages_top_grid_layout.setColumnStretch(1, 1)
         intake_layout.addWidget(packages_top_grid)
 
-        detected_group = QGroupBox("Current review target")
+        detected_group = QGroupBox("Current install target")
         detected_group.setObjectName("packages_review_target_group")
         detected_group.setFlat(True)
         detected_group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         detected_layout = QGridLayout(detected_group)
-        detected_layout.setContentsMargins(8, 6, 8, 6)
+        detected_layout.setContentsMargins(6, 4, 6, 4)
         detected_layout.setHorizontalSpacing(8)
-        detected_layout.setVerticalSpacing(4)
+        detected_layout.setVerticalSpacing(3)
         detected_layout.setColumnStretch(1, 1)
         detected_layout.addWidget(self._packages_workspace_state_label, 0, 0, 1, 4)
         detected_layout.addWidget(QLabel("Filter"), 1, 0)
         detected_layout.addWidget(self._intake_filter_input, 1, 1, 1, 2)
         detected_layout.addWidget(self._intake_filter_stats_label, 1, 3)
-        detected_layout.addWidget(QLabel("Package to review"), 2, 0)
+        detected_layout.addWidget(QLabel("Package batch"), 2, 0)
         detected_layout.addWidget(self._intake_result_combo, 2, 1, 1, 2)
         detected_layout.addWidget(self._packages_compare_target_label, 3, 0)
         detected_layout.addWidget(self._packages_compare_target_combo, 3, 1)
         detected_layout.addWidget(self._packages_compare_target_summary_label, 3, 2, 1, 2)
+        queue_filter_label = QLabel("Queue filter")
+        queue_filter_label.setObjectName("packages_queue_filter_label")
+        detected_layout.addWidget(queue_filter_label, 4, 0)
+        detected_layout.addWidget(self._package_queue_filter_input, 4, 1, 1, 3)
+        queue_label = QLabel("Watched package queue")
+        queue_label.setObjectName("packages_intake_queue_label")
+        detected_layout.addWidget(queue_label, 5, 0, 1, 4)
+        detected_layout.addWidget(self._package_queue_list, 6, 0, 1, 4)
         review_flow_label = QLabel(
-            "Use Open Review to carry the current package into Review. Review stays read-only until you generate the install summary."
+            "Check one or more watched packages, then use Open Install to carry the batch into Install."
         )
         review_flow_label.setObjectName("packages_intake_review_flow_label")
         review_flow_label.setWordWrap(True)
         _set_auxiliary_label_style(review_flow_label)
-        detected_layout.addWidget(review_flow_label, 4, 0, 1, 4)
+        detected_layout.addWidget(review_flow_label, 7, 0, 1, 4)
         self._plan_selected_intake_button.clicked.connect(self._on_plan_selected_intake)
         self._stage_update_intake_button.clicked.connect(self._on_stage_selected_intake_update)
         _set_secondary_button_style(self._stage_update_intake_button)
@@ -2007,29 +2233,14 @@ class MainWindow(QMainWindow):
         detected_actions_layout.addStretch(1)
         detected_actions_layout.addWidget(self._plan_selected_intake_button)
         detected_actions_layout.addWidget(self._stage_update_intake_button)
-        detected_layout.addWidget(detected_actions_widget, 5, 0, 1, 4)
+        detected_layout.addWidget(detected_actions_widget, 8, 0, 1, 4)
         intake_layout.addWidget(detected_group)
-        packages_output_group = QGroupBox("Packages detail")
-        packages_output_group.setObjectName("packages_output_group")
-        packages_output_group.setFlat(True)
-        packages_output_group.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Maximum,
-        )
-        packages_output_layout = QVBoxLayout(packages_output_group)
-        packages_output_layout.setContentsMargins(8, 6, 8, 6)
-        packages_output_layout.setSpacing(4)
-        packages_output_layout.addWidget(self._packages_output_box)
-        intake_layout.addWidget(packages_output_group)
-        self._packages_output_group = packages_output_group
-        packages_output_group.setVisible(False)
-
         intake_layout.addStretch(1)
         intake_tab = self._build_page_shell(
             object_name="packages_workspace_page",
-            eyebrow="Import downloaded zips",
+            eyebrow="Watch downloaded zips",
             title="Packages",
-            subtitle="Import zips, inspect them immediately, and hand the current package into Review.",
+            subtitle="Watch zip folders, queue packages, and hand the staged batch into Install.",
             body_widget=intake_tab,
             scroll_body=True,
         )
@@ -2108,7 +2319,7 @@ class MainWindow(QMainWindow):
         )
         self._archive_page = archive_page
 
-        plan_install_button = QPushButton("Review install")
+        plan_install_button = QPushButton("Plan install")
         plan_install_button.setObjectName("plan_install_plan_button")
         plan_install_button.clicked.connect(self._on_plan_install)
         self._plan_install_button = plan_install_button
@@ -2131,7 +2342,7 @@ class MainWindow(QMainWindow):
             review_top_row.setObjectName("plan_install_top_row")
             review_top_row_layout = QHBoxLayout(review_top_row)
             review_top_row_layout.setContentsMargins(0, 0, 0, 0)
-            review_top_row_layout.setSpacing(10)
+            review_top_row_layout.setSpacing(6)
 
             safety_group = QGroupBox("Safety context")
             safety_group.setObjectName("plan_install_safety_panel_group")
@@ -2140,7 +2351,7 @@ class MainWindow(QMainWindow):
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
             )
             safety_layout = QVBoxLayout(safety_group)
-            safety_layout.setContentsMargins(8, 6, 8, 6)
+            safety_layout.setContentsMargins(7, 5, 7, 5)
             safety_layout.setSpacing(4)
             safety_label = QLabel("Install safety context unavailable.")
             safety_label.setObjectName("plan_install_safety_panel_text")
@@ -2149,59 +2360,58 @@ class MainWindow(QMainWindow):
             self._install_safety_panel_group = safety_group
             self._install_safety_panel_label = safety_label
 
-            staged_package_group = QGroupBox("Current package")
+            staged_package_group = QGroupBox("Staged package(s)")
             staged_package_group.setObjectName("plan_install_staged_package_group")
             staged_package_group.setFlat(True)
             staged_package_group.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
             )
             staged_package_layout = QVBoxLayout(staged_package_group)
-            staged_package_layout.setContentsMargins(8, 6, 8, 6)
+            staged_package_layout.setContentsMargins(7, 5, 7, 5)
             staged_package_layout.setSpacing(4)
-            staged_package_layout.addWidget(QLabel("Current review target"))
+            staged_package_layout.addWidget(QLabel("Current package"))
             staged_package_layout.addWidget(self._staged_package_label)
             review_top_row_layout.addWidget(staged_package_group, 3)
             review_top_row_layout.addWidget(safety_group, 2)
+            review_top_row_layout.addWidget(plan_tab.execute_group, 2)
             plan_tab_layout.insertWidget(2, review_top_row)
 
             review_middle_row = QWidget()
             review_middle_row.setObjectName("plan_install_middle_row")
             review_middle_row_layout = QHBoxLayout(review_middle_row)
             review_middle_row_layout.setContentsMargins(0, 0, 0, 0)
-            review_middle_row_layout.setSpacing(10)
+            review_middle_row_layout.setSpacing(6)
 
-            plan_review_summary_group = QGroupBox("Review notes")
+            plan_review_summary_group = QGroupBox("Plan notes")
             plan_review_summary_group.setObjectName("plan_install_review_summary_group")
             plan_review_summary_group.setFlat(True)
             plan_review_summary_group.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
             )
             plan_review_summary_layout = QVBoxLayout(plan_review_summary_group)
-            plan_review_summary_layout.setContentsMargins(8, 6, 8, 6)
-            plan_review_summary_layout.setSpacing(4)
+            plan_review_summary_layout.setContentsMargins(7, 5, 7, 5)
+            plan_review_summary_layout.setSpacing(3)
             plan_review_summary_layout.addWidget(self._plan_review_summary_label)
             plan_review_summary_layout.addWidget(self._plan_review_explanation_label)
 
-            plan_facts_group = QGroupBox("Write summary")
+            plan_facts_group = QGroupBox("Plan summary")
             plan_facts_group.setObjectName("plan_install_facts_group")
             plan_facts_group.setFlat(True)
             plan_facts_group.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum
             )
             plan_facts_layout = QVBoxLayout(plan_facts_group)
-            plan_facts_layout.setContentsMargins(8, 6, 8, 6)
-            plan_facts_layout.setSpacing(4)
+            plan_facts_layout.setContentsMargins(7, 5, 7, 5)
+            plan_facts_layout.setSpacing(3)
             plan_facts_layout.addWidget(self._plan_facts_label)
-            plan_tab_layout.removeWidget(plan_tab.execute_group)
             review_middle_row_layout.addWidget(plan_facts_group, 2)
             review_middle_row_layout.addWidget(plan_review_summary_group, 3)
-            review_middle_row_layout.addWidget(plan_tab.execute_group, 2)
             plan_tab_layout.insertWidget(4, review_middle_row)
 
         review_page = self._build_page_shell(
             object_name="review_workspace_page",
-            eyebrow="Review before writing",
-            title="Install review",
+            eyebrow="Install before writing",
+            title="Install",
             subtitle="Confirm the package, destination, and safety summary before any write.",
             body_widget=plan_tab,
         )
@@ -2278,10 +2488,10 @@ class MainWindow(QMainWindow):
         )
         self._setup_scroll = setup_scroll
         self._setup_page = setup_page
-        context_tabs.addTab(mods_page, "Mods")
+        context_tabs.addTab(mods_page, "Library")
         context_tabs.addTab(setup_page, "Setup")
         context_tabs.addTab(intake_tab, "Packages")
-        context_tabs.addTab(review_page, "Review")
+        context_tabs.addTab(review_page, "Install")
         context_tabs.addTab(discovery_page, "Discover")
         context_tabs.addTab(compare_tab, "Compare")
         context_tabs.addTab(archive_page, "Archive")
@@ -2314,11 +2524,15 @@ class MainWindow(QMainWindow):
             self._restore_archived_button,
             self._delete_archived_button,
             self._compare_real_vs_sandbox_button,
+            export_backup_button,
             inspect_backup_button,
             execute_restore_import_button,
+            migrate_managed_folders_button,
             self._launch_vanilla_button,
             self._launch_smapi_button,
             self._launch_sandbox_dev_button,
+            self._plan_install_button,
+            self._run_install_button,
             self._sync_selected_to_sandbox_button,
             self._promote_selected_to_real_button,
         )
@@ -3036,6 +3250,8 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_migrate_cinderleaf_managed_folders_completed,
             on_failure=self._set_setup_output_text,
+            busy_button=self._migrate_managed_folders_button,
+            busy_button_text="Migrating...",
         )
 
     def _on_migrate_cinderleaf_managed_folders_completed(
@@ -3130,6 +3346,10 @@ class MainWindow(QMainWindow):
         self._set_status("Environment detection complete.")
 
     def _on_export_backup_bundle(self) -> None:
+        artifact_selection = self._prompt_for_backup_export_artifacts()
+        if artifact_selection is None:
+            self._set_status("Backup export cancelled.")
+            return
         export_target = self._prompt_for_backup_export_target()
         if export_target is None:
             self._set_status("Backup export cancelled.")
@@ -3145,10 +3365,13 @@ class MainWindow(QMainWindow):
             task_fn=lambda: self._shell_service.export_backup_bundle(
                 destination_root_text=destination_root,
                 bundle_storage_kind=bundle_storage_kind,
+                artifact_selection=artifact_selection,
                 **self._current_backup_export_inputs(),
             ),
             on_success=self._on_backup_bundle_export_completed,
             on_failure=self._set_setup_output_text,
+            busy_button=self._export_backup_button,
+            busy_button_text="Exporting...",
         )
 
     def _on_backup_bundle_export_completed(self, result: BackupBundleExportResult) -> None:
@@ -3156,6 +3379,75 @@ class MainWindow(QMainWindow):
         self._set_setup_output_and_details_text(build_backup_bundle_export_text(result))
         self._set_status(
             f"Backup export complete: {copied_count} item(s) copied to {result.bundle_path}"
+        )
+
+    def _prompt_for_backup_export_artifacts(self) -> BackupBundleExportSelection | None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Choose Cinderleaf backup artifacts")
+        dialog.resize(560, 360)
+        layout = QVBoxLayout(dialog)
+
+        intro = QLabel(
+            "Select which artifact groups should be included in the backup export. "
+            "Restore/import behavior stays unchanged for now."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        manager_state_checkbox = QCheckBox("Manager state and profiles")
+        manager_state_checkbox.setChecked(True)
+        manager_state_note = QLabel(
+            "Includes app config, install and recovery history, update-source intent overlay, "
+            "and both profile catalogs."
+        )
+        manager_state_note.setWordWrap(True)
+        _set_auxiliary_label_style(manager_state_note)
+        layout.addWidget(manager_state_checkbox)
+        layout.addWidget(manager_state_note)
+
+        managed_mods_checkbox = QCheckBox("Managed mods and config snapshots")
+        managed_mods_checkbox.setChecked(True)
+        managed_mods_note = QLabel(
+            "Includes the real and sandbox Mods trees plus the per-mod config snapshots."
+        )
+        managed_mods_note.setWordWrap(True)
+        _set_auxiliary_label_style(managed_mods_note)
+        layout.addWidget(managed_mods_checkbox)
+        layout.addWidget(managed_mods_note)
+
+        archives_checkbox = QCheckBox("Archives")
+        archives_checkbox.setChecked(True)
+        archives_note = QLabel("Includes the real and sandbox archive roots.")
+        archives_note.setWordWrap(True)
+        _set_auxiliary_label_style(archives_note)
+        layout.addWidget(archives_checkbox)
+        layout.addWidget(archives_note)
+
+        save_files_checkbox = QCheckBox("Stardew save files")
+        save_files_checkbox.setChecked(False)
+        save_files_note = QLabel(
+            f"Default save folder: {platform_default_stardew_save_directory()}"
+        )
+        save_files_note.setWordWrap(True)
+        _set_auxiliary_label_style(save_files_note)
+        layout.addWidget(save_files_checkbox)
+        layout.addWidget(save_files_note)
+
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return None
+
+        return BackupBundleExportSelection(
+            include_manager_state=manager_state_checkbox.isChecked(),
+            include_managed_mods=managed_mods_checkbox.isChecked(),
+            include_archives=archives_checkbox.isChecked(),
+            include_save_files=save_files_checkbox.isChecked(),
         )
 
     def _on_inspect_backup_bundle(self) -> None:
@@ -3179,6 +3471,8 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_backup_bundle_inspection_completed,
             on_failure=self._set_setup_output_text,
+            busy_button=self._inspect_backup_button,
+            busy_button_text="Inspecting...",
         )
 
     def _on_backup_bundle_inspection_completed(
@@ -3371,6 +3665,8 @@ class MainWindow(QMainWindow):
             ),
             on_success=self._on_execute_restore_import_completed,
             on_failure=self._set_setup_output_text,
+            busy_button=self._execute_restore_import_button,
+            busy_button_text="Restoring...",
         )
 
     def _on_execute_restore_import_completed(
@@ -3412,6 +3708,7 @@ class MainWindow(QMainWindow):
         try:
             result = self._shell_service.launch_game_smapi(
                 game_path_text=self._game_path_input.text(),
+                configured_mods_path_text=self._mods_path_input.text(),
                 existing_config=self._config,
                 steam_auto_start_enabled=self._steam_auto_start_checkbox.isChecked(),
             )
@@ -3420,14 +3717,17 @@ class MainWindow(QMainWindow):
             self._set_status(str(exc))
             return
 
-        self._record_smapi_launch_context("Real Mods")
+        mods_path_override = getattr(result, "mods_path_override", None)
+        self._record_smapi_launch_context("Real Mods", launch_pid=result.pid)
         self._schedule_cinderleaf_smapi_log_capture("Real Mods")
-        self._set_status(
-            self._format_launch_status_message(
-                f"SMAPI launch started (PID {result.pid}): {result.executable_path}",
-                result,
-            )
+        self._schedule_smapi_log_refresh_after_launch_exit(
+            context_label="Real Mods",
+            launch_pid=result.pid,
         )
+        launch_message = f"SMAPI launch started (PID {result.pid}): {result.executable_path}"
+        if mods_path_override is not None:
+            launch_message += f" using real profile Mods path {mods_path_override}."
+        self._set_status(self._format_launch_status_message(launch_message, result))
 
     def _on_launch_sandbox_dev(self) -> None:
         try:
@@ -3454,8 +3754,12 @@ class MainWindow(QMainWindow):
             f"{result.mods_path_override}."
         )
         launch_message = self._format_launch_status_message(launch_message, result)
-        self._record_smapi_launch_context("Sandbox Mods")
+        self._record_smapi_launch_context("Sandbox Mods", launch_pid=result.pid)
         self._schedule_cinderleaf_smapi_log_capture("Sandbox Mods")
+        self._schedule_smapi_log_refresh_after_launch_exit(
+            context_label="Sandbox Mods",
+            launch_pid=result.pid,
+        )
         self._sandbox_launch_status_label.setText("Started")
         self._sandbox_launch_status_label.setToolTip(launch_message)
         self._set_status(launch_message)
@@ -3466,7 +3770,7 @@ class MainWindow(QMainWindow):
             return base_message
         return f"{base_message} {steam_message}"
 
-    def _record_smapi_launch_context(self, context_label: str) -> None:
+    def _record_smapi_launch_context(self, context_label: str, *, launch_pid: int | None = None) -> None:
         self._last_smapi_launch_context = context_label
         raw_game_path = self._game_path_input.text().strip()
         self._last_smapi_launch_expected_log_path = (
@@ -3475,6 +3779,7 @@ class MainWindow(QMainWindow):
             else None
         )
         self._last_smapi_launch_started_at_epoch = time.time()
+        self._last_smapi_launch_pid = launch_pid
         self._last_smapi_log_capture_token += 1
 
     def _schedule_cinderleaf_smapi_log_capture(self, context_label: str) -> None:
@@ -3520,8 +3825,75 @@ class MainWindow(QMainWindow):
                 context_label=_context_label,
                 capture_token=_capture_token,
                 attempts_remaining=_attempts_remaining,
+                ),
+        )
+
+    def _schedule_smapi_log_refresh_after_launch_exit(
+        self,
+        *,
+        context_label: str,
+        launch_pid: int,
+    ) -> None:
+        if launch_pid <= 0:
+            return
+        self._smapi_launch_exit_refresh_token += 1
+        refresh_token = self._smapi_launch_exit_refresh_token
+        QTimer.singleShot(
+            1500,
+            lambda _context_label=context_label, _launch_pid=launch_pid, _refresh_token=refresh_token: self._attempt_smapi_log_refresh_after_launch_exit(
+                context_label=_context_label,
+                launch_pid=_launch_pid,
+                refresh_token=_refresh_token,
+                attempts_remaining=20,
             ),
         )
+
+    def _attempt_smapi_log_refresh_after_launch_exit(
+        self,
+        *,
+        context_label: str,
+        launch_pid: int,
+        refresh_token: int,
+        attempts_remaining: int,
+    ) -> None:
+        if refresh_token != self._smapi_launch_exit_refresh_token:
+            return
+        if launch_pid != self._last_smapi_launch_pid:
+            return
+        if context_label != self._last_smapi_launch_context:
+            return
+        if attempts_remaining <= 0:
+            # Keep the exit watch alive across long SMAPI sessions; this only resets
+            # the current polling chunk, not the one-shot refresh behavior.
+            attempts_remaining = _SMAPI_LAUNCH_EXIT_REFRESH_ATTEMPTS
+        if self._active_operation_name is not None:
+            QTimer.singleShot(
+                1500,
+                lambda _context_label=context_label, _launch_pid=launch_pid, _refresh_token=refresh_token, _attempts_remaining=attempts_remaining - 1: self._attempt_smapi_log_refresh_after_launch_exit(
+                    context_label=_context_label,
+                    launch_pid=_launch_pid,
+                    refresh_token=_refresh_token,
+                    attempts_remaining=_attempts_remaining,
+                ),
+            )
+            return
+
+        process_running = self._shell_service.is_process_running(launch_pid)
+        if process_running is None or process_running:
+            QTimer.singleShot(
+                1500,
+                lambda _context_label=context_label, _launch_pid=launch_pid, _refresh_token=refresh_token, _attempts_remaining=attempts_remaining - 1: self._attempt_smapi_log_refresh_after_launch_exit(
+                    context_label=_context_label,
+                    launch_pid=_launch_pid,
+                    refresh_token=_refresh_token,
+                    attempts_remaining=_attempts_remaining,
+                ),
+            )
+            return
+
+        self._last_smapi_launch_pid = None
+        self._smapi_launch_exit_refresh_token += 1
+        self._on_check_smapi_log()
 
     def _on_scan(self) -> None:
         self._run_background_operation(
@@ -3538,12 +3910,18 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             ),
             on_success=self._on_scan_completed,
+            busy_button=self._scan_button,
+            busy_button_text="Scanning...",
         )
 
     def _on_scan_completed(self, result: ScanResult) -> None:
         self._cache_scan_result(result)
         self._show_scan_result(result)
-        self._set_status(f"Scan complete: {len(result.inventory.mods)} mods")
+        self._set_status(
+            "Scan complete: "
+            f"{len(result.inventory.mods)} active mod(s), "
+            f"{len(result.inventory.disabled_mods)} disabled mod(s)"
+        )
 
     def _on_compare_real_and_sandbox(self) -> None:
         self._run_background_operation(
@@ -3559,6 +3937,8 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             ),
             on_success=self._on_compare_real_and_sandbox_completed,
+            busy_button=self._compare_real_vs_sandbox_button,
+            busy_button_text="Comparing...",
         )
 
     def _on_compare_real_and_sandbox_completed(self, result: ModsCompareResult) -> None:
@@ -3618,7 +3998,7 @@ class MainWindow(QMainWindow):
                 self._set_intake_output_text(build_package_inspection_text(entry.inspection))
                 self._set_status(
                     "Zip inspection complete: "
-                    f"{len(entry.inspection.mods)} mod(s) detected. Next step: open Review."
+                    f"{len(entry.inspection.mods)} mod(s) detected. Next step: open Install."
                 )
                 return
 
@@ -3626,9 +4006,15 @@ class MainWindow(QMainWindow):
         self._set_status(_batch_inspection_status_text(batch_result))
 
     def _on_plan_install(self) -> None:
-        try:
-            plan = self._shell_service.build_install_plan(
-                package_path_text=self._zip_path_input.text(),
+        selected_paths = self._selected_zip_package_paths
+        self._run_background_operation(
+            operation_name="Install planning",
+            running_label="Install planning",
+            started_status="Planning install batch...",
+            error_title="Install plan failed",
+            task_fn=lambda: self._shell_service.build_install_plan(
+                package_paths_text=tuple(str(path) for path in selected_paths),
+                package_path_text="" if selected_paths else self._zip_path_input.text(),
                 install_target=self._current_install_target(),
                 configured_mods_path_text=self._mods_path_input.text(),
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
@@ -3638,15 +4024,12 @@ class MainWindow(QMainWindow):
                 configured_real_mods_path=None,
                 nexus_api_key_text=self._nexus_api_key_input.text(),
                 existing_config=self._config,
-            )
-        except AppShellError as exc:
-            self._invalidate_pending_plan()
-            QMessageBox.critical(self, "Install plan failed", str(exc))
-            self._set_plan_install_output_text(str(exc))
-            self._set_status(str(exc))
-            return
-
-        self._apply_install_plan_review(plan)
+            ),
+            on_success=self._apply_install_plan_review,
+            on_failure=self._set_plan_install_output_text,
+            busy_button=self._plan_install_button,
+            busy_button_text="Planning batch...",
+        )
 
     def _on_run_install(self) -> None:
         if self._pending_install_plan is None:
@@ -3669,33 +4052,46 @@ class MainWindow(QMainWindow):
             self._set_status("Install cancelled.")
             return
 
-        try:
-            result = self._shell_service.execute_sandbox_install_plan(
+        history_before_install = self._install_operation_history
+        def _on_success(result: object) -> None:
+            execution_result = result
+            self._refresh_install_operation_selector()
+            self._select_new_install_operation_for_recovery(history_before_install)
+            self._cache_inventory_for_target(
+                execution_result.destination_kind,
+                execution_result.scan_context_path,
+                execution_result.inventory,
+            )
+            self._render_inventory(execution_result.inventory)
+            self._set_plan_install_output_text(build_sandbox_install_result_text(execution_result))
+            self._set_current_scan_target(execution_result.destination_kind)
+            self._set_scan_context(
+                execution_result.scan_context_path,
+                self._scan_target_label(execution_result.destination_kind),
+            )
+            if is_real_destination:
+                self._set_status(
+                    f"Real Mods install complete: {len(execution_result.installed_targets)} target(s)"
+                )
+            else:
+                self._set_status(
+                    f"Sandbox install complete: {len(execution_result.installed_targets)} target(s)"
+                )
+
+        self._run_background_operation(
+            operation_name="Install execution",
+            running_label="Install execution",
+            started_status="Applying install batch...",
+            error_title="Install failed",
+            task_fn=lambda: self._shell_service.execute_sandbox_install_plan(
                 self._pending_install_plan,
                 confirm_real_destination=is_real_destination,
-            )
-        except AppShellError as exc:
-            QMessageBox.critical(self, "Install failed", str(exc))
-            self._set_plan_install_output_text(_error_detail_text(exc))
-            self._set_status(str(exc))
-            return
-
-        history_before_install = self._install_operation_history
-        self._refresh_install_operation_selector()
-        self._select_new_install_operation_for_recovery(history_before_install)
-        self._cache_inventory_for_target(
-            result.destination_kind,
-            result.scan_context_path,
-            result.inventory,
+            ),
+            on_success=_on_success,
+            on_failure=self._set_plan_install_output_text,
+            busy_button=self._run_install_button,
+            busy_button_text="Applying batch...",
         )
-        self._render_inventory(result.inventory)
-        self._set_plan_install_output_text(build_sandbox_install_result_text(result))
-        self._set_current_scan_target(result.destination_kind)
-        self._set_scan_context(result.scan_context_path, self._scan_target_label(result.destination_kind))
-        if is_real_destination:
-            self._set_status(f"Real Mods install complete: {len(result.installed_targets)} target(s)")
-        else:
-            self._set_status(f"Sandbox install complete: {len(result.installed_targets)} target(s)")
 
     def _apply_install_plan_review(self, plan: SandboxInstallPlan) -> None:
         review = self._shell_service.review_install_execution(plan)
@@ -4055,6 +4451,8 @@ class MainWindow(QMainWindow):
                 existing_config=config,
             ),
             on_success=self._on_check_updates_completed,
+            busy_button=self._check_updates_button,
+            busy_button_text="Checking...",
         )
 
     def _on_check_updates_completed(self, report: ModUpdateReport) -> None:
@@ -4081,6 +4479,8 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             ),
             on_success=self._on_check_smapi_update_completed,
+            busy_button=self._check_smapi_update_button,
+            busy_button_text="Checking...",
         )
 
     def _on_check_smapi_update_completed(self, status: SmapiUpdateStatus) -> None:
@@ -4100,6 +4500,8 @@ class MainWindow(QMainWindow):
                 current_version=self._app_version_text,
             ),
             on_success=self._on_check_app_update_completed,
+            busy_button=self._check_app_update_button,
+            busy_button_text="Checking...",
         )
 
     def _on_check_app_update_completed(self, status: AppUpdateStatus) -> None:
@@ -4145,6 +4547,8 @@ class MainWindow(QMainWindow):
                 preferred_context_label=self._last_smapi_launch_context,
             ),
             on_success=self._on_check_smapi_log_completed,
+            busy_button=self._check_smapi_log_button,
+            busy_button_text="Checking...",
         )
 
     def _on_load_smapi_log(self) -> None:
@@ -4168,6 +4572,8 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             ),
             on_success=self._on_check_smapi_log_completed,
+            busy_button=self._load_smapi_log_button,
+            busy_button_text="Parsing...",
         )
 
     def _on_check_smapi_log_completed(self, report: SmapiLogReport) -> None:
@@ -4344,6 +4750,8 @@ class MainWindow(QMainWindow):
                 query_text=query_text,
             ),
             on_success=self._on_search_discovery_completed,
+            busy_button=self._search_mods_button,
+            busy_button_text="Searching...",
         )
 
     def _on_search_discovery_completed(self, discovery_result: ModDiscoveryResult) -> None:
@@ -4449,11 +4857,22 @@ class MainWindow(QMainWindow):
         self._set_status(f"Opened discovered page: {url}")
 
     def _on_check_nexus_connection(self) -> None:
-        status = self._shell_service.get_nexus_integration_status(
-            nexus_api_key_text=self._nexus_api_key_input.text(),
-            existing_config=self._config,
-            validate_connection=True,
+        self._run_background_operation(
+            operation_name="Nexus check",
+            running_label="Nexus check",
+            started_status="Checking Nexus connection...",
+            error_title="Nexus check failed",
+            task_fn=lambda: self._shell_service.get_nexus_integration_status(
+                nexus_api_key_text=self._nexus_api_key_input.text(),
+                existing_config=self._config,
+                validate_connection=True,
+            ),
+            on_success=self._on_check_nexus_connection_completed,
+            busy_button=self._check_nexus_button,
+            busy_button_text="Checking...",
         )
+    
+    def _on_check_nexus_connection_completed(self, status: NexusIntegrationStatus) -> None:
         self._nexus_status_label.setText(_nexus_status_label(status.state, status.masked_key))
         if status.message:
             self._set_setup_output_and_details_text(status.message)
@@ -4550,6 +4969,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid selection", message)
             self._set_status(message)
             return
+        active_real_profile = self._active_custom_real_profile()
+        if active_real_profile is not None:
+            message = (
+                f"Archive selected mod is unavailable while real profile '{active_real_profile.name}' is active. "
+                "Switch to Default to archive from the canonical real Mods library."
+            )
+            QMessageBox.warning(self, "Real profile action unavailable", message)
+            self._set_status(message)
+            return
 
         try:
             plan = self._shell_service.build_mod_removal_plan(
@@ -4596,6 +5024,8 @@ class MainWindow(QMainWindow):
                 confirm_removal=True,
             ),
             on_success=self._on_remove_selected_mod_completed,
+            busy_button=self._remove_mod_button,
+            busy_button_text="Archiving...",
         )
 
     def _on_remove_selected_mod_completed(self, result: ModRemovalResult) -> None:
@@ -4637,6 +5067,15 @@ class MainWindow(QMainWindow):
         if not isinstance(mod_folder_path, str) or not mod_folder_path.strip():
             message = "Selected mod row does not include a valid folder path."
             QMessageBox.warning(self, "Invalid selection", message)
+            self._set_status(message)
+            return
+        active_real_profile = self._active_custom_real_profile()
+        if active_real_profile is not None:
+            message = (
+                f"Restore archived mod is unavailable while real profile '{active_real_profile.name}' is active. "
+                "Switch to Default to restore against the canonical real Mods library."
+            )
+            QMessageBox.warning(self, "Real profile action unavailable", message)
             self._set_status(message)
             return
 
@@ -4744,6 +5183,8 @@ class MainWindow(QMainWindow):
                 confirm_rollback=True,
             ),
             on_success=self._on_rollback_selected_mod_completed,
+            busy_button=self._rollback_mod_button,
+            busy_button_text="Restoring...",
         )
 
     def _on_rollback_selected_mod_completed(self, result: ModRollbackResult) -> None:
@@ -4793,6 +5234,8 @@ class MainWindow(QMainWindow):
                 existing_config=self._config,
             ),
             on_success=self._on_refresh_archives_completed,
+            busy_button=self._refresh_archives_button,
+            busy_button_text="Refreshing...",
         )
 
     def _on_refresh_archives_completed(self, entries: tuple[ArchivedModEntry, ...]) -> None:
@@ -5032,33 +5475,56 @@ class MainWindow(QMainWindow):
         self._render_archive_entries(entries)
 
     def _on_start_watch(self) -> None:
-        try:
-            watched_downloads_path_text = self._watched_downloads_path_input.text()
-            secondary_watched_downloads_path_text = (
-                self._secondary_watched_downloads_path_input.text()
-            )
-            self._known_watched_zip_paths = self._shell_service.initialize_downloads_watch(
-                watched_downloads_path_text,
-                secondary_watched_downloads_path_text,
-            )
-            initial_result = self._shell_service.poll_downloads_watch(
+        watched_downloads_path_text = self._watched_downloads_path_input.text()
+        secondary_watched_downloads_path_text = (
+            self._secondary_watched_downloads_path_input.text()
+        )
+
+        self._run_background_operation(
+            operation_name="Downloads watcher",
+            running_label="Downloads watcher",
+            started_status="Starting intake watch...",
+            error_title="Watch start failed",
+            task_fn=lambda: SimpleNamespace(
                 watched_downloads_path_text=watched_downloads_path_text,
                 secondary_watched_downloads_path_text=secondary_watched_downloads_path_text,
-                known_zip_paths=tuple(),
-                inventory=self._current_inventory_or_empty(),
-                nexus_api_key_text=self._nexus_api_key_input.text(),
-                existing_config=self._config,
-            )
-        except AppShellError as exc:
-            QMessageBox.critical(self, "Watch start failed", str(exc))
-            self._set_status(str(exc))
-            return
+                baseline_known_zip_paths=self._shell_service.initialize_downloads_watch(
+                    watched_downloads_path_text,
+                    secondary_watched_downloads_path_text,
+                ),
+                initial_result=self._shell_service.poll_downloads_watch(
+                    watched_downloads_path_text=watched_downloads_path_text,
+                    secondary_watched_downloads_path_text=secondary_watched_downloads_path_text,
+                    known_zip_paths=tuple(),
+                    inventory=self._current_inventory_or_empty(),
+                    nexus_api_key_text=self._nexus_api_key_input.text(),
+                    existing_config=self._config,
+                ),
+            ),
+            on_success=self._on_start_watch_completed,
+            busy_button=self._start_watch_button,
+            busy_button_text="Starting watch...",
+        )
 
-        self._known_watched_zip_paths = initial_result.known_zip_paths
+    def _on_stop_watch(self) -> None:
+        self._watch_timer.stop()
+        self._watch_status_label.setText("Stopped")
+        self._watch_status_label.setToolTip(self._watch_sources_tooltip())
+        self._set_status("Downloads watcher stopped.")
+        self._refresh_workflow_surface_states()
+
+    def _on_start_watch_completed(self, result: SimpleNamespace) -> None:
+        initial_result = result.initial_result
+        self._known_watched_zip_paths = result.baseline_known_zip_paths
+        watch_state_changed = self._refresh_detected_intakes_for_watch_state(
+            result.baseline_known_zip_paths
+        )
         self._watch_timer.start()
         baseline_count = len(self._known_watched_zip_paths)
         self._update_watch_runtime_status_label(baseline_count)
         if not initial_result.intakes:
+            if watch_state_changed:
+                self._recompute_intake_correlations()
             self._set_status(
                 "Downloads watcher started. Watching for new zip files."
             )
@@ -5086,13 +5552,6 @@ class MainWindow(QMainWindow):
         )
         self._refresh_workflow_surface_states()
 
-    def _on_stop_watch(self) -> None:
-        self._watch_timer.stop()
-        self._watch_status_label.setText("Stopped")
-        self._watch_status_label.setToolTip(self._watch_sources_tooltip())
-        self._set_status("Downloads watcher stopped.")
-        self._refresh_workflow_surface_states()
-
     def _on_watch_tick(self) -> None:
         try:
             result = self._shell_service.poll_downloads_watch(
@@ -5114,7 +5573,12 @@ class MainWindow(QMainWindow):
             return
 
         self._known_watched_zip_paths = result.known_zip_paths
+        watch_state_changed = self._refresh_detected_intakes_for_watch_state(
+            result.known_zip_paths
+        )
         if not result.intakes:
+            if watch_state_changed:
+                self._recompute_intake_correlations()
             return
 
         new_correlations = self._shell_service.correlate_intakes_with_updates(
@@ -5143,33 +5607,81 @@ class MainWindow(QMainWindow):
         self._guided_update_unique_ids = tuple()
         was_sorting = self._mods_table.isSortingEnabled()
         self._mods_table.setSortingEnabled(False)
-        self._mods_table.setRowCount(len(inventory.mods))
+        row_entries = tuple((mod, True) for mod in inventory.mods) + tuple(
+            (mod, False) for mod in inventory.disabled_mods
+        )
+        current_target = self._current_scan_target()
+        real_root = (
+            self._configured_scan_path_for_target(SCAN_TARGET_CONFIGURED_REAL_MODS)
+            if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS
+            else None
+        )
+        sandbox_root = (
+            self._configured_scan_path_for_target(SCAN_TARGET_SANDBOX_MODS)
+            if current_target == SCAN_TARGET_SANDBOX_MODS
+            else None
+        )
+        self._suppress_mod_toggle_events = True
+        try:
+            self._mods_table.setRowCount(len(row_entries))
 
-        for row, mod in enumerate(inventory.mods):
-            name_item = QTableWidgetItem(mod.name)
-            name_item.setData(_ROLE_REMOTE_LINK, "")
-            name_item.setData(_ROLE_MOD_UPDATE_STATUS, None)
-            name_item.setData(_ROLE_MOD_FOLDER_PATH, str(mod.folder_path))
-            name_item.setData(_ROLE_UPDATE_ACTIONABLE, False)
-            name_item.setData(
-                _ROLE_UPDATE_BLOCK_REASON,
-                "Run Check updates to evaluate update actionability.",
-            )
-            self._mods_table.setItem(row, 0, name_item)
-            self._mods_table.setItem(row, 1, QTableWidgetItem(mod.unique_id))
-            self._mods_table.setItem(row, 2, QTableWidgetItem(mod.version))
-            self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
-            status_item = QTableWidgetItem("not_checked")
-            status_item.setToolTip("Run Check updates to evaluate update actionability.")
-            self._mods_table.setItem(row, 4, status_item)
-            self._mods_table.setItem(row, 5, QTableWidgetItem(mod.folder_path.name))
-            _set_table_row_visual(
-                self._mods_table,
-                row,
-                foreground="#ece6de",
-                bold_columns=(0,),
-                column_foregrounds={4: "#a79b8f"},
-            )
+            for row, (mod, is_enabled) in enumerate(row_entries):
+                name_item = QTableWidgetItem(mod.name)
+                name_item.setData(_ROLE_REMOTE_LINK, "")
+                name_item.setData(_ROLE_MOD_UPDATE_STATUS, None)
+                name_item.setData(_ROLE_MOD_FOLDER_PATH, str(mod.folder_path))
+                name_item.setData(_ROLE_UPDATE_ACTIONABLE, False)
+                name_item.setData(_ROLE_MOD_IS_ENABLED, is_enabled)
+                toggle_allowed, toggle_reason = self._profile_toggle_state_for_mod_row(
+                    mod=mod,
+                    is_enabled=is_enabled,
+                    current_target=current_target,
+                    real_root=real_root,
+                    sandbox_root=sandbox_root,
+                )
+                name_item.setData(_ROLE_MOD_TOGGLEABLE, toggle_allowed)
+                name_item.setData(_ROLE_MOD_TOGGLE_REASON, toggle_reason)
+                if current_target in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS} and toggle_allowed:
+                    name_item.setFlags(name_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    name_item.setCheckState(
+                        Qt.CheckState.Checked if is_enabled else Qt.CheckState.Unchecked
+                    )
+                    name_item.setToolTip(toggle_reason)
+                elif current_target in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS} and toggle_reason:
+                    name_item.setToolTip(toggle_reason)
+
+                blocked_reason = (
+                    "Run Check updates to evaluate update actionability."
+                    if is_enabled
+                    else "This mod is disabled. Re-enable it before update and source actions."
+                )
+                name_item.setData(_ROLE_UPDATE_BLOCK_REASON, blocked_reason)
+                self._mods_table.setItem(row, 0, name_item)
+                self._mods_table.setItem(row, 1, QTableWidgetItem(mod.unique_id))
+                self._mods_table.setItem(row, 2, QTableWidgetItem(mod.version))
+                self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
+                status_item = QTableWidgetItem("not_checked" if is_enabled else "disabled")
+                status_item.setToolTip(blocked_reason)
+                self._mods_table.setItem(row, 4, status_item)
+                self._mods_table.setItem(row, 5, QTableWidgetItem(mod.folder_path.name))
+                if is_enabled:
+                    _set_table_row_visual(
+                        self._mods_table,
+                        row,
+                        foreground="#ece6de",
+                        bold_columns=(0,),
+                        column_foregrounds={4: "#a79b8f"},
+                    )
+                else:
+                    _set_table_row_visual(
+                        self._mods_table,
+                        row,
+                        foreground="#b8ada0",
+                        bold_columns=(0,),
+                        column_foregrounds={4: "#d1ad63"},
+                    )
+        finally:
+            self._suppress_mod_toggle_events = False
 
         self._mods_table.setSortingEnabled(was_sorting)
         self._apply_mods_filter()
@@ -5229,7 +5741,35 @@ class MainWindow(QMainWindow):
             self._scan_results_by_target.pop(target, None)
             return None
 
-        if str(cached_result.scan_path.expanduser()) != str(configured_path):
+        allowed_paths = {str(configured_path.expanduser())}
+        if target == SCAN_TARGET_CONFIGURED_REAL_MODS:
+            selected_profile = self._selected_real_profile()
+            if (
+                selected_profile is not None
+                and not selected_profile.is_default
+                and selected_profile.storage_dir_name
+            ):
+                profile_root = self._shell_service._real_mod_profile_mods_path(
+                    selected_profile,
+                    real_mods_path=configured_path,
+                )
+                allowed_paths.add(str(profile_root.expanduser()))
+        elif target == SCAN_TARGET_SANDBOX_MODS:
+            selected_profile = self._selected_sandbox_profile()
+            if (
+                selected_profile is not None
+                and not selected_profile.is_default
+                and selected_profile.storage_dir_name
+            ):
+                profile_root = self._shell_service._sandbox_mod_profile_mods_path(
+                    selected_profile,
+                    sandbox_mods_path=configured_path,
+                )
+                allowed_paths.add(
+                    str(profile_root.expanduser())
+                )
+
+        if str(cached_result.scan_path.expanduser()) not in allowed_paths:
             self._scan_results_by_target.pop(target, None)
             return None
         return cached_result
@@ -5259,6 +5799,529 @@ class MainWindow(QMainWindow):
         if self._scan_results_by_target:
             self._clear_visible_inventory_for_unscanned_target()
 
+    def _reload_real_mod_profiles(self, *, selected_profile_id: str | None = None) -> None:
+        try:
+            catalog = self._shell_service.load_real_mod_profiles()
+        except AppShellError as exc:
+            self._real_mod_profiles = tuple()
+            self._real_profile_combo.blockSignals(True)
+            try:
+                self._real_profile_combo.clear()
+                self._real_profile_combo.addItem("<profiles unavailable>", "")
+                self._real_profile_combo.setEnabled(False)
+                self._real_profile_combo.setToolTip(str(exc))
+            finally:
+                self._real_profile_combo.blockSignals(False)
+            self._create_real_profile_button.setToolTip(str(exc))
+            self._delete_real_profile_button.setToolTip(str(exc))
+            return
+
+        self._real_mod_profiles = catalog.profiles
+        selected_before = selected_profile_id or catalog.active_profile_id or self._selected_real_profile_id()
+        self._real_profile_combo.blockSignals(True)
+        try:
+            self._real_profile_combo.clear()
+            if not self._real_mod_profiles:
+                self._real_profile_combo.addItem("<no saved profiles>", "")
+                self._real_profile_combo.setEnabled(False)
+                self._real_profile_combo.setToolTip(
+                    "Real profiles are unavailable until the configured real Mods library is configured."
+                )
+            else:
+                self._real_profile_combo.setEnabled(True)
+                self._real_profile_combo.setToolTip(
+                    "Select the active real Mods profile. Default mirrors the canonical real Mods library."
+                )
+                for profile in self._real_mod_profiles:
+                    self._real_profile_combo.addItem(profile.name, profile.profile_id)
+                selected_index = (
+                    self._real_profile_combo.findData(selected_before)
+                    if selected_before
+                    else -1
+                )
+                self._real_profile_combo.setCurrentIndex(0 if selected_index < 0 else selected_index)
+        finally:
+            self._real_profile_combo.blockSignals(False)
+
+        self._refresh_inventory_real_profile_action_state()
+
+    def _reload_sandbox_mod_profiles(self, *, selected_profile_id: str | None = None) -> None:
+        try:
+            catalog = self._shell_service.load_sandbox_mod_profiles()
+        except AppShellError as exc:
+            self._sandbox_mod_profiles = tuple()
+            self._sandbox_profile_combo.blockSignals(True)
+            try:
+                self._sandbox_profile_combo.clear()
+                self._sandbox_profile_combo.addItem("<profiles unavailable>", "")
+                self._sandbox_profile_combo.setEnabled(False)
+                self._sandbox_profile_combo.setToolTip(str(exc))
+            finally:
+                self._sandbox_profile_combo.blockSignals(False)
+            self._create_sandbox_profile_button.setToolTip(str(exc))
+            self._delete_sandbox_profile_button.setToolTip(str(exc))
+            return
+
+        self._sandbox_mod_profiles = catalog.profiles
+        selected_before = selected_profile_id or catalog.active_profile_id or self._selected_sandbox_profile_id()
+        self._sandbox_profile_combo.blockSignals(True)
+        try:
+            self._sandbox_profile_combo.clear()
+            if not self._sandbox_mod_profiles:
+                self._sandbox_profile_combo.addItem("<no saved profiles>", "")
+                self._sandbox_profile_combo.setEnabled(False)
+                self._sandbox_profile_combo.setToolTip(
+                    "Sandbox profiles are unavailable until the canonical sandbox library is configured."
+                )
+            else:
+                self._sandbox_profile_combo.setEnabled(True)
+                self._sandbox_profile_combo.setToolTip(
+                    "Select the active sandbox profile. Default mirrors the canonical sandbox library."
+                )
+                for profile in self._sandbox_mod_profiles:
+                    self._sandbox_profile_combo.addItem(profile.name, profile.profile_id)
+                selected_index = (
+                    self._sandbox_profile_combo.findData(selected_before)
+                    if selected_before
+                    else -1
+                )
+                self._sandbox_profile_combo.setCurrentIndex(0 if selected_index < 0 else selected_index)
+        finally:
+            self._sandbox_profile_combo.blockSignals(False)
+
+        self._refresh_inventory_sandbox_profile_action_state()
+
+    def _selected_real_profile_id(self) -> str | None:
+        value = self._real_profile_combo.currentData()
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
+
+    def _selected_real_profile(self) -> SandboxModProfile | None:
+        selected_profile_id = self._selected_real_profile_id()
+        if selected_profile_id is None:
+            return None
+        return next(
+            (
+                profile
+                for profile in self._real_mod_profiles
+                if profile.profile_id == selected_profile_id
+            ),
+            None,
+        )
+
+    def _selected_sandbox_profile_id(self) -> str | None:
+        value = self._sandbox_profile_combo.currentData()
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
+
+    def _selected_sandbox_profile(self) -> SandboxModProfile | None:
+        selected_profile_id = self._selected_sandbox_profile_id()
+        if selected_profile_id is None:
+            return None
+        return next(
+            (
+                profile
+                for profile in self._sandbox_mod_profiles
+                if profile.profile_id == selected_profile_id
+            ),
+            None,
+        )
+
+    def _active_custom_real_profile(self) -> SandboxModProfile | None:
+        if self._current_scan_target() != SCAN_TARGET_CONFIGURED_REAL_MODS:
+            return None
+        profile = self._selected_real_profile()
+        if profile is None or profile.is_default:
+            return None
+        return profile
+
+    def _refresh_inventory_real_profile_action_state(self, *_: object) -> None:
+        real_target_selected = self._current_scan_target() == SCAN_TARGET_CONFIGURED_REAL_MODS
+        self._inventory_real_profile_actions_widget.setVisible(real_target_selected)
+        if not real_target_selected:
+            self._create_real_profile_button.setEnabled(False)
+            self._create_real_profile_button.setToolTip(
+                "Real Mods profiles are available while scanning the configured real Mods path."
+            )
+            self._delete_real_profile_button.setEnabled(False)
+            self._delete_real_profile_button.setToolTip(
+                "Real Mods profiles are available while scanning the configured real Mods path."
+            )
+            return
+
+        if self._active_operation_name is not None:
+            self._create_real_profile_button.setEnabled(False)
+            self._create_real_profile_button.setToolTip(
+                "Wait for the active operation to finish before creating real profiles."
+            )
+            self._delete_real_profile_button.setEnabled(False)
+            self._delete_real_profile_button.setToolTip(
+                "Wait for the active operation to finish before deleting real profiles."
+            )
+            return
+
+        real_path_text = self._mods_path_input.text().strip()
+        create_enabled = bool(real_path_text)
+        self._create_real_profile_button.setEnabled(create_enabled)
+        if create_enabled:
+            self._create_real_profile_button.setToolTip(
+                "Create a new real profile from Default using the canonical real Mods library."
+            )
+        else:
+            self._create_real_profile_button.setToolTip(
+                "Configure the real Mods folder before creating real profiles."
+            )
+
+        selected_profile = self._selected_real_profile()
+        delete_enabled = selected_profile is not None and not selected_profile.is_default
+        self._delete_real_profile_button.setEnabled(delete_enabled)
+        if delete_enabled:
+            self._delete_real_profile_button.setToolTip(
+                f"Delete real profile: {selected_profile.name}"
+            )
+        elif selected_profile is not None and selected_profile.is_default:
+            self._delete_real_profile_button.setToolTip("Default profile cannot be deleted.")
+        else:
+            self._delete_real_profile_button.setToolTip("Select a custom real profile first.")
+
+    def _refresh_inventory_sandbox_profile_action_state(self, *_: object) -> None:
+        sandbox_target_selected = self._current_scan_target() == SCAN_TARGET_SANDBOX_MODS
+        self._inventory_sandbox_profile_actions_widget.setVisible(sandbox_target_selected)
+        if not sandbox_target_selected:
+            self._create_sandbox_profile_button.setEnabled(False)
+            self._create_sandbox_profile_button.setToolTip(
+                "Sandbox profiles are available while scanning Sandbox Mods."
+            )
+            self._delete_sandbox_profile_button.setEnabled(False)
+            self._delete_sandbox_profile_button.setToolTip(
+                "Sandbox profiles are available while scanning Sandbox Mods."
+            )
+            return
+
+        if self._active_operation_name is not None:
+            self._create_sandbox_profile_button.setEnabled(False)
+            self._create_sandbox_profile_button.setToolTip(
+                "Wait for the active operation to finish before creating sandbox profiles."
+            )
+            self._delete_sandbox_profile_button.setEnabled(False)
+            self._delete_sandbox_profile_button.setToolTip(
+                "Wait for the active operation to finish before deleting sandbox profiles."
+            )
+            return
+
+        sandbox_path_text = self._sandbox_mods_path_input.text().strip()
+        create_enabled = bool(sandbox_path_text)
+        self._create_sandbox_profile_button.setEnabled(create_enabled)
+        if create_enabled:
+            self._create_sandbox_profile_button.setToolTip(
+                "Create a new sandbox profile from Default using the canonical sandbox library."
+            )
+        elif not sandbox_path_text:
+            self._create_sandbox_profile_button.setToolTip(
+                "Configure the Sandbox Mods folder before creating sandbox profiles."
+            )
+
+        selected_profile = self._selected_sandbox_profile()
+        delete_enabled = selected_profile is not None and not selected_profile.is_default
+        self._delete_sandbox_profile_button.setEnabled(delete_enabled)
+        if delete_enabled:
+            self._delete_sandbox_profile_button.setToolTip(
+                f"Delete sandbox profile: {selected_profile.name}"
+            )
+        elif selected_profile is not None and selected_profile.is_default:
+            self._delete_sandbox_profile_button.setToolTip(
+                "Default profile cannot be deleted."
+            )
+        else:
+            self._delete_sandbox_profile_button.setToolTip(
+                "Select a custom sandbox profile first."
+            )
+
+    def _on_create_real_profile(self) -> None:
+        if self._current_scan_target() != SCAN_TARGET_CONFIGURED_REAL_MODS:
+            self._set_status("Real Mods profiles are available while scanning the configured real Mods path.")
+            return
+
+        profile_name, accepted = QInputDialog.getText(
+            self,
+            "Create real Mods profile",
+            "Profile name:",
+            text="",
+        )
+        if not accepted:
+            self._set_status("Real profile creation cancelled.")
+            return
+        if not profile_name.strip():
+            self._set_status("Real profile name is required.")
+            return
+
+        requested_name = profile_name.strip()
+        self._run_background_operation(
+            operation_name="Real profile create",
+            running_label="Real profile create",
+            started_status=f"Creating real profile: {requested_name}",
+            error_title="Real profile create failed",
+            task_fn=lambda _profile_name=requested_name: self._shell_service.create_real_mod_profile(
+                name=_profile_name,
+                configured_mods_path_text=self._mods_path_input.text(),
+                existing_config=self._config,
+            ),
+            on_success=self._on_create_real_profile_completed,
+            busy_button=self._create_real_profile_button,
+            busy_button_text="Creating...",
+        )
+
+    def _on_create_real_profile_completed(
+        self,
+        result: RealModProfileCreateResult,
+    ) -> None:
+        self._reload_real_mod_profiles(selected_profile_id=result.profile.profile_id)
+        self._cache_scan_result(result.scan_result)
+        self._show_scan_result(result.scan_result)
+        self._set_current_scan_target(result.scan_result.target_kind)
+        self._set_inventory_output_text(_build_real_profile_create_text(result))
+        self._set_status(
+            f"Real profile created: {result.profile.name} "
+            f"({result.linked_mod_count} canonical folder link(s) added)."
+        )
+
+    def _on_selected_real_profile_changed(self, *_: object) -> None:
+        self._refresh_inventory_real_profile_action_state()
+        if self._current_scan_target() != SCAN_TARGET_CONFIGURED_REAL_MODS:
+            return
+
+        selected_profile = self._selected_real_profile()
+        if selected_profile is None:
+            return
+
+        self._run_background_operation(
+            operation_name="Real profile select",
+            running_label="Real profile select",
+            started_status=f"Switching to real profile: {selected_profile.name}",
+            error_title="Real profile select failed",
+            task_fn=lambda _profile_id=selected_profile.profile_id: self._shell_service.select_real_mod_profile(
+                profile_id=_profile_id,
+                configured_mods_path_text=self._mods_path_input.text(),
+                existing_config=self._config,
+            ),
+            on_success=self._on_selected_real_profile_changed_completed,
+            busy_button=self._real_profile_combo,
+            busy_button_text="Switching...",
+        )
+
+    def _on_selected_real_profile_changed_completed(
+        self,
+        result: RealModProfileSelectResult,
+    ) -> None:
+        self._cache_scan_result(result.scan_result)
+        self._show_scan_result(result.scan_result)
+        self._set_current_scan_target(result.scan_result.target_kind)
+        self._reload_real_mod_profiles(selected_profile_id=result.profile.profile_id)
+        self._set_inventory_output_text(_build_real_profile_select_text(result))
+        self._set_status(f"Active real profile: {result.profile.name}")
+
+    def _on_delete_real_profile(self) -> None:
+        if self._current_scan_target() != SCAN_TARGET_CONFIGURED_REAL_MODS:
+            self._set_status("Real Mods profiles are available while scanning the configured real Mods path.")
+            return
+
+        selected_profile = self._selected_real_profile()
+        if selected_profile is None:
+            self._set_status("Select a real profile first.")
+            return
+
+        confirm = QMessageBox.question(
+            self,
+            "Delete real profile",
+            "\n".join(
+                (
+                    f"Delete real profile '{selected_profile.name}'?",
+                    "",
+                    "This removes the profile root and its membership links.",
+                    "The canonical real Mods library is not deleted.",
+                )
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            self._set_status("Real profile delete cancelled.")
+            return
+
+        self._run_background_operation(
+            operation_name="Real profile delete",
+            running_label="Real profile delete",
+            started_status=f"Deleting real profile: {selected_profile.name}",
+            error_title="Real profile delete failed",
+            task_fn=lambda _profile_id=selected_profile.profile_id: self._shell_service.delete_real_mod_profile(
+                profile_id=_profile_id,
+                configured_mods_path_text=self._mods_path_input.text(),
+                existing_config=self._config,
+            ),
+            on_success=self._on_delete_real_profile_completed,
+            busy_button=self._delete_real_profile_button,
+            busy_button_text="Deleting...",
+        )
+
+    def _on_delete_real_profile_completed(
+        self,
+        result: RealModProfileDeleteResult,
+    ) -> None:
+        fallback_profile_id = result.profiles.active_profile_id
+        self._reload_real_mod_profiles(selected_profile_id=fallback_profile_id)
+        if result.scan_result is not None:
+            self._cache_scan_result(result.scan_result)
+            self._show_scan_result(result.scan_result)
+            self._set_current_scan_target(result.scan_result.target_kind)
+        self._set_inventory_output_text(_build_real_profile_delete_text(result))
+        self._set_status(f"Real profile deleted: {result.profile.name}")
+
+    def _on_create_sandbox_profile(self) -> None:
+        if self._current_scan_target() != SCAN_TARGET_SANDBOX_MODS:
+            self._set_status("Sandbox profiles are available while scanning Sandbox Mods.")
+            return
+
+        profile_name, accepted = QInputDialog.getText(
+            self,
+            "Create sandbox profile",
+            "Profile name:",
+            text="",
+        )
+        if not accepted:
+            self._set_status("Sandbox profile creation cancelled.")
+            return
+        if not profile_name.strip():
+            self._set_status("Sandbox profile name is required.")
+            return
+
+        requested_name = profile_name.strip()
+        self._run_background_operation(
+            operation_name="Sandbox profile create",
+            running_label="Sandbox profile create",
+            started_status=f"Creating sandbox profile: {requested_name}",
+            error_title="Sandbox profile create failed",
+            task_fn=lambda _profile_name=requested_name: self._shell_service.create_sandbox_mod_profile(
+                name=_profile_name,
+                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
+                existing_config=self._config,
+            ),
+            on_success=self._on_create_sandbox_profile_completed,
+            busy_button=self._create_sandbox_profile_button,
+            busy_button_text="Creating...",
+        )
+
+    def _on_create_sandbox_profile_completed(
+        self,
+        result: SandboxModProfileCreateResult,
+    ) -> None:
+        self._reload_sandbox_mod_profiles(selected_profile_id=result.profile.profile_id)
+        self._cache_scan_result(result.scan_result)
+        self._show_scan_result(result.scan_result)
+        self._set_current_scan_target(result.scan_result.target_kind)
+        self._set_inventory_output_text(_build_sandbox_profile_create_text(result))
+        self._set_status(
+            f"Sandbox profile created: {result.profile.name} "
+            f"({result.linked_mod_count} canonical folder link(s) added)."
+        )
+
+    def _on_selected_sandbox_profile_changed(self, *_: object) -> None:
+        self._refresh_inventory_sandbox_profile_action_state()
+        if self._current_scan_target() != SCAN_TARGET_SANDBOX_MODS:
+            return
+
+        selected_profile = self._selected_sandbox_profile()
+        if selected_profile is None:
+            return
+
+        self._run_background_operation(
+            operation_name="Sandbox profile select",
+            running_label="Sandbox profile select",
+            started_status=f"Switching to sandbox profile: {selected_profile.name}",
+            error_title="Sandbox profile select failed",
+            task_fn=lambda _profile_id=selected_profile.profile_id: self._shell_service.select_sandbox_mod_profile(
+                profile_id=_profile_id,
+                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
+                existing_config=self._config,
+            ),
+            on_success=self._on_selected_sandbox_profile_changed_completed,
+            busy_button=self._sandbox_profile_combo,
+            busy_button_text="Switching...",
+        )
+
+    def _on_selected_sandbox_profile_changed_completed(
+        self,
+        result: SandboxModProfileSelectResult,
+    ) -> None:
+        self._cache_scan_result(result.scan_result)
+        self._show_scan_result(result.scan_result)
+        self._set_current_scan_target(result.scan_result.target_kind)
+        self._reload_sandbox_mod_profiles(selected_profile_id=result.profile.profile_id)
+        self._set_inventory_output_text(_build_sandbox_profile_select_text(result))
+        self._set_status(
+            f"Active sandbox profile: {result.profile.name}"
+        )
+
+    def _on_delete_sandbox_profile(self) -> None:
+        if self._current_scan_target() != SCAN_TARGET_SANDBOX_MODS:
+            self._set_status("Sandbox profiles are available while scanning Sandbox Mods.")
+            return
+
+        selected_profile = self._selected_sandbox_profile()
+        if selected_profile is None:
+            self._set_status("Select a sandbox profile first.")
+            return
+
+        confirm = QMessageBox.question(
+            self,
+            "Delete sandbox profile",
+            "\n".join(
+                (
+                    f"Delete sandbox profile '{selected_profile.name}'?",
+                    "",
+                    "This removes the profile root and its membership links.",
+                    "The canonical sandbox library is not deleted.",
+                )
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            self._set_status("Sandbox profile delete cancelled.")
+            return
+
+        self._run_background_operation(
+            operation_name="Sandbox profile delete",
+            running_label="Sandbox profile delete",
+            started_status=f"Deleting sandbox profile: {selected_profile.name}",
+            error_title="Sandbox profile delete failed",
+            task_fn=lambda _profile_id=selected_profile.profile_id: self._shell_service.delete_sandbox_mod_profile(
+                profile_id=_profile_id,
+                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
+                existing_config=self._config,
+            ),
+            on_success=self._on_delete_sandbox_profile_completed,
+            busy_button=self._delete_sandbox_profile_button,
+            busy_button_text="Deleting...",
+        )
+
+    def _on_delete_sandbox_profile_completed(
+        self,
+        result: SandboxModProfileDeleteResult,
+    ) -> None:
+        fallback_profile_id = result.profiles.active_profile_id
+        self._reload_sandbox_mod_profiles(selected_profile_id=fallback_profile_id)
+        if result.scan_result is not None:
+            self._cache_scan_result(result.scan_result)
+            self._show_scan_result(result.scan_result)
+            self._set_current_scan_target(result.scan_result.target_kind)
+        self._set_inventory_output_text(_build_sandbox_profile_delete_text(result))
+        self._set_status(f"Sandbox profile deleted: {result.profile.name}")
+
     def _apply_update_report(self, report: ModUpdateReport) -> None:
         if self._current_inventory is None:
             return
@@ -5269,6 +6332,21 @@ class MainWindow(QMainWindow):
         for row in range(self._mods_table.rowCount()):
             name_item = self._mods_table.item(row, 0)
             if name_item is None:
+                continue
+            if name_item.data(_ROLE_MOD_IS_ENABLED) is not True:
+                self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
+                status_item = QTableWidgetItem("disabled")
+                status_item.setToolTip(
+                    "This mod is disabled. Re-enable it before update and source actions."
+                )
+                self._mods_table.setItem(row, 4, status_item)
+                name_item.setData(_ROLE_MOD_UPDATE_STATUS, None)
+                name_item.setData(_ROLE_REMOTE_LINK, "")
+                name_item.setData(_ROLE_UPDATE_ACTIONABLE, False)
+                name_item.setData(
+                    _ROLE_UPDATE_BLOCK_REASON,
+                    "This mod is disabled. Re-enable it before update and source actions.",
+                )
                 continue
             folder_path_text = name_item.data(_ROLE_MOD_FOLDER_PATH)
             if not isinstance(folder_path_text, str):
@@ -5613,6 +6691,8 @@ class MainWindow(QMainWindow):
     def _refresh_workflow_surface_states(self) -> None:
         self._refresh_setup_readiness_state()
         self._refresh_mods_workspace_state()
+        self._refresh_inventory_real_profile_action_state()
+        self._refresh_inventory_sandbox_profile_action_state()
         self._refresh_discovery_workspace_state()
         self._refresh_packages_workspace_state()
         self._refresh_review_workspace_state()
@@ -5705,6 +6785,10 @@ class MainWindow(QMainWindow):
         self._refresh_smapi_troubleshooting_surface()
         visible_count = _visible_table_row_count(self._mods_table)
         total_count = self._mods_table.rowCount()
+        active_count = len(self._current_inventory.mods) if self._current_inventory is not None else 0
+        disabled_count = (
+            len(self._current_inventory.disabled_mods) if self._current_inventory is not None else 0
+        )
         active_operation = self._active_operation_name
         if active_operation == "Scan":
             _set_feedback_label_state(
@@ -5756,13 +6840,13 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._mods_inventory_state_label,
                 "ready",
-                f"{visible_count} installed mod(s) ready. Run Check for updates to unlock remote guidance and source-page actions.",
+                f"{visible_count} mod row(s) ready ({active_count} active, {disabled_count} disabled). Run Check for updates to unlock remote guidance and source-page actions for active mods.",
             )
             return
         _set_feedback_label_state(
             self._mods_inventory_state_label,
             "ready",
-            f"{visible_count} installed mod(s) visible. Select a row to inspect guidance, sync to sandbox, or open its source page when actionable.",
+            f"{visible_count} mod row(s) visible ({active_count} active, {disabled_count} disabled). Select an active row to inspect guidance, sync to sandbox, or open its source page when actionable.",
         )
 
     def _refresh_discovery_workspace_state(self) -> None:
@@ -5815,6 +6899,13 @@ class MainWindow(QMainWindow):
         has_inspection = self._package_inspection_batch_result is not None
         watch_active = self._watch_timer.isActive()
         target_label = self._packages_comparison_target_label_text()
+        if self._active_operation_name == "Downloads watcher":
+            _set_feedback_label_state(
+                self._packages_workspace_state_label,
+                "active",
+                "Starting intake watch. The watcher will populate detected packages when initialization completes.",
+            )
+            return
         if watch_active and not has_detected_intakes and not has_inspection:
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
@@ -5826,7 +6917,7 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "ready",
-                "Inspection is ready. Use Open Review to carry the current package into Review, or choose a different detected package below first.",
+                "Inspection is ready. Use Open Install to carry the checked package queue into Install, or choose a different detected package below first.",
             )
             return
         if has_detected_intakes:
@@ -5838,45 +6929,61 @@ class MainWindow(QMainWindow):
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "ready",
-                "Detected packages are ready. Choose a review target, then use Open Review. "
+                "Detected packages are ready. Check one or more packages, choose an install target, then use Open Install. "
                 + target_note
-                + " Review as update only appears when the package is newer than the selected target.",
+                + " Open as update only appears when the checked package is newer than the selected target.",
             )
             return
         if selected_count > 0:
             _set_feedback_label_state(
                 self._packages_workspace_state_label,
                 "muted",
-                "Zip packages are selected. Inspect them to confirm what is safe to review before staging anything for install.",
+                "Watched packages are queued. Inspect the queue, then open Install to stage the batch you want to write.",
             )
             return
         _set_feedback_label_state(
             self._packages_workspace_state_label,
             "empty",
-            "After Setup, choose zip files to inspect a package, or start intake watch if you want automatic intake.",
+            "After Setup, watch downloads, then queue packages here and open Install to inspect and stage the batch.",
         )
 
     def _refresh_review_workspace_state(self) -> None:
         self._refresh_review_action_hierarchy()
+        if self._active_operation_name == "Install planning":
+            _set_feedback_label_state(
+                self._plan_install_state_label,
+                "active",
+                "Planning the selected package batch. The read-only plan will appear when the background check completes.",
+            )
+            return
+        if self._active_operation_name == "Install execution":
+            _set_feedback_label_state(
+                self._plan_install_state_label,
+                "active",
+                "Applying the selected install batch. Results will update when the background write completes.",
+            )
+            return
         if self._pending_install_plan is not None:
             _set_feedback_label_state(
                 self._plan_install_state_label,
                 "ready",
-                "Install review is ready. Check destination, replace behavior, and write summary, then Apply install when the plan looks right.",
+                "Install plan is ready. Check destination, replace behavior, and plan summary, then Apply install when the plan looks right.",
             )
             return
-        package_path = self._zip_path_input.text().strip()
-        if package_path:
+        has_staged_package = bool(self._selected_zip_package_paths) or bool(
+            self._zip_path_input.text().strip()
+        )
+        if has_staged_package:
             _set_feedback_label_state(
                 self._plan_install_state_label,
                 "muted",
-                "A package is staged for review. Review install is the next step; it stays read-only until the write summary is ready.",
+                "A package batch is staged for install. Plan install is the next step; it stays read-only until the plan summary is ready.",
             )
             return
         _set_feedback_label_state(
             self._plan_install_state_label,
             "empty",
-            "Start in Packages: inspect or select a package, then use Open Review.",
+            "Start in Packages: queue packages there, then use Open Install.",
         )
 
     def _refresh_compare_workspace_state(self) -> None:
@@ -5976,6 +7083,8 @@ class MainWindow(QMainWindow):
         on_success: Callable[[object], None],
         on_failure: Callable[[str], None] | None = None,
         show_error_dialog: bool = True,
+        busy_button: QPushButton | None = None,
+        busy_button_text: str | None = None,
     ) -> None:
         if self._active_operation_name is not None:
             self._set_status(
@@ -5986,6 +7095,12 @@ class MainWindow(QMainWindow):
         task = BackgroundTask(task_fn)
         self._active_background_task = task
         self._active_operation_name = operation_name
+        self._active_operation_button = busy_button
+        self._active_operation_button_text = (
+            busy_button.text() if busy_button is not None else None
+        )
+        if busy_button is not None:
+            busy_button.setText(busy_button_text or f"{running_label}...")
         self._operation_state_label.setText(f"Running: {running_label}")
         self._set_background_actions_enabled(False)
         self._refresh_workflow_surface_states()
@@ -6051,6 +7166,11 @@ class MainWindow(QMainWindow):
         if self._active_operation_name != operation_name:
             return
 
+        if self._active_operation_button is not None:
+            if self._active_operation_button_text is not None:
+                self._active_operation_button.setText(self._active_operation_button_text)
+            self._active_operation_button = None
+            self._active_operation_button_text = None
         self._active_operation_name = None
         self._active_background_task = None
         self._set_background_actions_enabled(True)
@@ -6070,9 +7190,16 @@ class MainWindow(QMainWindow):
         for button in self._background_action_buttons:
             button.setEnabled(enabled)
         self._discovery_query_input.setEnabled(enabled)
+        self._set_packages_watch_controls_enabled(enabled)
         self._refresh_sandbox_dev_launch_state()
+        self._refresh_inventory_real_profile_action_state()
         self._refresh_inventory_sandbox_sync_action_state()
+        self._refresh_inventory_sandbox_profile_action_state()
         self._refresh_restore_import_execution_state()
+
+    def _set_packages_watch_controls_enabled(self, enabled: bool) -> None:
+        for control in self._packages_watch_controls:
+            control.setEnabled(enabled)
 
     def _set_details_text(self, text: str) -> None:
         self._findings_box.setPlainText(text)
@@ -6222,7 +7349,7 @@ class MainWindow(QMainWindow):
         return self._mods_path_input.text() or str(self._shell_service.state_file.parent)
 
     def _default_backup_bundle_zip_path(self) -> str:
-        return str(Path(self._backup_bundle_dialog_start_dir()) / "sdvmm-backup.zip")
+        return str(Path(self._backup_bundle_dialog_start_dir()) / "Cinderleaf-backup.zip")
 
     def _prompt_for_backup_export_target(self) -> tuple[str, str] | None:
         bundle_storage_kind = self._prompt_for_backup_bundle_storage_kind(
@@ -6457,6 +7584,7 @@ class MainWindow(QMainWindow):
     def _set_package_inspection_result_text(self, text: str | None) -> None:
         has_text = bool(text and text.strip())
         self._package_inspection_result_box.setPlainText(text or "")
+        self._package_inspection_group.setVisible(has_text)
         self._package_inspection_result_group.setVisible(has_text)
         self._refresh_stage_package_action_state()
         self._refresh_workflow_surface_states()
@@ -6470,6 +7598,116 @@ class MainWindow(QMainWindow):
         self._package_inspection_selector.setVisible(False)
         self._package_inspection_selector_label.setVisible(False)
         self._set_package_inspection_result_text(None)
+
+    def _refresh_package_queue(self) -> None:
+        selected_paths = {
+            str(path.resolve())
+            for path in self._selected_zip_package_paths
+        }
+        intake_filter_text = self._intake_filter_input.text()
+        queue_filter_text = self._package_queue_filter_input.text()
+
+        self._package_queue_list.blockSignals(True)
+        self._package_queue_list.clear()
+        if not self._detected_intakes:
+            empty_item = QListWidgetItem("No watched packages detected yet.")
+            empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self._package_queue_list.addItem(empty_item)
+            self._package_queue_list.blockSignals(False)
+            return
+
+        visible_count = 0
+        for index, intake in enumerate(self._detected_intakes):
+            correlation = (
+                self._intake_correlations[index]
+                if index < len(self._intake_correlations)
+                else None
+            )
+            if not row_matches_filter(
+                (
+                    intake.package_path.name,
+                    intake.classification,
+                    " ".join(mod.name for mod in intake.mods),
+                    " ".join(mod.unique_id for mod in intake.mods),
+                    " ".join(mod.version for mod in intake.mods),
+                ),
+                intake_filter_text,
+            ):
+                continue
+            queue_status_values = (
+                _packages_review_target_label(intake, correlation),
+                _packages_comparison_badge_text(correlation) if correlation is not None else "",
+                correlation.comparison_state.replace("_", " ") if correlation is not None else "",
+                "installable" if correlation is not None and correlation.actionable_as_update else "",
+                "actionable update" if correlation is not None and correlation.actionable_as_update else "",
+            )
+            if not row_matches_filter(
+                (
+                    intake.package_path.name,
+                    intake.classification,
+                    " ".join(mod.name for mod in intake.mods),
+                    " ".join(mod.unique_id for mod in intake.mods),
+                    " ".join(mod.version for mod in intake.mods),
+                    *queue_status_values,
+                ),
+                queue_filter_text,
+            ):
+                continue
+
+            item = QListWidgetItem(_packages_review_target_label(intake, correlation))
+            item.setData(int(Qt.ItemDataRole.UserRole), index)
+            item.setFlags(
+                item.flags()
+                | Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+            )
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if str(intake.package_path.resolve()) in selected_paths
+                else Qt.CheckState.Unchecked
+            )
+            self._package_queue_list.addItem(item)
+            visible_count += 1
+
+        if visible_count == 0:
+            empty_item = QListWidgetItem("No detected packages match the current filter.")
+            empty_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self._package_queue_list.addItem(empty_item)
+
+        self._package_queue_list.blockSignals(False)
+
+    def _selected_package_queue_paths(self) -> tuple[Path, ...]:
+        paths: list[Path] = []
+        for row in range(self._package_queue_list.count()):
+            item = self._package_queue_list.item(row)
+            if item is None:
+                continue
+            if item.checkState() != Qt.CheckState.Checked:
+                continue
+            data = item.data(int(Qt.ItemDataRole.UserRole))
+            if not isinstance(data, int):
+                continue
+            if data < 0 or data >= len(self._detected_intakes):
+                continue
+            package_path = self._detected_intakes[data].package_path
+            if package_path not in paths:
+                paths.append(package_path)
+        return tuple(paths)
+
+    def _on_package_queue_item_changed(self, item: QListWidgetItem) -> None:
+        if self._package_queue_list.signalsBlocked():
+            return
+        data = item.data(int(Qt.ItemDataRole.UserRole))
+        if not isinstance(data, int) or data < 0 or data >= len(self._detected_intakes):
+            return
+
+        checked_paths = self._selected_package_queue_paths()
+        current_path = self._detected_intakes[data].package_path if item.checkState() == Qt.CheckState.Checked else None
+        self._set_selected_zip_package_paths(
+            checked_paths,
+            current_path=current_path or (checked_paths[0] if checked_paths else None),
+        )
 
     def _show_package_inspection_results(
         self,
@@ -6543,12 +7781,13 @@ class MainWindow(QMainWindow):
         self._zip_path_input.setText(path_text)
         self._preserve_package_selection_on_zip_path_change = False
         self._preserve_package_inspection_on_zip_path_change = False
+        self._refresh_package_queue()
 
     def _refresh_zip_selection_summary(self) -> None:
         selected_count = len(self._selected_zip_package_paths)
         if selected_count == 0:
             self._zip_selection_summary_label.setText(
-                "No zip packages chosen yet. Choose zip files to start review."
+                "No watched packages queued yet. Check packages in the queue to start install planning."
             )
             self._zip_selection_summary_label.setToolTip("")
             self._refresh_workflow_surface_states()
@@ -6558,14 +7797,14 @@ class MainWindow(QMainWindow):
         package_list = "\n".join(package_names)
         if selected_count == 1:
             self._zip_selection_summary_label.setText(
-                f"1 zip package chosen: {package_names[0]}"
+                f"1 watched package queued: {package_names[0]}"
             )
             self._zip_selection_summary_label.setToolTip(package_list)
             self._refresh_workflow_surface_states()
             return
 
         self._zip_selection_summary_label.setText(
-            f"{selected_count} zip packages chosen for inspection."
+            f"{selected_count} watched packages queued for Install."
         )
         self._zip_selection_summary_label.setToolTip(package_list)
         self._refresh_workflow_surface_states()
@@ -6692,12 +7931,46 @@ class MainWindow(QMainWindow):
         self._set_plan_facts_text(_NO_PLAN_FACTS_TEXT)
         self._refresh_install_destination_preview()
         if self._current_install_target() == INSTALL_TARGET_CONFIGURED_REAL_MODS:
-            self._set_status("Install destination set to REAL game Mods path. Review carefully before executing.")
+            self._set_status("Install destination set to REAL game Mods path. Inspect carefully before executing.")
         else:
             self._set_status("Install destination set to sandbox Mods path.")
 
     def _on_plan_selected_intake(self) -> None:
         selected_index = self._selected_intake_index()
+        selected_paths = self._selected_zip_package_paths
+        if selected_paths and (selected_index < 0 or len(selected_paths) > 1):
+            try:
+                batch_result = self._shell_service.inspect_zip_batch_with_inventory_context(
+                    tuple(str(path) for path in selected_paths),
+                    self._current_inventory,
+                    nexus_api_key_text=self._nexus_api_key_input.text(),
+                    existing_config=self._config,
+                )
+            except AppShellError as exc:
+                QMessageBox.critical(self, "Zip inspection failed", str(exc))
+                self._set_intake_output_text(str(exc))
+                self._set_status(str(exc))
+                return
+
+            if not any(entry.inspection is not None for entry in batch_result.entries):
+                message = "Select a detected package or inspect a zip package before opening Install."
+                QMessageBox.warning(self, "No package to install", message)
+                self._set_intake_output_text(message)
+                self._set_status(message)
+                return
+
+            self._invalidate_pending_plan()
+            self._set_current_install_target(self._packages_comparison_target_kind())
+            self._show_package_inspection_results(batch_result)
+            self._set_intake_output_text(_build_package_inspection_batch_text(batch_result))
+            self._context_tabs.setCurrentWidget(self._plan_install_tab)
+            self._refresh_staged_package_preview()
+            self._refresh_stage_package_action_state()
+            self._set_status(
+                f"Opened Install for {len(selected_paths)} watched package(s). Next step: Plan install."
+            )
+            return
+
         if selected_index >= 0:
             try:
                 intake = self._shell_service.select_intake_result(
@@ -6712,7 +7985,7 @@ class MainWindow(QMainWindow):
 
             if not self._shell_service.is_actionable_intake_result(intake):
                 message = (
-                    "Selected package cannot be reviewed for install "
+                    "Selected package cannot be installed "
                     f"({intake.classification})."
                 )
                 QMessageBox.information(self, "Package not actionable", message)
@@ -6723,8 +7996,8 @@ class MainWindow(QMainWindow):
             self._stage_package_for_plan_install(
                 str(intake.package_path),
                 status_message=(
-                    f"Opened Review for {intake.package_path.name}. "
-                    "Next step: Review install."
+                    f"Opened Install for {intake.package_path.name}. "
+                    "Next step: Plan install."
                 ),
             )
             return
@@ -6735,14 +8008,14 @@ class MainWindow(QMainWindow):
             self._stage_package_for_plan_install(
                 str(inspection_entry.package_path),
                 status_message=(
-                    f"Opened Review for {inspection_entry.package_path.name}. "
-                    "Next step: Review install."
+                    f"Opened Install for {inspection_entry.package_path.name}. "
+                    "Next step: Plan install."
                 ),
             )
             return
 
-        message = "Select a detected package or inspect a zip package before opening install review."
-        QMessageBox.warning(self, "No package to review", message)
+        message = "Select a detected package or inspect a zip package before opening Install."
+        QMessageBox.warning(self, "No package to install", message)
         self._set_intake_output_text(message)
         self._set_status(message)
 
@@ -6769,12 +8042,14 @@ class MainWindow(QMainWindow):
             str(intake.package_path),
             apply_update_intent=True,
             status_message=(
-                "Opened Review with archive-aware replace preselected for "
-                f"{intake.package_path.name}. Next step: Review install."
+                "Opened Install with archive-aware replace preselected for "
+                f"{intake.package_path.name}. Next step: Plan install."
             ),
         )
 
     def _on_intake_selection_changed(self, *_: object) -> None:
+        if self._suppress_intake_selection_sync:
+            return
         self._sync_review_target_from_selected_intake()
         self._refresh_selected_intake_output()
         self._refresh_stage_package_action_state()
@@ -6826,6 +8101,184 @@ class MainWindow(QMainWindow):
             return value
         return "all"
 
+    def _profile_toggle_state_for_mod_row(
+        self,
+        *,
+        mod: InstalledMod,
+        is_enabled: bool,
+        current_target: str,
+        real_root: Path | None,
+        sandbox_root: Path | None,
+    ) -> tuple[bool, str]:
+        if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS:
+            if real_root is None:
+                return False, "Configure the real Mods folder before toggling real profiles."
+            selected_profile = self._selected_real_profile()
+            if selected_profile is None:
+                return False, "Select a real profile first."
+            if selected_profile.profile_id == DEFAULT_REAL_PROFILE_ID:
+                return (
+                    False,
+                    "Default mirrors the canonical real Mods library. Create a custom profile to change enabled mods.",
+                )
+            canonical_root = Path(os.path.abspath(os.path.normpath(str(real_root.expanduser()))))
+            current_scan_result = self._cached_scan_result_for_target(SCAN_TARGET_CONFIGURED_REAL_MODS)
+            active_scan_path = (
+                Path(os.path.abspath(os.path.normpath(str(current_scan_result.scan_path.expanduser()))))
+                if current_scan_result is not None
+                else canonical_root
+            )
+            inventory = self._current_inventory_or_empty()
+            active_entry = _profile_entry_state_for_mod(
+                inventory=inventory,
+                root=active_scan_path,
+                mod_folder_path=mod.folder_path,
+            )
+            canonical_entry = _profile_entry_state_for_mod(
+                inventory=inventory,
+                root=canonical_root,
+                mod_folder_path=mod.folder_path,
+            )
+            if (active_entry if is_enabled else canonical_entry) is None:
+                return False, "Only top-level real profile entries can be toggled right now."
+            if is_enabled:
+                return True, f"Disable real profile mod: {mod.name}"
+            return True, f"Enable real profile mod: {mod.name}"
+
+        if current_target != SCAN_TARGET_SANDBOX_MODS:
+            return False, ""
+        if sandbox_root is None:
+            return False, "Configure the Sandbox Mods folder before toggling sandbox mods."
+        selected_profile = self._selected_sandbox_profile()
+        if selected_profile is None:
+            return False, "Select a sandbox profile first."
+        if selected_profile.profile_id == DEFAULT_SANDBOX_PROFILE_ID:
+            return (
+                False,
+                "Default mirrors the canonical sandbox library. Create a custom profile to change enabled mods.",
+            )
+        canonical_root = Path(os.path.abspath(os.path.normpath(str(sandbox_root.expanduser()))))
+        current_scan_result = self._cached_scan_result_for_target(SCAN_TARGET_SANDBOX_MODS)
+        active_scan_path = (
+            Path(os.path.abspath(os.path.normpath(str(current_scan_result.scan_path.expanduser()))))
+            if current_scan_result is not None
+            else canonical_root
+        )
+        inventory = self._current_inventory_or_empty()
+        active_entry = _profile_entry_state_for_mod(
+            inventory=inventory,
+            root=active_scan_path,
+            mod_folder_path=mod.folder_path,
+        )
+        canonical_entry = _profile_entry_state_for_mod(
+            inventory=inventory,
+            root=canonical_root,
+            mod_folder_path=mod.folder_path,
+        )
+        if (active_entry if is_enabled else canonical_entry) is None:
+            return False, "Only top-level sandbox profile entries can be toggled right now."
+        if is_enabled:
+            return True, f"Disable sandbox mod: {mod.name}"
+        return True, f"Enable sandbox mod: {mod.name}"
+
+    def _on_mods_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._suppress_mod_toggle_events:
+            return
+        if item.column() != 0:
+            return
+        if item.data(_ROLE_MOD_TOGGLEABLE) is not True:
+            return
+
+        was_enabled = item.data(_ROLE_MOD_IS_ENABLED) is True
+        desired_enabled = item.checkState() == Qt.CheckState.Checked
+        if desired_enabled == was_enabled:
+            return
+
+        mod_name = item.text().strip() or "Selected mod"
+        mod_folder_path = item.data(_ROLE_MOD_FOLDER_PATH)
+        if not isinstance(mod_folder_path, str) or not mod_folder_path.strip():
+            self._restore_inventory_after_failed_toggle()
+            QMessageBox.warning(
+                self,
+                "Sandbox toggle unavailable",
+                "Selected mod row does not include a valid folder path.",
+            )
+            self._set_status("Sandbox mod toggle failed: invalid folder path.")
+            return
+
+        current_target = self._current_scan_target()
+        if current_target == SCAN_TARGET_CONFIGURED_REAL_MODS:
+            self._run_background_operation(
+                operation_name="Real profile mod toggle",
+                running_label="Real profile mod toggle",
+                started_status=f"{'Enabling' if desired_enabled else 'Disabling'} real profile mod: {mod_name}",
+                error_title="Real profile mod toggle failed",
+                task_fn=lambda _mod_folder_path=mod_folder_path, _desired_enabled=desired_enabled, _profile_id=self._selected_real_profile_id(): self._shell_service.set_real_mod_enabled_state(
+                    configured_mods_path_text=self._mods_path_input.text(),
+                    mod_folder_path_text=_mod_folder_path,
+                    enabled=_desired_enabled,
+                    profile_id=_profile_id,
+                    existing_config=self._config,
+                ),
+                on_success=lambda result, _mod_name=mod_name, _desired_enabled=desired_enabled: self._on_real_mod_toggle_completed(
+                    result,
+                    mod_name=_mod_name,
+                    enabled=_desired_enabled,
+                ),
+                on_failure=lambda _message: self._restore_inventory_after_failed_toggle(),
+            )
+            return
+
+        self._run_background_operation(
+            operation_name="Sandbox mod toggle",
+            running_label="Sandbox mod toggle",
+            started_status=f"{'Enabling' if desired_enabled else 'Disabling'} sandbox mod: {mod_name}",
+            error_title="Sandbox mod toggle failed",
+            task_fn=lambda _mod_folder_path=mod_folder_path, _desired_enabled=desired_enabled, _profile_id=self._selected_sandbox_profile_id(): self._shell_service.set_sandbox_mod_enabled_state(
+                sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
+                sandbox_archive_path_text=self._sandbox_archive_path_input.text(),
+                mod_folder_path_text=_mod_folder_path,
+                enabled=_desired_enabled,
+                profile_id=_profile_id,
+                existing_config=self._config,
+            ),
+            on_success=lambda result, _mod_name=mod_name, _desired_enabled=desired_enabled: self._on_sandbox_mod_toggle_completed(
+                result,
+                mod_name=_mod_name,
+                enabled=_desired_enabled,
+            ),
+            on_failure=lambda _message: self._restore_inventory_after_failed_toggle(),
+        )
+
+    def _restore_inventory_after_failed_toggle(self) -> None:
+        if self._current_inventory is None:
+            return
+        self._render_inventory(self._current_inventory)
+
+    def _on_sandbox_mod_toggle_completed(
+        self,
+        result: ScanResult,
+        *,
+        mod_name: str,
+        enabled: bool,
+    ) -> None:
+        self._cache_scan_result(result)
+        self._show_scan_result(result)
+        self._set_current_scan_target(result.target_kind)
+        self._set_status(f"Sandbox mod {'enabled' if enabled else 'disabled'}: {mod_name}")
+
+    def _on_real_mod_toggle_completed(
+        self,
+        result: ScanResult,
+        *,
+        mod_name: str,
+        enabled: bool,
+    ) -> None:
+        self._cache_scan_result(result)
+        self._show_scan_result(result)
+        self._set_current_scan_target(result.target_kind)
+        self._set_status(f"Real profile mod {'enabled' if enabled else 'disabled'}: {mod_name}")
+
     def _refresh_selected_mod_update_guidance(self) -> None:
         row = self._mods_table.currentRow()
         has_selected_items = bool(self._mods_table.selectedItems())
@@ -6874,6 +8327,7 @@ class MainWindow(QMainWindow):
         mod_name = name_item.text().strip() or "Selected mod"
         selected_unique_id = unique_id_item.text().strip() if unique_id_item is not None else ""
         status_text = status_item.text().strip() if status_item is not None else ""
+        is_enabled = name_item.data(_ROLE_MOD_IS_ENABLED) is True
         status_data = name_item.data(_ROLE_MOD_UPDATE_STATUS)
         status = status_data if isinstance(status_data, ModUpdateStatus) else None
         is_actionable = name_item.data(_ROLE_UPDATE_ACTIONABLE) is True
@@ -6883,13 +8337,24 @@ class MainWindow(QMainWindow):
             status is not None or (isinstance(blocked_reason, str) and blocked_reason.strip())
         )
         can_manage_intent = bool(
-            selected_unique_id
+            is_enabled
+            and selected_unique_id
             and not is_actionable
             and has_blocked_state
             and status_text != "not_checked"
         )
 
-        if status is None and status_text == "not_checked":
+        if not is_enabled:
+            message = (
+                f"{mod_name}: disabled. "
+                "Re-enable this sandbox mod row before update and source actions."
+            )
+            self._set_inventory_blocked_detail_text(None)
+            self._set_open_remote_page_state(
+                enabled=False,
+                tooltip="Disabled mod rows do not offer remote-page actions.",
+            )
+        elif status is None and status_text == "not_checked":
             message = (
                 f"{mod_name}: run Check updates to evaluate update actionability. "
                 "Open remote page stays disabled until an actionable row is selected."
@@ -7052,6 +8517,8 @@ class MainWindow(QMainWindow):
         unique_id = unique_id_item.text().strip()
         if not unique_id:
             return None
+        if name_item.data(_ROLE_MOD_IS_ENABLED) is not True:
+            return None
         status_text = status_item.text().strip() if status_item is not None else ""
         status_data = name_item.data(_ROLE_MOD_UPDATE_STATUS)
         status = status_data if isinstance(status_data, ModUpdateStatus) else None
@@ -7082,6 +8549,8 @@ class MainWindow(QMainWindow):
                 continue
             name_item = self._mods_table.item(row, 0)
             if name_item is None:
+                continue
+            if name_item.data(_ROLE_MOD_IS_ENABLED) is not True:
                 continue
             folder_path = name_item.data(_ROLE_MOD_FOLDER_PATH)
             if not isinstance(folder_path, str) or not folder_path.strip():
@@ -7120,6 +8589,17 @@ class MainWindow(QMainWindow):
             return
 
         if self._current_scan_target() == SCAN_TARGET_CONFIGURED_REAL_MODS:
+            active_real_profile = self._active_custom_real_profile()
+            if active_real_profile is not None:
+                self._sync_selected_to_sandbox_button.setEnabled(False)
+                self._sync_selected_to_sandbox_button.setToolTip(
+                    f"Sync selected to sandbox is paused while real profile '{active_real_profile.name}' is active."
+                )
+                self._promote_selected_to_real_button.setEnabled(False)
+                self._promote_selected_to_real_button.setToolTip(
+                    "Promote selected to real Mods only works while scanning sandbox Mods."
+                )
+                return
             readiness = self._shell_service.get_sandbox_mods_sync_readiness(
                 configured_mods_path_text=self._mods_path_input.text(),
                 sandbox_mods_path_text=self._sandbox_mods_path_input.text(),
@@ -7462,7 +8942,9 @@ class MainWindow(QMainWindow):
     def _on_scan_target_changed(self, *_: object) -> None:
         self._refresh_scan_context_preview()
         self._restore_cached_inventory_for_selected_source()
+        self._refresh_inventory_real_profile_action_state()
         self._refresh_inventory_sandbox_sync_action_state()
+        self._refresh_inventory_sandbox_profile_action_state()
 
     def _refresh_nexus_status(self, *, validated: bool) -> None:
         status = self._shell_service.get_nexus_integration_status(
@@ -7568,7 +9050,10 @@ class MainWindow(QMainWindow):
         if not self._detected_intakes:
             self._intake_result_combo.addItem("<no detected packages>", -1)
             self._intake_result_combo.setEnabled(False)
+            if self._selected_zip_package_paths:
+                self._set_selected_zip_package_paths(tuple())
             self._refresh_stage_package_action_state()
+            self._refresh_package_queue()
             self._set_filter_stats(
                 self._intake_filter_stats_label,
                 shown_count=0,
@@ -7600,6 +9085,7 @@ class MainWindow(QMainWindow):
             self._intake_result_combo.addItem("<no detected packages match filter>", -1)
             self._intake_result_combo.setEnabled(False)
             self._refresh_stage_package_action_state()
+            self._refresh_package_queue()
             self._set_filter_stats(
                 self._intake_filter_stats_label,
                 shown_count=0,
@@ -7609,12 +9095,17 @@ class MainWindow(QMainWindow):
             return
 
         selected_after = self._intake_result_combo.findData(selected_before)
-        if selected_after >= 0:
-            self._intake_result_combo.setCurrentIndex(selected_after)
-        else:
-            self._intake_result_combo.setCurrentIndex(self._intake_result_combo.count() - 1)
+        self._suppress_intake_selection_sync = True
+        try:
+            if selected_after >= 0:
+                self._intake_result_combo.setCurrentIndex(selected_after)
+            else:
+                self._intake_result_combo.setCurrentIndex(-1)
+        finally:
+            self._suppress_intake_selection_sync = False
         self._refresh_stage_package_action_state()
         self._refresh_selected_intake_output()
+        self._refresh_package_queue()
         self._set_filter_stats(
             self._intake_filter_stats_label,
             shown_count=visible_count,
@@ -7682,7 +9173,7 @@ class MainWindow(QMainWindow):
             target_label = self._packages_comparison_target_label_text()
             return (
                 f"Choose a detected package to compare against {target_label}. "
-                "Open Review still stages the selected package without writing anything."
+                "Open Install still stages the selected package without writing anything."
             )
 
         lines = [
@@ -7734,37 +9225,45 @@ class MainWindow(QMainWindow):
             return
 
         current_path = intake.package_path
-        preserve_inspection = current_path in self._selected_zip_package_paths
         package_paths = (
             self._selected_zip_package_paths
-            if preserve_inspection and self._selected_zip_package_paths
+            if self._selected_zip_package_paths
             else (current_path,)
         )
         self._set_selected_zip_package_paths(
             package_paths,
             current_path=current_path,
-            preserve_inspection=preserve_inspection,
+            preserve_inspection=bool(self._selected_zip_package_paths),
         )
         self._sync_auto_overwrite_intent_with_staged_package(str(current_path))
         self._refresh_staged_package_preview()
 
     def _refresh_stage_package_action_state(self) -> None:
         has_selected_intake = self._selected_intake_index() >= 0
+        has_selected_queue = bool(self._selected_zip_package_paths)
         has_stageable_inspection = self._has_stageable_inspected_package()
-        can_open_review = has_selected_intake or has_stageable_inspection
+        can_open_review = has_selected_intake or has_selected_queue or has_stageable_inspection
         self._plan_selected_intake_button.setVisible(True)
         self._plan_selected_intake_button.setEnabled(can_open_review)
-        if has_selected_intake:
+        if has_selected_queue and len(self._selected_zip_package_paths) > 1:
             self._plan_selected_intake_button.setToolTip(
-                "Stage the selected detected package into Review and continue there."
+                "Stage the checked watched package queue into Install and continue there."
+            )
+        elif has_selected_queue:
+            self._plan_selected_intake_button.setToolTip(
+                "Stage the checked watched package into Install and continue there."
+            )
+        elif has_selected_intake:
+            self._plan_selected_intake_button.setToolTip(
+                "Stage the selected detected package into Install and continue there."
             )
         elif has_stageable_inspection:
             self._plan_selected_intake_button.setToolTip(
-                "Stage the inspected package into Review and continue with the read-only install summary."
+                "Stage the inspected package into Install and continue with the read-only install plan."
             )
         else:
             self._plan_selected_intake_button.setToolTip(
-                "Inspect a zip or select a detected package to open Review."
+                "Inspect a zip or select a detected package to open Install."
             )
         update_like_selection = self._selected_intake_supports_update_action()
         self._stage_update_intake_button.setVisible(update_like_selection)
@@ -7772,41 +9271,43 @@ class MainWindow(QMainWindow):
         if update_like_selection:
             target_label = self._packages_comparison_target_label_text()
             self._stage_update_intake_button.setToolTip(
-                f"Review this detected package as an update against {target_label} and preselect archive-aware replace."
+                f"Open this detected package as an update against {target_label} and preselect archive-aware replace."
             )
             self._refresh_workflow_surface_states()
             return
         self._stage_update_intake_button.setToolTip(
-            "Review as update only appears when the selected package is newer than the currently selected comparison target."
+            "Open as update only appears when the selected package is newer than the currently selected comparison target."
         )
         self._refresh_workflow_surface_states()
 
     def _refresh_review_action_hierarchy(self) -> None:
-        has_staged_package = bool(self._zip_path_input.text().strip())
+        has_staged_package = bool(self._zip_path_input.text().strip()) or bool(
+            self._selected_zip_package_paths
+        )
         has_reviewed_plan = self._pending_install_plan is not None
 
         if has_reviewed_plan:
-            self._plan_install_button.setText("Review again")
+            self._plan_install_button.setText("Plan again")
             self._plan_install_button.setEnabled(has_staged_package)
             self._plan_install_button.setToolTip(
-                "Rebuild the read-only install review for the current package."
+                "Rebuild the read-only install plan for the staged package batch."
             )
             _set_secondary_button_style(self._plan_install_button)
 
             self._run_install_button.setText("Apply install")
             self._run_install_button.setEnabled(True)
             self._run_install_button.setToolTip(
-                "Apply the reviewed install plan to the selected destination."
+                "Apply the current install plan to the selected destination."
             )
             _set_primary_button_style(self._run_install_button)
             return
 
-        self._plan_install_button.setText("Review install")
+        self._plan_install_button.setText("Plan install")
         self._plan_install_button.setEnabled(has_staged_package)
         self._plan_install_button.setToolTip(
-            "Generate the read-only install review for the staged package."
+            "Generate the read-only install plan for the staged package batch."
             if has_staged_package
-            else "Choose a package in Packages first."
+            else "Choose packages in Packages first."
         )
         _set_primary_button_style(self._plan_install_button)
 
@@ -7836,15 +9337,24 @@ class MainWindow(QMainWindow):
         self._compare_summary_label.setToolTip(build_mods_compare_text(result))
 
     def _refresh_staged_package_preview(self) -> None:
+        staged_paths = self._selected_zip_package_paths
         package_path = self._zip_path_input.text().strip()
-        if not package_path:
+        if not package_path and not staged_paths:
             self._staged_package_label.setText(
-                "Choose a package in Packages to start install review."
+                "Choose packages in Packages to start install planning."
             )
             self._staged_package_label.setToolTip("")
             return
-        self._staged_package_label.setText(package_path)
-        self._staged_package_label.setToolTip(package_path)
+        if len(staged_paths) > 1:
+            package_names = ", ".join(path.name for path in staged_paths)
+            self._staged_package_label.setText(
+                f"{len(staged_paths)} packages staged for install: {package_names}"
+            )
+            self._staged_package_label.setToolTip("\n".join(str(path) for path in staged_paths))
+            return
+        current_path = str(staged_paths[0]) if staged_paths else package_path
+        self._staged_package_label.setText(current_path)
+        self._staged_package_label.setToolTip(current_path)
 
     def _stage_package_for_plan_install(
         self,
@@ -7854,11 +9364,22 @@ class MainWindow(QMainWindow):
         apply_update_intent: bool = False,
     ) -> None:
         self._invalidate_pending_plan()
-        self._set_selected_zip_package_paths((Path(package_path),), current_path=Path(package_path))
+        current_path = Path(package_path)
+        staged_paths = self._selected_zip_package_paths
+        if len(staged_paths) > 1 and current_path in staged_paths:
+            selected_paths = staged_paths
+        else:
+            selected_paths = (current_path,)
+        self._set_selected_zip_package_paths(
+            selected_paths,
+            current_path=current_path,
+            preserve_inspection=len(selected_paths) > 1,
+        )
         if apply_update_intent:
             self._apply_auto_overwrite_intent_for_package(package_path)
         else:
             self._sync_auto_overwrite_intent_with_staged_package(package_path)
+        self._set_current_install_target(self._packages_comparison_target_kind())
         self._refresh_staged_package_preview()
         self._refresh_stage_package_action_state()
         self._set_intake_output_text(status_message)
@@ -7918,12 +9439,17 @@ class MainWindow(QMainWindow):
             update_report=self._packages_update_report_for_selected_target(),
             guided_update_unique_ids=self._guided_update_unique_ids,
         )
-        self._refresh_intake_selector()
-        self._sync_guided_update_intake_handoff(
-            allow_auto_select=True,
-            update_output=True,
-            update_status=False,
-        )
+        previous_suppression = self._suppress_intake_selection_sync
+        self._suppress_intake_selection_sync = True
+        try:
+            self._refresh_intake_selector()
+            self._sync_guided_update_intake_handoff(
+                allow_auto_select=True,
+                update_output=True,
+                update_status=False,
+            )
+        finally:
+            self._suppress_intake_selection_sync = previous_suppression
 
     def _refresh_discovery_correlations(self) -> None:
         if self._current_discovery_result is None:
@@ -7965,7 +9491,7 @@ class MainWindow(QMainWindow):
                 package_name = self._detected_intakes[match_index].package_path.name
                 correlation = self._intake_correlations[match_index]
                 message = (
-                    f"Matched update package ready to review against "
+                    f"Matched update package ready to install against "
                     f"{correlation.comparison_target_label}: {package_name}"
                 )
             else:
@@ -7975,7 +9501,7 @@ class MainWindow(QMainWindow):
                 )
         else:
             message = (
-                "Multiple matched update packages are ready. Choose which package to review in Packages."
+                "Multiple matched update packages are ready. Choose which package to install in Packages."
             )
 
         if update_output:
@@ -7993,6 +9519,8 @@ class MainWindow(QMainWindow):
     def _refresh_detected_intakes_for_current_inventory(self) -> None:
         if not self._detected_intakes:
             self._intake_correlations = tuple()
+            if self._selected_zip_package_paths:
+                self._set_selected_zip_package_paths(tuple())
             self._refresh_intake_selector()
             return
 
@@ -8001,6 +9529,34 @@ class MainWindow(QMainWindow):
             inventory=self._current_inventory,
         )
         self._recompute_intake_correlations()
+
+    def _refresh_detected_intakes_for_watch_state(
+        self,
+        current_zip_paths: tuple[Path, ...],
+    ) -> bool:
+        if not self._detected_intakes:
+            return False
+
+        current_path_keys = {str(path.resolve()) for path in current_zip_paths}
+        retained_intakes = tuple(
+            intake
+            for intake in self._detected_intakes
+            if str(intake.package_path.resolve()) in current_path_keys
+        )
+        if not retained_intakes:
+            changed = bool(self._detected_intakes)
+            self._detected_intakes = tuple()
+            if self._selected_zip_package_paths:
+                self._set_selected_zip_package_paths(tuple())
+            return changed
+
+        refreshed_intakes = self._shell_service.refresh_detected_intakes_against_inventory(
+            intakes=retained_intakes,
+            inventory=self._current_inventory_or_empty(),
+        )
+        changed = refreshed_intakes != self._detected_intakes
+        self._detected_intakes = refreshed_intakes
+        return changed
 
     def _selected_intake_supports_update_action(self) -> bool:
         correlation = self._selected_intake_correlation()
@@ -8272,6 +9828,7 @@ def _build_plan_review_summary_text(
     plan: SandboxInstallPlan,
     review: InstallExecutionReview,
 ) -> str:
+    package_count = _plan_source_package_count(plan)
     has_dependency_block = bool(plan.dependency_findings) or any(
         _contains_dependency_terms(warning)
         for warning in (
@@ -8290,20 +9847,25 @@ def _build_plan_review_summary_text(
 
     if not review.allowed:
         if has_dependency_block:
-            return "Plan review: blocked by dependency issues."
+            return "Install plan: blocked by dependency issues."
         if has_package_block:
-            return "Plan review: blocked by package issues."
-        return "Plan review: blocked. Review plan details."
+            return "Install plan: blocked by package issues."
+        return "Install plan: blocked. Inspect plan details."
 
     if has_runnable_warnings:
-        return "Plan review: runnable with warnings."
-    return "Plan review: ready to install."
+        return (
+            "Install batch: runnable with warnings."
+            if package_count > 1
+            else "Install plan: runnable with warnings."
+        )
+    return "Install batch: ready to install." if package_count > 1 else "Install plan: ready to install."
 
 
 def _build_plan_review_explanation_text(
     plan: SandboxInstallPlan,
     review: InstallExecutionReview,
 ) -> str:
+    package_count = _plan_source_package_count(plan)
     dependency_warning = _first_dependency_warning_text(plan)
     package_issue = _first_package_issue_text(plan)
     runnable_warning = _first_runnable_warning_text(plan, review)
@@ -8313,7 +9875,11 @@ def _build_plan_review_explanation_text(
             return f"Dependency issue: {dependency_warning}"
         if package_issue:
             return f"Package issue: {package_issue}"
-        return "Blocked: this plan contains non-runnable entries."
+        return (
+            "Blocked: this batch contains non-runnable entries."
+            if package_count > 1
+            else "Blocked: this plan contains non-runnable entries."
+        )
 
     if runnable_warning:
         return f"Warning: {runnable_warning}"
@@ -8326,7 +9892,9 @@ def _build_plan_facts_text(
 ) -> str:
     summary = review.summary
     blocked_entry_count = _count_blocked_plan_entries(plan)
+    package_count = _plan_source_package_count(plan)
     return (
+        f"Packages: {package_count}\n"
         f"Entries: {summary.total_entry_count}\n"
         f"Replace existing: {'yes' if summary.has_existing_targets_to_replace else 'no'}\n"
         f"Archive writes: {'yes' if summary.has_archive_writes else 'no'}\n"
@@ -8341,6 +9909,10 @@ def _count_blocked_plan_entries(plan: SandboxInstallPlan) -> int:
         for entry in plan.entries
         if (not entry.can_install) or entry.action == "blocked"
     )
+
+
+def _plan_source_package_count(plan: SandboxInstallPlan) -> int:
+    return len(plan.package_paths) if plan.package_paths else 1
 
 
 def _first_dependency_warning_text(plan: SandboxInstallPlan) -> str | None:
@@ -8489,6 +10061,78 @@ def _build_sandbox_mods_sync_result_text(result: SandboxModsSyncResult) -> str:
         lines.extend(f"- {path}" for path in result.synced_target_paths)
     lines.append("")
     lines.append("Next step: switch scan source to Sandbox Mods and Scan to inspect the copied dev set.")
+    return "\n".join(lines)
+
+
+def _build_sandbox_profile_create_text(result: SandboxModProfileCreateResult) -> str:
+    lines = [
+        "Sandbox profile created",
+        f"Profile: {result.profile.name}",
+        f"Linked canonical folders: {result.linked_mod_count}",
+        f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
+        f"Disabled mods in profile: {len(result.scan_result.inventory.disabled_mods)}",
+        "",
+        "Next step: toggle mods in this profile without changing Default.",
+    ]
+    return "\n".join(lines)
+
+
+def _build_real_profile_create_text(result: RealModProfileCreateResult) -> str:
+    lines = [
+        "Real profile created",
+        f"Profile: {result.profile.name}",
+        f"Linked canonical folders: {result.linked_mod_count}",
+        f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
+        f"Disabled mods in profile: {len(result.scan_result.inventory.disabled_mods)}",
+        "",
+        "Next step: toggle mods in this profile and launch SMAPI against it.",
+    ]
+    return "\n".join(lines)
+
+
+def _build_sandbox_profile_select_text(result: SandboxModProfileSelectResult) -> str:
+    lines = [
+        "Sandbox profile selected",
+        f"Profile: {result.profile.name}",
+        f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
+        f"Disabled mods in profile: {len(result.scan_result.inventory.disabled_mods)}",
+        "",
+        "Next step: toggle mods in this profile or launch sandbox dev against it.",
+    ]
+    return "\n".join(lines)
+
+
+def _build_real_profile_select_text(result: RealModProfileSelectResult) -> str:
+    lines = [
+        "Real profile selected",
+        f"Profile: {result.profile.name}",
+        f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
+        f"Disabled mods in profile: {len(result.scan_result.inventory.disabled_mods)}",
+        "",
+        "Next step: toggle mods in this profile or launch SMAPI against it.",
+    ]
+    return "\n".join(lines)
+
+
+def _build_sandbox_profile_delete_text(result: SandboxModProfileDeleteResult) -> str:
+    lines = [
+        "Sandbox profile deleted",
+        f"Profile: {result.profile.name}",
+        f"Remaining profiles: {len(result.profiles.profiles)}",
+        "",
+        "Next step: select another profile or create a new one from Default.",
+    ]
+    return "\n".join(lines)
+
+
+def _build_real_profile_delete_text(result: RealModProfileDeleteResult) -> str:
+    lines = [
+        "Real profile deleted",
+        f"Profile: {result.profile.name}",
+        f"Remaining profiles: {len(result.profiles.profiles)}",
+        "",
+        "Next step: select another real profile or create a new one from Default.",
+    ]
     return "\n".join(lines)
 
 
@@ -8909,7 +10553,7 @@ def _packages_comparison_badge_text(correlation: IntakeUpdateCorrelation) -> str
         return f"mixed version state in {target_label}"
     if correlation.comparison_state == "target_inventory_unavailable":
         return f"{target_label} not scanned yet"
-    return f"review against {target_label}"
+    return f"install against {target_label}"
 
 
 def _packages_review_target_label(
@@ -9313,6 +10957,51 @@ def _resolve_ui_app_version() -> str:
     return "unknown"
 
 
+def _resolve_runtime_root() -> Path:
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root is not None:
+        return Path(bundle_root)
+    return Path(__file__).resolve().parents[3]
+
+
+def _resolve_runtime_icon_asset_path() -> Path | None:
+    assets_root = _resolve_runtime_root() / "assets"
+    for icon_name in _APP_RUNTIME_ICON_NAMES:
+        icon_path = assets_root / icon_name
+        if icon_path.exists():
+            return icon_path
+    return None
+
+
+def _resolve_brand_icon_pixmap(size: int) -> QPixmap | None:
+    icon_path = _resolve_runtime_icon_asset_path()
+    if icon_path is None:
+        return None
+    if icon_path.suffix.lower() == ".svg":
+        renderer = QSvgRenderer(str(icon_path))
+        if not renderer.isValid():
+            return None
+        image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(0)
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        renderer.render(painter, QRectF(0, 0, size, size))
+        painter.end()
+        return QPixmap.fromImage(image)
+
+    pixmap = QPixmap(str(icon_path))
+    if pixmap.isNull():
+        return None
+    if pixmap.width() != size or pixmap.height() != size:
+        return pixmap.scaled(
+            size,
+            size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+    return pixmap
+
+
 def _apply_surface_shadow(
     widget: QWidget,
     *,
@@ -9378,7 +11067,7 @@ def _package_inspection_entry_label(entry: PackageInspectionBatchEntry) -> str:
         return f"{entry.package_path.name} [inspection failed]"
 
     mods_label = "1 mod" if len(entry.inspection.mods) == 1 else f"{len(entry.inspection.mods)} mods"
-    readiness = "ready to review" if entry.inspection.mods else "review only"
+    readiness = "ready to install" if entry.inspection.mods else "install only"
     return f"{entry.package_path.name} [{mods_label}, {readiness}]"
 
 
@@ -9401,17 +11090,17 @@ def _package_inspection_batch_summary_label_text(
     success_count = sum(1 for entry in batch_result.entries if entry.inspection is not None)
     failure_count = total_count - success_count
     if success_count == 1 and total_count == 1:
-        return "Package inspected and ready for Review. Next step: open Review."
+        return "Package inspected and ready for Install. Next step: open Install."
     if success_count == 1:
         return (
-            f"{total_count} packages inspected: 1 package is ready for Review, "
-            f"{failure_count} failed. Next step: open Review."
+            f"{total_count} packages inspected: 1 package is ready for Install, "
+            f"{failure_count} failed. Next step: open Install."
         )
     if total_count <= 1:
-        return "Inspect one package, then continue into install review."
+        return "Inspect one package, then continue into install planning."
     return (
-        f"{total_count} packages inspected: {success_count} ready to review, "
-        f"{failure_count} failed. Review one selected package at a time."
+        f"{total_count} packages inspected: {success_count} ready to install, "
+        f"{failure_count} failed. Inspect one selected package at a time."
     )
 
 

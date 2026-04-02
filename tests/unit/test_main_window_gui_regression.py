@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHeaderView,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -34,13 +35,20 @@ from sdvmm.app.shell_service import AppShellError
 from sdvmm.app.shell_service import AppShellService
 from sdvmm.app.shell_service import BackupBundleExportItem
 from sdvmm.app.shell_service import BackupBundleExportResult
+from sdvmm.app.shell_service import BackupBundleExportSelection
 from sdvmm.app.shell_service import DiscoveryContextCorrelation
 from sdvmm.app.shell_service import INSTALL_TARGET_CONFIGURED_REAL_MODS
 from sdvmm.app.shell_service import INSTALL_TARGET_SANDBOX_MODS
 from sdvmm.app.shell_service import IntakeUpdateCorrelation
+from sdvmm.app.shell_service import RealModProfileCreateResult
+from sdvmm.app.shell_service import RealModProfileDeleteResult
+from sdvmm.app.shell_service import RealModProfileSelectResult
 from sdvmm.app.shell_service import SCAN_TARGET_CONFIGURED_REAL_MODS
 from sdvmm.app.shell_service import SCAN_TARGET_SANDBOX_MODS
 from sdvmm.app.shell_service import ScanResult
+from sdvmm.app.shell_service import SandboxModProfileCreateResult
+from sdvmm.app.shell_service import SandboxModProfileDeleteResult
+from sdvmm.app.shell_service import SandboxModProfileSelectResult
 from sdvmm.domain.install_codes import BLOCKED
 from sdvmm.domain.discovery_codes import COMPATIBLE
 from sdvmm.domain.discovery_codes import DISCOVERY_SOURCE_NEXUS
@@ -79,6 +87,8 @@ from sdvmm.domain.models import RestoreImportExecutionResult
 from sdvmm.domain.models import RestoreImportPlanningModEntry
 from sdvmm.domain.models import RestoreImportPlanningResult
 from sdvmm.domain.models import RecoveryExecutionRecord
+from sdvmm.domain.models import SandboxModProfile
+from sdvmm.domain.models import SandboxModProfileCatalog
 from sdvmm.domain.models import SandboxInstallPlan
 from sdvmm.domain.models import SandboxInstallPlanEntry
 from sdvmm.domain.models import SmapiContextLogCaptureResult
@@ -86,12 +96,15 @@ from sdvmm.domain.models import SmapiLogFinding
 from sdvmm.domain.models import SmapiMissingDependency
 from sdvmm.domain.models import SmapiLogReport
 from sdvmm.domain.models import SmapiUpdateStatus
+from sdvmm.domain.models import ScanEntryFinding
 from sdvmm.ui.main_window import MainWindow
 from sdvmm.ui.main_window import _ROLE_DISCOVERY_INDEX
+from sdvmm.ui.main_window import _ROLE_MOD_TOGGLEABLE
 from sdvmm.ui.main_window import _ROLE_MOD_UPDATE_STATUS
 from sdvmm.ui.main_window import _smapi_log_context_details
 from sdvmm.services.app_state_store import save_app_config
 from sdvmm.ui.main_window import _ROLE_UPDATE_BLOCK_REASON
+from sdvmm.domain.scan_codes import MULTI_MOD_CONTAINER
 
 
 @pytest.fixture
@@ -113,6 +126,23 @@ def main_window(tmp_path: Path, qapp: QApplication) -> MainWindow:
     yield window
     window.close()
     qapp.processEvents()
+
+
+def _launch_test_main_window(
+    tmp_path: Path,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[AppShellService, MainWindow]:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    monkeypatch.setattr(MainWindow, "_load_startup_state", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_refresh_install_operation_selector", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_refresh_sandbox_dev_launch_state", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_refresh_inventory_sandbox_sync_action_state", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_refresh_cinderleaf_managed_paths_surface", lambda self: None)
+    monkeypatch.setattr(MainWindow, "_reload_real_mod_profiles", lambda self, **_: None)
+    monkeypatch.setattr(MainWindow, "_reload_sandbox_mod_profiles", lambda self, **_: None)
+    window = MainWindow(shell_service=service)
+    return service, window
 
 
 def _fake_background_operation_with_real_lifecycle(
@@ -707,6 +737,146 @@ def test_main_window_sandbox_launch_captures_owned_smapi_log_context(
     assert main_window._last_smapi_launch_expected_log_path == owned_latest
 
 
+def test_main_window_real_smapi_launch_uses_canonical_real_mods_context_and_arms_exit_refresh(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, main_window = _launch_test_main_window(tmp_path, qapp, monkeypatch)
+    game_path = tmp_path / "Game"
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    owned_latest = game_path / "Cinderleaf" / "Logs" / "Real" / "latest-real-smapi.txt"
+    real_mods.mkdir(parents=True)
+    sandbox_mods.mkdir()
+    game_path.mkdir()
+    owned_latest.parent.mkdir(parents=True, exist_ok=True)
+    owned_latest.write_text("captured real log", encoding="utf-8")
+
+    main_window._game_path_input.setText(str(game_path))
+    main_window._mods_path_input.setText(str(real_mods))
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "launch_game_smapi",
+        lambda **_: SimpleNamespace(
+            pid=4242,
+            executable_path=game_path / "StardewModdingAPI.exe",
+            mods_path_override=real_mods,
+            steam_prelaunch_message="",
+        ),
+    )
+    capture_calls: list[tuple[str, str]] = []
+
+    def _fake_capture(**kwargs):
+        capture_calls.append((kwargs["game_path_text"], kwargs["context_label"]))
+        return SmapiContextLogCaptureResult(
+            context_label="Real Mods",
+            latest_log_path=owned_latest,
+            source_log_path=game_path / "ErrorLogs" / "SMAPI-latest.txt",
+            archived_log_path=owned_latest.parent / "real-copy.txt",
+            captured=True,
+            message="captured",
+        )
+
+    refresh_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "capture_cinderleaf_smapi_context_log",
+        _fake_capture,
+    )
+    monkeypatch.setattr(
+        main_window,
+        "_schedule_smapi_log_refresh_after_launch_exit",
+        lambda **kwargs: refresh_calls.append(kwargs),
+    )
+    monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.critical", lambda *args: None)
+
+    main_window._on_launch_smapi()
+
+    assert capture_calls == [(str(game_path), "Real Mods")]
+    assert main_window._last_smapi_launch_context == "Real Mods"
+    assert main_window._last_smapi_launch_expected_log_path == owned_latest
+    assert refresh_calls == [{"context_label": "Real Mods", "launch_pid": 4242}]
+
+
+def test_main_window_smapi_launch_refreshes_latest_log_once_after_process_exit(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, main_window = _launch_test_main_window(tmp_path, qapp, monkeypatch)
+    process_states = iter([True, False])
+    refresh_calls: list[str] = []
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "is_process_running",
+        lambda pid: next(process_states),
+    )
+    monkeypatch.setattr(main_window, "_on_check_smapi_log", lambda: refresh_calls.append("refresh"))
+    monkeypatch.setattr("sdvmm.ui.main_window.QTimer.singleShot", lambda _delay, callback: callback())
+
+    main_window._last_smapi_launch_context = "Real Mods"
+    main_window._last_smapi_launch_pid = 4242
+    main_window._smapi_launch_exit_refresh_token = 1
+
+    main_window._schedule_smapi_log_refresh_after_launch_exit(
+        context_label="Real Mods",
+        launch_pid=4242,
+    )
+
+    assert refresh_calls == ["refresh"]
+    assert main_window._last_smapi_launch_pid is None
+
+    main_window.close()
+
+
+@pytest.mark.parametrize(
+    ("process_states", "expected_process_checks"),
+    (
+        ([True] * 21 + [False], 22),
+        ([None, None, False], 3),
+    ),
+)
+def test_main_window_smapi_launch_exit_refresh_rearms_for_long_running_and_unknown_process_states(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    process_states: list[bool | None],
+    expected_process_checks: int,
+) -> None:
+    _, main_window = _launch_test_main_window(tmp_path, qapp, monkeypatch)
+    process_state_iter = iter(process_states)
+    process_checks: list[int] = []
+    refresh_calls: list[str] = []
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "is_process_running",
+        lambda pid: process_checks.append(pid) or next(process_state_iter),
+    )
+    monkeypatch.setattr(main_window, "_on_check_smapi_log", lambda: refresh_calls.append("refresh"))
+    monkeypatch.setattr("sdvmm.ui.main_window.QTimer.singleShot", lambda _delay, callback: callback())
+
+    main_window._last_smapi_launch_context = "Real Mods"
+    main_window._last_smapi_launch_pid = 4242
+    main_window._smapi_launch_exit_refresh_token = 1
+
+    main_window._schedule_smapi_log_refresh_after_launch_exit(
+        context_label="Real Mods",
+        launch_pid=4242,
+    )
+
+    assert process_checks == [4242] * expected_process_checks
+    assert refresh_calls == ["refresh"]
+    assert main_window._last_smapi_launch_pid is None
+
+    main_window.close()
+
+
 def test_main_window_check_smapi_log_passes_preferred_launch_context(
     main_window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,
@@ -809,11 +979,20 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
 ) -> None:
     context_group = main_window.findChild(QGroupBox, "top_context_surface_group")
     status_strip_group = main_window.findChild(QGroupBox, "global_status_strip_group")
-    mods_button = main_window.findChild(QPushButton, "workspace_nav_button_mods")
+    mods_button = main_window.findChild(QPushButton, "workspace_nav_button_library")
     setup_button = main_window.findChild(QPushButton, "workspace_nav_button_setup")
-    launch_tab_index = main_window._inventory_controls_tabs.indexOf(main_window._inventory_controls_tabs.widget(1))
+    library_tab_index = main_window._inventory_controls_tabs.indexOf(
+        main_window._inventory_controls_tabs.widget(0)
+    )
+    smapi_tab_index = main_window._inventory_controls_tabs.indexOf(
+        main_window._inventory_controls_tabs.widget(1)
+    )
     check_smapi_update_button = main_window._check_smapi_update_button
+    check_smapi_log_button = main_window._check_smapi_log_button
     open_smapi_page_button = main_window._open_smapi_page_button
+    launch_actions_band = main_window.findChild(QWidget, "mods_inventory_launch_actions_widget")
+    launch_vanilla_button = main_window._launch_vanilla_button
+    launch_smapi_button = main_window._launch_smapi_button
     launch_button = main_window.findChild(QPushButton, "launch_sandbox_dev_button")
 
     assert context_group is not None
@@ -821,11 +1000,15 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
     assert mods_button is not None
     assert setup_button is not None
     assert check_smapi_update_button is not None
+    assert check_smapi_log_button is not None
     assert open_smapi_page_button is not None
+    assert launch_actions_band is not None
+    assert launch_vanilla_button is not None
+    assert launch_smapi_button is not None
     assert launch_button is not None
 
     main_window.resize(1366, 768)
-    main_window._inventory_controls_tabs.setCurrentIndex(launch_tab_index)
+    main_window._inventory_controls_tabs.setCurrentIndex(library_tab_index)
     qapp.processEvents()
 
     assert context_group.maximumHeight() >= 146
@@ -833,18 +1016,19 @@ def test_main_window_low_height_shell_and_launch_controls_keep_readable_minimums
     assert 116 <= main_window._inventory_controls_tabs.maximumHeight() <= 132
     assert mods_button.maximumHeight() == 30
     assert setup_button.maximumHeight() == 30
-    assert check_smapi_update_button.maximumHeight() == 24
-    assert open_smapi_page_button.maximumHeight() == 24
+    assert launch_actions_band.layout().count() == 3
+    assert launch_vanilla_button.maximumHeight() == 26
+    assert launch_smapi_button.maximumHeight() == 27
     assert launch_button.maximumHeight() == 26
+
+    main_window._inventory_controls_tabs.setCurrentIndex(smapi_tab_index)
+    qapp.processEvents()
+
+    assert check_smapi_update_button.maximumHeight() == 24
+    assert check_smapi_log_button.maximumHeight() == 24
+    assert open_smapi_page_button.maximumHeight() == 24
     assert 74 <= main_window._smapi_troubleshooting_details_box.minimumHeight() <= 80
     assert 90 <= main_window._smapi_troubleshooting_details_box.maximumHeight() <= 100
-    assert setup_button.geometry().top() - mods_button.geometry().bottom() >= 5
-    assert (
-        open_smapi_page_button.geometry().top()
-        - check_smapi_update_button.geometry().bottom()
-        >= 6
-    )
-    assert launch_button.geometry().top() - open_smapi_page_button.geometry().bottom() >= 6
 
 
 def test_main_window_low_height_smapi_troubleshooting_compacts_selected_mod_guidance(
@@ -1312,17 +1496,23 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     context_tabs = main_window._context_tabs
     nav_rail = main_window.findChild(QFrame, "workspace_nav_rail")
     brand_panel = main_window.findChild(QFrame, "workspace_nav_brand_panel")
+    brand_header = main_window.findChild(QWidget, "workspace_nav_brand_header")
+    brand_icon = main_window.findChild(QLabel, "workspace_nav_brand_icon")
+    brand_text_stack = main_window.findChild(QWidget, "workspace_nav_brand_text_stack")
     brand_title = main_window.findChild(QLabel, "workspace_nav_brand_title")
     brand_subtitle = main_window.findChild(QLabel, "workspace_nav_brand_subtitle")
     brand_version = main_window.findChild(QLabel, "workspace_nav_brand_version")
     brand_release_status = main_window.findChild(QLabel, "workspace_nav_brand_release_status")
     footer_panel = main_window.findChild(QFrame, "workspace_nav_footer_panel")
     setup_button = main_window.findChild(QPushButton, "workspace_nav_button_setup")
-    review_button = main_window.findChild(QPushButton, "workspace_nav_button_review")
+    review_button = main_window.findChild(QPushButton, "workspace_nav_button_install")
 
     assert context_tabs is not None
     assert nav_rail is not None
     assert brand_panel is not None
+    assert brand_header is not None
+    assert brand_icon is not None
+    assert brand_text_stack is not None
     assert brand_title is not None
     assert brand_subtitle is not None
     assert brand_version is not None
@@ -1334,15 +1524,25 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     assert context_tabs.tabBar().isHidden() is True
     assert setup_button.property("navRole") == "workspace"
     assert review_button.property("navRole") == "workspace"
+    brand_icon_pixmap = brand_icon.pixmap()
+    assert brand_icon_pixmap is not None
+    assert brand_icon_pixmap.isNull() is False
     assert brand_title.text() == "Cinderleaf"
     assert brand_subtitle.text() == "for Stardew Valley"
     assert brand_version.text() == "Version 1.1.7"
     brand_layout = brand_panel.layout()
     assert brand_layout is not None
-    assert brand_layout.itemAt(1).widget() is brand_title
-    assert brand_layout.itemAt(2).widget() is brand_subtitle
-    assert brand_layout.itemAt(3).widget() is brand_version
-    assert brand_layout.itemAt(4).widget() is brand_release_status
+    assert brand_layout.itemAt(0).widget() is brand_header
+    assert brand_layout.itemAt(1).widget() is brand_release_status
+    brand_header_layout = brand_header.layout()
+    assert brand_header_layout is not None
+    assert brand_header_layout.itemAt(0).widget() is brand_icon
+    assert brand_header_layout.itemAt(1).widget() is brand_text_stack
+    brand_text_layout = brand_text_stack.layout()
+    assert brand_text_layout is not None
+    assert brand_text_layout.itemAt(0).widget() is brand_title
+    assert brand_text_layout.itemAt(1).widget() is brand_subtitle
+    assert brand_text_layout.itemAt(2).widget() is brand_version
 
 
 def test_main_window_workspace_nav_buttons_drive_context_pages(
@@ -1351,7 +1551,7 @@ def test_main_window_workspace_nav_buttons_drive_context_pages(
 ) -> None:
     context_tabs = main_window._context_tabs
     review_page = main_window._plan_install_tab
-    review_button = main_window.findChild(QPushButton, "workspace_nav_button_review")
+    review_button = main_window.findChild(QPushButton, "workspace_nav_button_install")
     compare_button = main_window.findChild(QPushButton, "workspace_nav_button_compare")
 
     assert context_tabs is not None
@@ -1749,6 +1949,7 @@ def test_main_window_sandbox_sync_button_enables_only_for_real_scan_with_valid_p
 
     main_window._mods_path_input.setText(str(real_mods))
     main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+    main_window._real_archive_path_input.setText(str(real_mods.parent / ".sdvmm-real-archive"))
     main_window._render_inventory(inventory)
     alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
     assert alpha_row >= 0
@@ -1789,6 +1990,7 @@ def test_main_window_sandbox_sync_delegates_and_updates_status_and_details(
 
     main_window._mods_path_input.setText(str(real_mods))
     main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+    main_window._real_archive_path_input.setText(str(real_mods.parent / ".sdvmm-real-archive"))
     main_window._render_inventory(inventory)
     alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
     assert alpha_row >= 0
@@ -1864,6 +2066,7 @@ def test_main_window_sandbox_sync_conflict_sets_clear_status(
 
     main_window._mods_path_input.setText(str(real_mods))
     main_window._sandbox_mods_path_input.setText(str(sandbox_mods))
+    main_window._real_archive_path_input.setText(str(real_mods.parent / ".sdvmm-real-archive"))
     main_window._render_inventory(inventory)
     alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
     assert alpha_row >= 0
@@ -1888,6 +2091,10 @@ def test_main_window_sandbox_promotion_button_enables_only_for_sandbox_scan_cont
     real_mods.mkdir()
     sandbox_mods.mkdir()
     (sandbox_mods / "AlphaMod").mkdir()
+    (sandbox_mods / "AlphaMod" / "manifest.json").write_text(
+        '{"Name": "Alpha Mod", "UniqueID": "Sample.Alpha", "Version": "1.0.0"}',
+        encoding="utf-8",
+    )
 
     inventory = _inventory_for_sandbox_sync_ui_tests(sandbox_mods)
     sync_button = main_window.findChild(QPushButton, "inventory_sync_selected_to_sandbox_button")
@@ -1950,6 +2157,10 @@ def test_main_window_sandbox_promotion_delegates_after_confirmation_and_updates_
     real_mods.mkdir()
     sandbox_mods.mkdir()
     source_mod.mkdir()
+    (source_mod / "manifest.json").write_text(
+        '{"Name": "Alpha Mod", "UniqueID": "Sample.Alpha", "Version": "1.0.0"}',
+        encoding="utf-8",
+    )
     inventory = _inventory_for_sandbox_sync_ui_tests(sandbox_mods)
     promote_button = main_window.findChild(
         QPushButton, "inventory_promote_selected_to_real_button"
@@ -2080,6 +2291,10 @@ def test_main_window_sandbox_promotion_conflict_review_stays_enabled_and_describ
     sandbox_mods.mkdir()
     source_mod.mkdir()
     promoted_target.mkdir()
+    (source_mod / "manifest.json").write_text(
+        '{"Name": "Alpha Mod", "UniqueID": "Sample.Alpha", "Version": "1.0.0"}',
+        encoding="utf-8",
+    )
     inventory = _inventory_for_sandbox_sync_ui_tests(sandbox_mods)
     promote_button = main_window.findChild(
         QPushButton, "inventory_promote_selected_to_real_button"
@@ -3019,6 +3234,1089 @@ def test_main_window_inventory_search_filter_still_works_with_update_actionabili
     assert set(_visible_mod_names(main_window._mods_table)) == {"Beta Mod", "Gamma Mod"}
 
 
+def test_main_window_renders_disabled_sandbox_mod_rows_with_checkbox_state(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sandbox_mods_root = tmp_path / "SandboxMods"
+    sandbox_mods_root.mkdir()
+    sandbox_index = main_window._scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert sandbox_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(sandbox_index)
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods_root))
+    default_profile = SandboxModProfile(profile_id="default", name="Default", is_default=True)
+    custom_profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Alpha Only",
+        storage_dir_name="profile_alpha_root",
+    )
+    profile_root = (
+        sandbox_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Sandbox Mods"
+        / custom_profile.storage_dir_name
+        / "Mods"
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_sandbox_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, custom_profile),
+            active_profile_id=custom_profile.profile_id,
+        ),
+    )
+    main_window._reload_sandbox_mod_profiles(selected_profile_id=custom_profile.profile_id)
+
+    active_path = profile_root / "AlphaMod"
+    disabled_path = sandbox_mods_root / "BetaMod"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=active_path,
+                manifest_path=active_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Beta",
+                name="Beta Mod",
+                version="2.0.0",
+                folder_path=disabled_path,
+                manifest_path=disabled_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_SANDBOX_MODS,
+            scan_path=profile_root,
+            inventory=inventory,
+        )
+    )
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    beta_row = _find_mod_row(main_window._mods_table, "Beta Mod")
+    assert alpha_row >= 0
+    assert beta_row >= 0
+
+    alpha_item = main_window._mods_table.item(alpha_row, 0)
+    beta_item = main_window._mods_table.item(beta_row, 0)
+    beta_status = main_window._mods_table.item(beta_row, 4)
+    assert alpha_item is not None
+    assert beta_item is not None
+    assert beta_status is not None
+    assert alpha_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+    assert beta_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
+    assert alpha_item.checkState() == Qt.CheckState.Checked
+    assert beta_item.checkState() == Qt.CheckState.Unchecked
+    assert beta_status.text() == "disabled"
+
+
+def test_main_window_sandbox_toggle_checkbox_dispatches_toggle_operation(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sandbox_mods_root = tmp_path / "SandboxMods"
+    sandbox_mods_root.mkdir()
+    sandbox_index = main_window._scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert sandbox_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(sandbox_index)
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods_root))
+    default_profile = SandboxModProfile(profile_id="default", name="Default", is_default=True)
+    custom_profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Alpha Only",
+        storage_dir_name="profile_alpha_root",
+    )
+    profile_root = (
+        sandbox_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Sandbox Mods"
+        / custom_profile.storage_dir_name
+        / "Mods"
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_sandbox_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, custom_profile),
+            active_profile_id=custom_profile.profile_id,
+        ),
+    )
+    main_window._reload_sandbox_mod_profiles(selected_profile_id=custom_profile.profile_id)
+
+    active_path = profile_root / "AlphaMod"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=active_path,
+                manifest_path=active_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    disabled_inventory = ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=sandbox_mods_root / "AlphaMod",
+                manifest_path=sandbox_mods_root / "AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_toggle(**kwargs: object) -> ScanResult:
+        captured["toggle_kwargs"] = kwargs
+        return ScanResult(
+            target_kind=SCAN_TARGET_SANDBOX_MODS,
+            scan_path=sandbox_mods_root,
+            inventory=disabled_inventory,
+        )
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _fake_background_operation_with_real_lifecycle(main_window, captured))
+    monkeypatch.setattr(main_window._shell_service, "set_sandbox_mod_enabled_state", fake_toggle)
+
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_SANDBOX_MODS,
+            scan_path=profile_root,
+            inventory=inventory,
+        )
+    )
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert alpha_row >= 0
+    alpha_item = main_window._mods_table.item(alpha_row, 0)
+    assert alpha_item is not None
+
+    alpha_item.setCheckState(Qt.CheckState.Unchecked)
+    qapp.processEvents()
+
+    toggle_kwargs = captured.get("toggle_kwargs")
+    assert captured.get("operation_names") == ["Sandbox mod toggle"]
+    assert isinstance(toggle_kwargs, dict)
+    assert toggle_kwargs["sandbox_mods_path_text"] == str(sandbox_mods_root)
+    assert toggle_kwargs["mod_folder_path_text"] == str(active_path)
+    assert toggle_kwargs["enabled"] is False
+    assert toggle_kwargs["profile_id"] == custom_profile.profile_id
+
+    updated_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    updated_item = main_window._mods_table.item(updated_row, 0)
+    updated_status = main_window._mods_table.item(updated_row, 4)
+    assert updated_item is not None
+    assert updated_status is not None
+    assert updated_item.checkState() == Qt.CheckState.Unchecked
+    assert updated_status.text() == "disabled"
+
+
+def test_main_window_create_sandbox_profile_dispatches_create_operation(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sandbox_mods_root = tmp_path / "SandboxMods"
+    sandbox_mods_root.mkdir()
+    sandbox_index = main_window._scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert sandbox_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(sandbox_index)
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods_root))
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=sandbox_mods_root / "AlphaMod",
+                manifest_path=sandbox_mods_root / "AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    default_profile = SandboxModProfile(
+        profile_id="default",
+        name="Default",
+        is_default=True,
+    )
+    profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Alpha Only",
+        storage_dir_name="profile_alpha_root",
+    )
+    result = SandboxModProfileCreateResult(
+        profile=profile,
+        profiles=SandboxModProfileCatalog(
+            profiles=(default_profile, profile),
+            active_profile_id=profile.profile_id,
+        ),
+        scan_result=ScanResult(
+            target_kind=SCAN_TARGET_SANDBOX_MODS,
+            scan_path=sandbox_mods_root,
+            inventory=inventory,
+        ),
+        linked_mod_count=1,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_create(**kwargs: object) -> SandboxModProfileCreateResult:
+        captured["create_kwargs"] = kwargs
+        return result
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _fake_background_operation_with_real_lifecycle(main_window, captured))
+    monkeypatch.setattr(main_window._shell_service, "create_sandbox_mod_profile", fake_create)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_sandbox_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, profile),
+            active_profile_id=profile.profile_id,
+        ),
+    )
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *args, **kwargs: ("Alpha Only", True)))
+
+    main_window._render_inventory(inventory)
+    main_window._reload_sandbox_mod_profiles(selected_profile_id=profile.profile_id)
+    qapp.processEvents()
+
+    main_window._on_create_sandbox_profile()
+    qapp.processEvents()
+
+    create_kwargs = captured.get("create_kwargs")
+    assert captured.get("operation_names") == ["Sandbox profile create"]
+    assert isinstance(create_kwargs, dict)
+    assert create_kwargs["name"] == "Alpha Only"
+    assert create_kwargs["sandbox_mods_path_text"] == str(sandbox_mods_root)
+    assert main_window._sandbox_profile_combo.currentData() == profile.profile_id
+    assert "Sandbox profile created" in main_window._inventory_output_box.toPlainText()
+
+
+def test_main_window_selected_sandbox_profile_change_dispatches_select_operation(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sandbox_mods_root = tmp_path / "SandboxMods"
+    sandbox_mods_root.mkdir()
+    sandbox_index = main_window._scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert sandbox_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(sandbox_index)
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods_root))
+    starting_inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=sandbox_mods_root / "AlphaMod",
+                manifest_path=sandbox_mods_root / "AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    updated_inventory = ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=sandbox_mods_root / ".AlphaMod",
+                manifest_path=sandbox_mods_root / ".AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+    default_profile = SandboxModProfile(
+        profile_id="default",
+        name="Default",
+        is_default=True,
+    )
+    profile = SandboxModProfile(
+        profile_id="profile_alpha_off",
+        name="Alpha Off",
+        storage_dir_name="profile_alpha_off",
+    )
+    select_result = SandboxModProfileSelectResult(
+        profile=profile,
+        profiles=SandboxModProfileCatalog(
+            profiles=(default_profile, profile),
+            active_profile_id=profile.profile_id,
+        ),
+        scan_result=ScanResult(
+            target_kind=SCAN_TARGET_SANDBOX_MODS,
+            scan_path=sandbox_mods_root,
+            inventory=updated_inventory,
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_select(**kwargs: object) -> SandboxModProfileSelectResult:
+        captured["select_kwargs"] = kwargs
+        return select_result
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _fake_background_operation_with_real_lifecycle(main_window, captured))
+    monkeypatch.setattr(main_window._shell_service, "select_sandbox_mod_profile", fake_select)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_sandbox_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, profile),
+            active_profile_id=default_profile.profile_id,
+        ),
+    )
+
+    main_window._render_inventory(starting_inventory)
+    main_window._reload_sandbox_mod_profiles(selected_profile_id=default_profile.profile_id)
+    qapp.processEvents()
+
+    main_window._sandbox_profile_combo.setCurrentIndex(
+        main_window._sandbox_profile_combo.findData(profile.profile_id)
+    )
+    qapp.processEvents()
+
+    select_kwargs = captured.get("select_kwargs")
+    assert captured.get("operation_names") == ["Sandbox profile select"]
+    assert isinstance(select_kwargs, dict)
+    assert select_kwargs["profile_id"] == profile.profile_id
+    assert select_kwargs["sandbox_mods_path_text"] == str(sandbox_mods_root)
+    updated_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    updated_item = main_window._mods_table.item(updated_row, 0)
+    updated_status = main_window._mods_table.item(updated_row, 4)
+    assert updated_item is not None
+    assert updated_status is not None
+    assert updated_item.checkState() == Qt.CheckState.Unchecked
+    assert updated_status.text() == "disabled"
+
+
+def test_main_window_delete_sandbox_profile_dispatches_delete_operation(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sandbox_mods_root = tmp_path / "SandboxMods"
+    sandbox_mods_root.mkdir()
+    sandbox_index = main_window._scan_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    assert sandbox_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(sandbox_index)
+    main_window._sandbox_mods_path_input.setText(str(sandbox_mods_root))
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=sandbox_mods_root / "AlphaMod",
+                manifest_path=sandbox_mods_root / "AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    deleted_profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Alpha Only",
+        storage_dir_name="profile_alpha_root",
+    )
+    default_profile = SandboxModProfile(
+        profile_id="default",
+        name="Default",
+        is_default=True,
+    )
+    remaining_profile = SandboxModProfile(
+        profile_id="profile_beta",
+        name="Beta Only",
+        storage_dir_name="profile_beta_root",
+    )
+    delete_result = SandboxModProfileDeleteResult(
+        profile=deleted_profile,
+        profiles=SandboxModProfileCatalog(
+            profiles=(default_profile, remaining_profile),
+            active_profile_id=remaining_profile.profile_id,
+        ),
+        scan_result=ScanResult(
+            target_kind=SCAN_TARGET_SANDBOX_MODS,
+            scan_path=sandbox_mods_root,
+            inventory=inventory,
+        ),
+    )
+    captured: dict[str, object] = {}
+    catalog_state = {"profiles": (default_profile, deleted_profile, remaining_profile)}
+
+    def fake_delete(**kwargs: object) -> SandboxModProfileDeleteResult:
+        captured["delete_kwargs"] = kwargs
+        catalog_state["profiles"] = (default_profile, remaining_profile)
+        return delete_result
+
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+    monkeypatch.setattr(main_window._shell_service, "delete_sandbox_mod_profile", fake_delete)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_sandbox_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=tuple(catalog_state["profiles"]),
+            active_profile_id=remaining_profile.profile_id,
+        ),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Yes),
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._reload_sandbox_mod_profiles(selected_profile_id=deleted_profile.profile_id)
+    qapp.processEvents()
+
+    main_window._on_delete_sandbox_profile()
+    qapp.processEvents()
+
+    delete_kwargs = captured.get("delete_kwargs")
+    assert captured.get("operation_names") == ["Sandbox profile delete"]
+    assert isinstance(delete_kwargs, dict)
+    assert delete_kwargs["profile_id"] == deleted_profile.profile_id
+    assert delete_kwargs["sandbox_mods_path_text"] == str(sandbox_mods_root)
+    assert main_window._sandbox_profile_combo.currentData() == remaining_profile.profile_id
+    assert "Sandbox profile deleted" in main_window._inventory_output_box.toPlainText()
+
+
+def test_main_window_real_toggle_checkbox_dispatches_toggle_operation(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+    default_profile = SandboxModProfile(profile_id="default", name="Default", is_default=True)
+    custom_profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Alpha Only",
+        storage_dir_name="profile_alpha_root",
+    )
+    profile_root = (
+        real_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Real Mods"
+        / custom_profile.storage_dir_name
+        / "Mods"
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_real_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, custom_profile),
+            active_profile_id=custom_profile.profile_id,
+        ),
+    )
+    main_window._reload_real_mod_profiles(selected_profile_id=custom_profile.profile_id)
+
+    active_path = profile_root / "AlphaMod"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=active_path,
+                manifest_path=active_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    disabled_inventory = ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=real_mods_root / "AlphaMod",
+                manifest_path=real_mods_root / "AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_toggle(**kwargs: object) -> ScanResult:
+        captured["toggle_kwargs"] = kwargs
+        return ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=profile_root,
+            inventory=disabled_inventory,
+        )
+
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+    monkeypatch.setattr(main_window._shell_service, "set_real_mod_enabled_state", fake_toggle)
+
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=profile_root,
+            inventory=inventory,
+        )
+    )
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    alpha_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    assert alpha_row >= 0
+    alpha_item = main_window._mods_table.item(alpha_row, 0)
+    assert alpha_item is not None
+
+    alpha_item.setCheckState(Qt.CheckState.Unchecked)
+    qapp.processEvents()
+
+    toggle_kwargs = captured.get("toggle_kwargs")
+    assert captured.get("operation_names") == ["Real profile mod toggle"]
+    assert isinstance(toggle_kwargs, dict)
+    assert toggle_kwargs["configured_mods_path_text"] == str(real_mods_root)
+    assert toggle_kwargs["mod_folder_path_text"] == str(active_path)
+    assert toggle_kwargs["enabled"] is False
+    assert toggle_kwargs["profile_id"] == custom_profile.profile_id
+
+
+def test_main_window_real_container_rows_share_profile_toggle_ownership(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+
+    default_profile = SandboxModProfile(
+        profile_id="default",
+        name="Default",
+        is_default=True,
+    )
+    custom_profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Profile 2",
+        storage_dir_name="profile_alpha_root",
+    )
+    profile_root = (
+        real_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Real Mods"
+        / custom_profile.storage_dir_name
+        / "Mods"
+    )
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_real_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, custom_profile),
+            active_profile_id=custom_profile.profile_id,
+        ),
+    )
+    main_window._reload_real_mod_profiles(selected_profile_id=custom_profile.profile_id)
+
+    component_a_path = profile_root / "PackFolder" / "ComponentA"
+    component_b_path = profile_root / "PackFolder" / "ComponentB"
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.ComponentA",
+                name="Component A",
+                version="1.0.0",
+                folder_path=component_a_path,
+                manifest_path=component_a_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+            InstalledMod(
+                unique_id="Sample.ComponentB",
+                name="Component B",
+                version="1.0.0",
+                folder_path=component_b_path,
+                manifest_path=component_b_path / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind=MULTI_MOD_CONTAINER,
+                entry_path=profile_root / "PackFolder",
+                mod_paths=(component_a_path, component_b_path),
+                message="Container with 2 nested mods discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+    )
+    disabled_inventory = ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=(
+            ScanEntryFinding(
+                kind=MULTI_MOD_CONTAINER,
+                entry_path=real_mods_root / "PackFolder",
+                mod_paths=(
+                    real_mods_root / "PackFolder" / "ComponentA",
+                    real_mods_root / "PackFolder" / "ComponentB",
+                ),
+                message="Container with 2 nested mods discovered.",
+            ),
+        ),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.ComponentA",
+                name="Component A",
+                version="1.0.0",
+                folder_path=real_mods_root / "PackFolder" / "ComponentA",
+                manifest_path=(real_mods_root / "PackFolder" / "ComponentA" / "manifest.json"),
+                dependencies=tuple(),
+            ),
+            InstalledMod(
+                unique_id="Sample.ComponentB",
+                name="Component B",
+                version="1.0.0",
+                folder_path=real_mods_root / "PackFolder" / "ComponentB",
+                manifest_path=(real_mods_root / "PackFolder" / "ComponentB" / "manifest.json"),
+                dependencies=tuple(),
+            ),
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_toggle(**kwargs: object) -> ScanResult:
+        captured["toggle_kwargs"] = kwargs
+        return ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=profile_root,
+            inventory=disabled_inventory,
+        )
+
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+    monkeypatch.setattr(main_window._shell_service, "set_real_mod_enabled_state", fake_toggle)
+
+    main_window._cache_scan_result(
+        ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=profile_root,
+            inventory=inventory,
+        )
+    )
+    main_window._render_inventory(inventory)
+    qapp.processEvents()
+
+    component_b_row = _find_mod_row(main_window._mods_table, "Component B")
+    assert component_b_row >= 0
+    component_b_item = main_window._mods_table.item(component_b_row, 0)
+    assert component_b_item is not None
+    assert component_b_item.data(_ROLE_MOD_TOGGLEABLE) is True
+
+    component_b_item.setCheckState(Qt.CheckState.Unchecked)
+    qapp.processEvents()
+
+    toggle_kwargs = captured.get("toggle_kwargs")
+    assert captured.get("operation_names") == ["Real profile mod toggle"]
+    assert isinstance(toggle_kwargs, dict)
+    assert toggle_kwargs["mod_folder_path_text"] == str(component_b_path)
+    assert toggle_kwargs["enabled"] is False
+
+
+def test_main_window_create_real_profile_dispatches_create_operation(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=real_mods_root / "AlphaMod",
+                manifest_path=real_mods_root / "AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    default_profile = SandboxModProfile(
+        profile_id="default",
+        name="Default",
+        is_default=True,
+    )
+    profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Alpha Only",
+        storage_dir_name="profile_alpha_root",
+    )
+    result = RealModProfileCreateResult(
+        profile=profile,
+        profiles=SandboxModProfileCatalog(
+            profiles=(default_profile, profile),
+            active_profile_id=profile.profile_id,
+        ),
+        scan_result=ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_root,
+            inventory=inventory,
+        ),
+        linked_mod_count=1,
+    )
+    captured: dict[str, object] = {}
+
+    def fake_create(**kwargs: object) -> RealModProfileCreateResult:
+        captured["create_kwargs"] = kwargs
+        return result
+
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+    monkeypatch.setattr(main_window._shell_service, "create_real_mod_profile", fake_create)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_real_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, profile),
+            active_profile_id=profile.profile_id,
+        ),
+    )
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *args, **kwargs: ("Alpha Only", True)))
+
+    main_window._render_inventory(inventory)
+    main_window._reload_real_mod_profiles(selected_profile_id=profile.profile_id)
+    qapp.processEvents()
+
+    main_window._on_create_real_profile()
+    qapp.processEvents()
+
+    create_kwargs = captured.get("create_kwargs")
+    assert captured.get("operation_names") == ["Real profile create"]
+    assert isinstance(create_kwargs, dict)
+    assert create_kwargs["name"] == "Alpha Only"
+    assert create_kwargs["configured_mods_path_text"] == str(real_mods_root)
+    assert main_window._real_profile_combo.currentData() == profile.profile_id
+    assert "Real profile created" in main_window._inventory_output_box.toPlainText()
+
+
+def test_main_window_selected_real_profile_change_dispatches_select_operation(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+    starting_inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=real_mods_root / "AlphaMod",
+                manifest_path=real_mods_root / "AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    profile_root = (
+        real_mods_root.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Real Mods"
+        / "profile_alpha_off"
+        / "Mods"
+    )
+    updated_inventory = ModsInventory(
+        mods=tuple(),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+        disabled_mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=real_mods_root / "AlphaMod",
+                manifest_path=real_mods_root / "AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+    )
+    default_profile = SandboxModProfile(
+        profile_id="default",
+        name="Default",
+        is_default=True,
+    )
+    profile = SandboxModProfile(
+        profile_id="profile_alpha_off",
+        name="Alpha Off",
+        storage_dir_name="profile_alpha_off",
+    )
+    select_result = RealModProfileSelectResult(
+        profile=profile,
+        profiles=SandboxModProfileCatalog(
+            profiles=(default_profile, profile),
+            active_profile_id=profile.profile_id,
+        ),
+        scan_result=ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=profile_root,
+            inventory=updated_inventory,
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_select(**kwargs: object) -> RealModProfileSelectResult:
+        captured["select_kwargs"] = kwargs
+        return select_result
+
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+    monkeypatch.setattr(main_window._shell_service, "select_real_mod_profile", fake_select)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_real_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=(default_profile, profile),
+            active_profile_id=default_profile.profile_id,
+        ),
+    )
+
+    main_window._render_inventory(starting_inventory)
+    main_window._reload_real_mod_profiles(selected_profile_id=default_profile.profile_id)
+    qapp.processEvents()
+
+    main_window._real_profile_combo.setCurrentIndex(
+        main_window._real_profile_combo.findData(profile.profile_id)
+    )
+    qapp.processEvents()
+
+    select_kwargs = captured.get("select_kwargs")
+    assert captured.get("operation_names") == ["Real profile select"]
+    assert isinstance(select_kwargs, dict)
+    assert select_kwargs["profile_id"] == profile.profile_id
+    assert select_kwargs["configured_mods_path_text"] == str(real_mods_root)
+
+
+def test_main_window_delete_real_profile_dispatches_delete_operation(
+    main_window: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_mods_root = tmp_path / "RealMods"
+    real_mods_root.mkdir()
+    real_index = main_window._scan_target_combo.findData(SCAN_TARGET_CONFIGURED_REAL_MODS)
+    assert real_index >= 0
+    main_window._scan_target_combo.setCurrentIndex(real_index)
+    main_window._mods_path_input.setText(str(real_mods_root))
+    inventory = ModsInventory(
+        mods=(
+            InstalledMod(
+                unique_id="Sample.Alpha",
+                name="Alpha Mod",
+                version="1.0.0",
+                folder_path=real_mods_root / "AlphaMod",
+                manifest_path=real_mods_root / "AlphaMod" / "manifest.json",
+                dependencies=tuple(),
+            ),
+        ),
+        parse_warnings=tuple(),
+        duplicate_unique_ids=tuple(),
+        missing_required_dependencies=tuple(),
+        scan_entry_findings=tuple(),
+        ignored_entries=tuple(),
+    )
+    deleted_profile = SandboxModProfile(
+        profile_id="profile_alpha",
+        name="Alpha Only",
+        storage_dir_name="profile_alpha_root",
+    )
+    default_profile = SandboxModProfile(
+        profile_id="default",
+        name="Default",
+        is_default=True,
+    )
+    remaining_profile = SandboxModProfile(
+        profile_id="profile_beta",
+        name="Beta Only",
+        storage_dir_name="profile_beta_root",
+    )
+    delete_result = RealModProfileDeleteResult(
+        profile=deleted_profile,
+        profiles=SandboxModProfileCatalog(
+            profiles=(default_profile, remaining_profile),
+            active_profile_id=remaining_profile.profile_id,
+        ),
+        scan_result=ScanResult(
+            target_kind=SCAN_TARGET_CONFIGURED_REAL_MODS,
+            scan_path=real_mods_root,
+            inventory=inventory,
+        ),
+    )
+    captured: dict[str, object] = {}
+    catalog_state = {"profiles": (default_profile, deleted_profile, remaining_profile)}
+
+    def fake_delete(**kwargs: object) -> RealModProfileDeleteResult:
+        captured["delete_kwargs"] = kwargs
+        catalog_state["profiles"] = (default_profile, remaining_profile)
+        return delete_result
+
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        _fake_background_operation_with_real_lifecycle(main_window, captured),
+    )
+    monkeypatch.setattr(main_window._shell_service, "delete_real_mod_profile", fake_delete)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "load_real_mod_profiles",
+        lambda: SandboxModProfileCatalog(
+            profiles=tuple(catalog_state["profiles"]),
+            active_profile_id=remaining_profile.profile_id,
+        ),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Yes),
+    )
+
+    main_window._render_inventory(inventory)
+    main_window._reload_real_mod_profiles(selected_profile_id=deleted_profile.profile_id)
+    qapp.processEvents()
+
+    main_window._on_delete_real_profile()
+    qapp.processEvents()
+
+    delete_kwargs = captured.get("delete_kwargs")
+    assert captured.get("operation_names") == ["Real profile delete"]
+    assert isinstance(delete_kwargs, dict)
+    assert delete_kwargs["profile_id"] == deleted_profile.profile_id
+    assert delete_kwargs["configured_mods_path_text"] == str(real_mods_root)
+    assert main_window._real_profile_combo.currentData() == remaining_profile.profile_id
+    assert "Real profile deleted" in main_window._inventory_output_box.toPlainText()
+
+
 def test_main_window_sandbox_archive_autofill_only_when_empty(
     main_window: MainWindow,
     qapp: QApplication,
@@ -3187,10 +4485,10 @@ def test_main_window_top_level_context_tabs_follow_v1_workflow_order(
 
     assert context_tabs is not None
     assert [context_tabs.tabText(index) for index in range(context_tabs.count())] == [
-        "Mods",
+        "Library",
         "Setup",
         "Packages",
-        "Review",
+        "Install",
         "Discover",
         "Compare",
         "Archive",
@@ -3205,8 +4503,8 @@ def test_main_window_left_inventory_tabs_are_simplified_for_v1_shell(
 
     assert inventory_tabs is not None
     assert [inventory_tabs.tabText(index) for index in range(inventory_tabs.count())] == [
-        "Installed Mods",
-        "Launch",
+        "Library",
+        "SMAPI",
     ]
 
 
@@ -3574,6 +4872,12 @@ def test_main_window_packages_watcher_section_uses_separate_rows_for_paths_and_a
     }
     assert primary_button_texts == {"Choose folder", "Open"}
     assert secondary_button_texts == {"Choose folder 2", "Open"}
+
+    packages_top_grid = main_window.findChild(QWidget, "packages_top_grid")
+    assert packages_top_grid is not None
+    top_grid_layout = packages_top_grid.layout()
+    assert isinstance(top_grid_layout, QGridLayout)
+    assert top_grid_layout.itemAtPosition(0, 0).widget() is watcher_group
     assert runtime_button_texts == {"Start intake watch", "Stop intake watch"}
 
 
@@ -3583,17 +4887,23 @@ def test_main_window_packages_surface_uses_guided_intake_composition(
     packages_top_grid = main_window.findChild(QWidget, "packages_top_grid")
     import_group = main_window.findChild(QGroupBox, "packages_import_group")
     watcher_group = main_window.findChild(QGroupBox, "packages_watcher_group")
+    packages_output_group = main_window.findChild(QGroupBox, "packages_output_group")
     review_target_group = main_window.findChild(QGroupBox, "packages_review_target_group")
+    queue_filter_input = main_window.findChild(QLineEdit, "packages_queue_filter_input")
 
     assert packages_top_grid is not None
     assert import_group is not None
     assert watcher_group is not None
+    assert packages_output_group is not None
     assert review_target_group is not None
+    assert queue_filter_input is not None
+    assert import_group.isVisible() is False
 
     top_grid_layout = packages_top_grid.layout()
     assert isinstance(top_grid_layout, QGridLayout)
-    assert top_grid_layout.itemAtPosition(0, 0).widget() is import_group
-    assert top_grid_layout.itemAtPosition(0, 1).widget() is watcher_group
+    assert top_grid_layout.itemAtPosition(0, 0).widget() is watcher_group
+    assert top_grid_layout.itemAtPosition(1, 0).widget() is import_group
+    assert top_grid_layout.itemAtPosition(0, 1).widget() is packages_output_group
 
 
 def test_main_window_install_review_surface_onboarding_copy_is_user_facing(
@@ -3609,14 +4919,11 @@ def test_main_window_install_review_surface_onboarding_copy_is_user_facing(
     assert intro_label is not None
     assert execute_help_label is not None
     assert review_summary_label is not None
-    assert "generate the read-only review" in intro_label.text()
-    assert "write summary looks right" in intro_label.text()
-    assert "Review install is read-only." in execute_help_label.text()
-    assert "Apply install stays unavailable until the review is ready." in execute_help_label.text()
-    assert (
-        review_summary_label.text()
-        == "Review summary: no plan yet. Click Review install to inspect changes."
-    )
+    assert "generate the read-only install plan" in intro_label.text()
+    assert "apply only when the plan looks right" in intro_label.text()
+    assert "Install planning is read-only." in execute_help_label.text()
+    assert "Apply install stays unavailable until the plan is ready." in execute_help_label.text()
+    assert "Click Plan install" in review_summary_label.text()
 
 
 def test_main_window_loads_saved_steam_auto_start_preference(
@@ -3703,6 +5010,11 @@ def test_main_window_export_backup_bundle_runs_service_and_updates_output(
 
     monkeypatch.setattr(
         main_window,
+        "_prompt_for_backup_export_artifacts",
+        lambda: BackupBundleExportSelection(),
+    )
+    monkeypatch.setattr(
+        main_window,
         "_prompt_for_backup_export_target",
         lambda: (str(export_root), "directory"),
     )
@@ -3725,6 +5037,7 @@ def test_main_window_export_backup_bundle_runs_service_and_updates_output(
     assert captured["service_kwargs"] == {
         "destination_root_text": str(export_root),
         "bundle_storage_kind": "directory",
+        "artifact_selection": BackupBundleExportSelection(),
         **main_window._current_backup_export_inputs(),
     }
     assert "steam_auto_start_enabled" not in captured["service_kwargs"]
@@ -3742,6 +5055,7 @@ def test_main_window_export_backup_bundle_cancel_sets_status_without_running(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: list[str] = []
+    monkeypatch.setattr(main_window, "_prompt_for_backup_export_artifacts", lambda: None)
     monkeypatch.setattr(
         main_window,
         "_prompt_for_backup_export_target",
@@ -3773,7 +5087,7 @@ def test_main_window_inspect_backup_bundle_runs_service_and_updates_output(
         bundle_path=bundle_path,
         manifest_path=manifest_path,
         summary_path=summary_path,
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-18T12:00:00Z",
         items=(
@@ -3925,7 +5239,7 @@ def test_main_window_inspect_backup_bundle_keeps_inspection_visible_when_auto_pl
         bundle_path=bundle_path,
         manifest_path=bundle_path / "manifest.json",
         summary_path=bundle_path / "README.txt",
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-24T12:00:00Z",
         items=tuple(),
@@ -4052,6 +5366,11 @@ def test_main_window_export_backup_bundle_can_request_zip_creation(
 
     monkeypatch.setattr(
         main_window,
+        "_prompt_for_backup_export_artifacts",
+        lambda: BackupBundleExportSelection(),
+    )
+    monkeypatch.setattr(
+        main_window,
         "_prompt_for_backup_export_target",
         lambda: (str(zip_path), "zip"),
     )
@@ -4079,6 +5398,7 @@ def test_main_window_export_backup_bundle_can_request_zip_creation(
     assert captured["service_kwargs"] == {
         "destination_root_text": str(zip_path),
         "bundle_storage_kind": "zip",
+        "artifact_selection": BackupBundleExportSelection(),
         **main_window._current_backup_export_inputs(),
     }
     assert "steam_auto_start_enabled" not in captured["service_kwargs"]
@@ -4097,7 +5417,7 @@ def test_main_window_plan_restore_import_reuses_bundle_selected_for_inspection_b
         bundle_path=bundle_path,
         manifest_path=manifest_path,
         summary_path=summary_path,
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-21T14:15:00Z",
         items=tuple(),
@@ -4193,7 +5513,7 @@ def test_main_window_plan_restore_import_reuses_active_bundle_after_inspect_with
         bundle_path=bundle_path,
         manifest_path=bundle_path / "manifest.json",
         summary_path=bundle_path / "README.txt",
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-24T16:00:00Z",
         items=tuple(),
@@ -4311,7 +5631,7 @@ def test_main_window_plan_restore_import_runs_service_and_updates_output(
         bundle_path=bundle_path,
         manifest_path=manifest_path,
         summary_path=summary_path,
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-18T13:00:00Z",
         items=(
@@ -4475,7 +5795,7 @@ def test_main_window_plan_restore_import_uses_active_inspected_bundle_without_pi
         bundle_path=bundle_path,
         manifest_path=manifest_path,
         summary_path=summary_path,
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-21T13:00:00Z",
         items=tuple(),
@@ -4549,7 +5869,7 @@ def test_main_window_execute_restore_import_uses_active_bundle_without_picker(
         bundle_path=bundle_path,
         manifest_path=manifest_path,
         summary_path=summary_path,
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-21T13:15:00Z",
         items=tuple(),
@@ -4662,7 +5982,7 @@ def test_main_window_execute_restore_import_picker_fallback_runs_when_no_active_
         bundle_path=bundle_path,
         manifest_path=manifest_path,
         summary_path=summary_path,
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-21T13:30:00Z",
         items=tuple(),
@@ -4778,7 +6098,7 @@ def test_main_window_active_backup_bundle_label_updates_when_context_changes(
         bundle_path=first_bundle,
         manifest_path=first_bundle / "manifest.json",
         summary_path=first_bundle / "README.txt",
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-21T13:45:00Z",
         items=tuple(),
@@ -4789,7 +6109,7 @@ def test_main_window_active_backup_bundle_label_updates_when_context_changes(
         bundle_path=second_bundle,
         manifest_path=second_bundle / "manifest.json",
         summary_path=second_bundle / "README.txt",
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-21T13:50:00Z",
         items=tuple(),
@@ -4826,7 +6146,7 @@ def test_main_window_plan_restore_import_enables_execute_button_when_review_allo
         bundle_path=bundle_path,
         manifest_path=manifest_path,
         summary_path=summary_path,
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-18T13:15:00Z",
         items=(
@@ -4939,7 +6259,7 @@ def test_main_window_plan_restore_import_keeps_execute_button_disabled_when_revi
         bundle_path=bundle_path,
         manifest_path=manifest_path,
         summary_path=summary_path,
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-18T13:20:00Z",
         items=tuple(),
@@ -5015,7 +6335,7 @@ def test_main_window_execute_restore_import_runs_service_and_updates_output(
         bundle_path=bundle_path,
         manifest_path=manifest_path,
         summary_path=summary_path,
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-18T14:00:00Z",
         items=(
@@ -5152,7 +6472,7 @@ def test_main_window_execute_restore_import_cancel_preserves_no_write(
         bundle_path=bundle_path,
         manifest_path=manifest_path,
         summary_path=summary_path,
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-18T14:10:00Z",
         items=tuple(),
@@ -5223,7 +6543,7 @@ def test_main_window_execute_restore_import_conflict_review_mentions_archive_rep
         bundle_path=bundle_path,
         manifest_path=manifest_path,
         summary_path=summary_path,
-        bundle_format="sdvmm-local-backup",
+        bundle_format="cinderleaf-local-backup",
         format_version=1,
         created_at_utc="2026-03-21T12:00:00Z",
         items=tuple(),
@@ -5479,7 +6799,7 @@ def test_main_window_start_watch_uses_both_watched_paths_and_updates_status(
             watched_downloads_path_text,
             secondary_watched_downloads_path_text,
         )
-        return tuple()
+        return (Path(r"C:\Downloads\already-present.zip"), Path(r"D:\BuildOutput\existing.zip"))
 
     def fake_poll_downloads_watch(**kwargs: object) -> object:
         captured["poll"] = kwargs
@@ -5495,10 +6815,20 @@ def test_main_window_start_watch_uses_both_watched_paths_and_updates_status(
         "poll_downloads_watch",
         fake_poll_downloads_watch,
     )
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: (
+            captured.setdefault("busy", kwargs),
+            on_success(task_fn()),
+        )[-1],
+    )
 
     main_window._on_start_watch()
 
     assert captured["initialize"] == (r"C:\Downloads", r"D:\BuildOutput")
+    assert captured["busy"]["busy_button"] is main_window._start_watch_button
+    assert captured["busy"]["busy_button_text"] == "Starting watch..."
     assert captured["poll"] == {
         "watched_downloads_path_text": r"C:\Downloads",
         "secondary_watched_downloads_path_text": r"D:\BuildOutput",
@@ -5507,7 +6837,7 @@ def test_main_window_start_watch_uses_both_watched_paths_and_updates_status(
         "nexus_api_key_text": "",
         "existing_config": main_window._config,
     }
-    assert main_window._watch_status_label.text() == "Running | 2 paths | baseline=0 zip(s)"
+    assert main_window._watch_status_label.text() == "Running | 2 paths | baseline=2 zip(s)"
     assert main_window._watch_status_label.toolTip() == "C:\\Downloads\nD:\\BuildOutput"
 
 
@@ -5546,7 +6876,7 @@ def test_main_window_plan_install_surface_has_expected_structure(
     assert review_output_group is not None
 
     tab_labels = {context_tabs.tabText(index) for index in range(context_tabs.count())}
-    assert "Review" in tab_labels
+    assert "Install" in tab_labels
     assert context_tabs.indexOf(main_window._plan_install_tab) >= 0
     assert context_tabs.tabPosition() == QTabWidget.TabPosition.West
     assert inventory_tabs.parentWidget() is mods_page
@@ -5570,13 +6900,14 @@ def test_main_window_plan_install_surface_has_expected_structure(
     assert review_middle_row is not None
     assert safety_panel_group.parentWidget() is review_top_row
     assert staged_package_group.parentWidget() is review_top_row
-    assert execute_group.parentWidget() is review_middle_row
+    assert execute_group.parentWidget() is review_top_row
     assert plan_review_summary_group.parentWidget() is review_middle_row
     assert plan_facts_group.parentWidget() is review_middle_row
     review_top_row_layout = review_top_row.layout()
     assert isinstance(review_top_row_layout, QHBoxLayout)
     assert review_top_row_layout.itemAt(0).widget() is staged_package_group
     assert review_top_row_layout.itemAt(1).widget() is safety_panel_group
+    assert review_top_row_layout.itemAt(2).widget() is execute_group
     assert plan_layout.indexOf(intro_label) < plan_layout.indexOf(review_state_label)
     assert plan_layout.indexOf(review_state_label) < plan_layout.indexOf(review_top_row)
     assert plan_layout.indexOf(review_top_row) < plan_layout.indexOf(destination_group)
@@ -5621,11 +6952,14 @@ def test_main_window_mods_workspace_uses_compact_action_band_above_inventory(
     main_window: MainWindow,
 ) -> None:
     action_band = main_window.findChild(QWidget, "mods_inventory_action_band")
+    selected_actions_group = main_window.findChild(QGroupBox, "mods_selected_actions_group")
     inventory_tabs = main_window._inventory_controls_tabs
 
     assert action_band is not None
+    assert selected_actions_group is not None
     assert inventory_tabs is not None
     assert action_band.parentWidget() is inventory_tabs.widget(0)
+    assert selected_actions_group.parentWidget() is main_window._mods_selection_context_scroll_area.widget()
 
 
 def test_main_window_key_actions_keep_clear_button_roles(main_window: MainWindow) -> None:
@@ -5686,7 +7020,7 @@ def test_main_window_workflow_state_labels_reflect_idle_and_ready_states(
 
     assert "Set the Real Mods folder in Setup" in mods_label.text()
     assert "Optional: search by mod name" in discovery_label.text()
-    assert "After Setup, choose zip files" in packages_label.text()
+    assert "watch downloads" in packages_label.text()
     assert "Start in Packages" in review_label.text()
 
     inventory = _mods_inventory(
@@ -5710,11 +7044,11 @@ def test_main_window_workflow_state_labels_reflect_idle_and_ready_states(
         current_path=Path(r"C:\Downloads\AlphaPack.zip"),
     )
     qapp.processEvents()
-    assert "Inspect them" in packages_label.text()
+    assert "Inspect the queue" in packages_label.text()
 
     main_window._apply_install_plan_review(_sandbox_install_plan())
     qapp.processEvents()
-    assert "Install review is ready" in review_label.text()
+    assert "Install plan is ready" in review_label.text()
 
 
 def test_main_window_workflow_state_labels_show_running_activity(
@@ -5849,14 +7183,14 @@ def test_main_window_plan_install_surface_key_controls_exist(
     assert main_window._plan_review_explanation_label is plan_review_explanation_label
     assert main_window._plan_facts_label is plan_facts_label
     assert staged_package_label.isReadOnly() is True
-    assert staged_package_group.title() == "Current package"
+    assert staged_package_group.title() == "Staged package(s)"
     assert overwrite_checkbox.text() == "Enable archive-aware replace"
     assert overwrite_checkbox.isVisible() is True
-    assert plan_button.text() == "Review install"
+    assert plan_button.text() == "Plan install"
     assert "archive-aware replace" in overwrite_help_label.text().casefold()
     assert (
         plan_review_explanation_label.text()
-        == "Review detail: no plan selected."
+        == "Install detail: no plan selected."
     )
     assert plan_facts_label.text() == (
         "Entries: -\n"
@@ -5975,7 +7309,7 @@ def test_main_window_package_inspection_writes_to_packages_detail_surface(
     assert main_window._findings_box is main_window._packages_output_box
     assert (
         main_window._status_strip_label.text()
-        == "Zip inspection complete: 2 mod(s) detected. Next step: open Review."
+        == "Zip inspection complete: 2 mod(s) detected. Next step: open Install."
     )
     assert main_window._packages_output_group.isVisible() is True
 
@@ -6017,7 +7351,7 @@ def test_main_window_browse_zip_accepts_multiple_selected_packages(
     assert main_window._selected_zip_package_paths == tuple(Path(path) for path in selected_paths)
     assert (
         main_window._zip_selection_summary_label.text()
-        == "2 zip packages chosen for inspection."
+        == "2 watched packages queued for Install."
     )
     assert main_window._zip_selection_summary_label.toolTip() == "Alpha.zip\nBeta.zip"
     assert main_window._package_inspection_selector.count() == 2
@@ -6034,7 +7368,7 @@ def test_main_window_zip_selection_summary_reflects_single_manual_path_entry(
     assert main_window._selected_zip_package_paths == (Path(r"C:\Downloads\Single.zip"),)
     assert (
         main_window._zip_selection_summary_label.text()
-        == "1 zip package chosen: Single.zip"
+        == "1 watched package queued: Single.zip"
     )
     assert main_window._zip_selection_summary_label.toolTip() == "Single.zip"
 
@@ -6086,7 +7420,7 @@ def test_main_window_packages_intake_shows_explicit_single_package_review_rule(
 ) -> None:
     assert (
         main_window._zip_staging_rule_label.text()
-        == "Inspect first, then keep one package staged for Review at a time."
+        == "Inspect first, then keep the staged package list ready for Install."
     )
 
 
@@ -6111,8 +7445,12 @@ def test_main_window_selected_inspected_package_auto_updates_current_review_targ
     qapp.processEvents()
 
     assert main_window._zip_path_input.text() == str(second.package_path)
-    assert main_window._staged_package_label.text() == str(second.package_path)
-    assert main_window._staged_package_label.toolTip() == str(second.package_path)
+    assert main_window._staged_package_label.text() == (
+        "2 packages staged for install: Alpha.zip, Beta.zip"
+    )
+    assert main_window._staged_package_label.toolTip() == "\n".join(
+        [str(first.package_path), str(second.package_path)]
+    )
     assert main_window._plan_selected_intake_button.isHidden() is False
     assert main_window._plan_selected_intake_button.isEnabled() is True
 
@@ -6143,8 +7481,10 @@ def test_main_window_single_valid_inspected_package_hides_selector_and_targets_r
     assert main_window._package_inspection_selector.isHidden() is True
     assert main_window._package_inspection_selector_label.isHidden() is True
     assert main_window._zip_path_input.text() == str(valid.package_path)
-    assert main_window._staged_package_label.text() == str(valid.package_path)
-    assert "Next step: open Review." in main_window._package_inspection_summary_label.text()
+    assert main_window._staged_package_label.text() == (
+        "2 packages staged for install: Broken.zip, Alpha.zip"
+    )
+    assert "Next step: open Install." in main_window._package_inspection_summary_label.text()
 
 
 def test_main_window_selected_detected_package_auto_updates_current_review_target(
@@ -6167,15 +7507,36 @@ def test_main_window_selected_detected_package_auto_updates_current_review_targe
         lambda *args, **kwargs: pytest.fail("Selecting a detected package must not execute install."),
     )
 
-    main_window._detected_intakes = (intake,)
-    main_window._intake_correlations = (_intake_correlation(intake, next_step="Review AlphaPack.zip"),)
+    other_intake = _intake_result(
+        "BetaPack.zip",
+        "new_install_candidate",
+        "Beta Mod",
+        "Sample.Beta",
+    )
+
+    main_window._detected_intakes = (intake, other_intake)
+    main_window._intake_correlations = (
+        _intake_correlation(intake, next_step="Review AlphaPack.zip"),
+        _intake_correlation(other_intake, next_step="Review BetaPack.zip"),
+    )
     main_window._refresh_intake_selector()
     qapp.processEvents()
+    main_window._intake_result_combo.setCurrentIndex(0)
+    qapp.processEvents()
     assert main_window._zip_path_input.text() == str(intake.package_path)
+    assert main_window._selected_zip_package_paths == (intake.package_path,)
     assert main_window._staged_package_label.toolTip() == str(intake.package_path)
     assert main_window._staged_package_label.text() == str(intake.package_path)
     assert main_window._pending_install_plan is None
     assert main_window._plan_selected_intake_button.isHidden() is False
+    assert main_window._plan_selected_intake_button.isEnabled() is True
+
+    main_window._intake_result_combo.setCurrentIndex(1)
+    qapp.processEvents()
+    assert main_window._selected_intake_index() == 1
+    assert main_window._zip_path_input.text() == str(other_intake.package_path)
+    assert main_window._staged_package_label.toolTip() == str(intake.package_path)
+    assert main_window._staged_package_label.text() == str(intake.package_path)
     assert main_window._plan_selected_intake_button.isEnabled() is True
 
 
@@ -6224,7 +7585,7 @@ def test_main_window_single_guided_match_auto_selects_detected_package_and_surfa
 
     main_window._on_watch_tick()
 
-    expected_message = "Matched update package ready to review against Real Mods: MatchedPack.zip"
+    expected_message = "Matched update package ready to install against Real Mods: MatchedPack.zip"
     assert main_window._selected_intake_index() == 0
     assert main_window._intake_result_combo.currentData() == 0
     assert "watch intake" in main_window._findings_box.toPlainText()
@@ -6294,7 +7655,7 @@ def test_main_window_multiple_guided_matches_do_not_guess_and_surface_message(
     main_window._on_watch_tick()
 
     expected_message = (
-        "Multiple matched update packages are ready. Choose which package to review in Packages."
+        "Multiple matched update packages are ready. Choose which package to install in Packages."
     )
     assert main_window._selected_intake_index() == 0
     assert main_window._intake_result_combo.currentData() == 0
@@ -6486,7 +7847,7 @@ def test_main_window_staging_without_valid_package_surfaces_message_and_keeps_st
     main_window._on_plan_selected_intake()
     qapp.processEvents()
 
-    expected_message = "Select a detected package or inspect a zip package before opening install review."
+    expected_message = "Select a detected package or inspect a zip package before opening Install."
     assert warnings == [expected_message]
     assert main_window._findings_box.toPlainText() == expected_message
     assert main_window._status_strip_label.text() == expected_message
@@ -6528,7 +7889,7 @@ def test_main_window_install_related_inputs_invalidate_pending_plan(
 
     for action in invalidation_actions:
         main_window._pending_install_plan = _sandbox_install_plan()
-        main_window._set_plan_review_summary_text("Plan review: ready to install.")
+        main_window._set_plan_review_summary_text("Install plan: ready to install.")
         main_window._set_plan_review_explanation_text("Ready: no blocking issues detected.")
         main_window._set_plan_facts_text(
             "Entries: 1\n"
@@ -6541,9 +7902,9 @@ def test_main_window_install_related_inputs_invalidate_pending_plan(
         qapp.processEvents()
         assert main_window._pending_install_plan is None
         assert main_window._plan_review_summary_label.text() == (
-            "Review summary: no plan yet. Click Review install to inspect changes."
+            "Install summary: no plan yet. Click Plan install to inspect changes."
         )
-        assert main_window._plan_review_explanation_label.text() == "Review detail: no plan selected."
+        assert main_window._plan_review_explanation_label.text() == "Install detail: no plan selected."
         assert main_window._plan_facts_label.text() == (
             "Entries: -\n"
             "Replace existing: -\n"
@@ -6566,15 +7927,21 @@ def test_main_window_plan_install_stores_sandbox_plan_and_sets_status(
         return sandbox_plan
 
     monkeypatch.setattr(main_window._shell_service, "build_install_plan", fake_build_install_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
 
     main_window._on_plan_install()
 
     assert build_calls["count"] == 1
     assert main_window._pending_install_plan is sandbox_plan
     assert main_window._status_strip_label.text() == review.message
-    assert main_window._plan_review_summary_label.text() == "Plan review: ready to install."
+    assert main_window._plan_review_summary_label.text() == "Install plan: ready to install."
     assert main_window._plan_review_explanation_label.text() == "Ready: no blocking issues detected."
     assert main_window._plan_facts_label.text() == (
+        "Packages: 1\n"
         "Entries: 1\n"
         "Replace existing: no\n"
         "Archive writes: no\n"
@@ -6585,7 +7952,7 @@ def test_main_window_plan_install_stores_sandbox_plan_and_sets_status(
     assert "blocked" not in main_window._plan_review_explanation_label.text().casefold()
     assert main_window._findings_box.toPlainText().startswith(review.message)
     assert main_window._plan_install_button.property("buttonRole") == "secondary"
-    assert main_window._plan_install_button.text() == "Review again"
+    assert main_window._plan_install_button.text() == "Plan again"
     assert main_window._run_install_button.property("buttonRole") == "primary"
     assert main_window._run_install_button.isEnabled() is True
 
@@ -6637,7 +8004,7 @@ def test_main_window_plan_install_blocked_review_clears_pending_plan_and_sets_st
     assert review.allowed is False
     assert main_window._pending_install_plan is None
     assert main_window._status_strip_label.text() == review.message
-    assert main_window._plan_review_summary_label.text() == "Plan review: blocked by dependency issues."
+    assert main_window._plan_review_summary_label.text() == "Install plan: blocked by dependency issues."
     assert main_window._plan_review_explanation_label.text().startswith("Dependency issue:")
     assert "Blocked entries: 1" in main_window._plan_facts_label.text()
     assert main_window._findings_box.toPlainText().startswith(review.message)
@@ -6665,7 +8032,7 @@ def test_main_window_plan_install_blocked_by_package_issues_sets_summary(
     main_window._on_plan_install()
 
     assert main_window._pending_install_plan is None
-    assert main_window._plan_review_summary_label.text() == "Plan review: blocked by package issues."
+    assert main_window._plan_review_summary_label.text() == "Install plan: blocked by package issues."
     assert main_window._plan_review_explanation_label.text().startswith("Package issue:")
 
 
@@ -6684,9 +8051,10 @@ def test_main_window_plan_install_runnable_with_warnings_sets_summary(
     main_window._on_plan_install()
 
     assert main_window._pending_install_plan is warning_plan
-    assert main_window._plan_review_summary_label.text() == "Plan review: runnable with warnings."
+    assert main_window._plan_review_summary_label.text() == "Install plan: runnable with warnings."
     assert main_window._plan_review_explanation_label.text().startswith("Warning:")
     assert main_window._plan_facts_label.text() == (
+        "Packages: 1\n"
         "Entries: 1\n"
         "Replace existing: no\n"
         "Archive writes: no\n"
@@ -8520,18 +9888,12 @@ def test_main_window_selecting_valid_intake_enables_plan_selected_button(
     )
     main_window._refresh_intake_selector()
     qapp.processEvents()
-
-    main_window._intake_result_combo.setCurrentIndex(-1)
-    main_window._on_intake_selection_changed()
-    qapp.processEvents()
-    assert main_window._plan_selected_intake_button.isEnabled() is False
-
     main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
     assert main_window._selected_intake_index() >= 0
     assert main_window._plan_selected_intake_button.isEnabled() is True
-    assert main_window._plan_selected_intake_button.text() == "Open Review"
-    assert "selected detected package" in main_window._plan_selected_intake_button.toolTip()
+    assert main_window._plan_selected_intake_button.text() == "Open Install"
+    assert "watched package" in main_window._plan_selected_intake_button.toolTip()
 
 
 def test_main_window_intake_selection_does_not_override_global_operation_status(
@@ -8598,6 +9960,116 @@ def test_main_window_watched_path_change_sets_expected_status_when_active_watche
     main_window._on_watched_path_changed()
 
     assert main_window._status_strip_label.text() == "Watcher stopped because watched path changed."
+
+
+def test_main_window_watch_tick_refreshes_existing_detected_package_when_no_new_paths_arrive(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    stale_intake = replace(
+        _intake_result(
+            "UpdatePack.zip",
+            "update_replace_candidate",
+            "Alpha Mod",
+            "Sample.Alpha",
+        ),
+        matched_installed_unique_ids=("Sample.Alpha",),
+    )
+    refreshed_intake = replace(
+        stale_intake,
+        classification="new_install_candidate",
+        matched_installed_unique_ids=tuple(),
+        message="Package appears to contain a new mod not present in current inventory.",
+    )
+    calls: dict[str, object] = {}
+
+    main_window._detected_intakes = (stale_intake,)
+    main_window._intake_correlations = (
+        _intake_correlation(
+            stale_intake,
+            next_step="Open as update.",
+            matched_update_available_unique_ids=("Sample.Alpha",),
+        ),
+    )
+    main_window._refresh_intake_selector()
+    qapp.processEvents()
+
+    def fake_poll_downloads_watch(**_: object) -> object:
+        return SimpleNamespace(
+            known_zip_paths=(stale_intake.package_path,),
+            intakes=tuple(),
+        )
+
+    def fake_refresh_detected_intakes_against_inventory(
+        *,
+        intakes: tuple[DownloadsIntakeResult, ...],
+        inventory: ModsInventory | None,
+    ) -> tuple[DownloadsIntakeResult, ...]:
+        calls["intakes"] = intakes
+        calls["inventory"] = inventory
+        return (refreshed_intake,)
+
+    monkeypatch.setattr(main_window._shell_service, "poll_downloads_watch", fake_poll_downloads_watch)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "refresh_detected_intakes_against_inventory",
+        fake_refresh_detected_intakes_against_inventory,
+    )
+
+    main_window._on_watch_tick()
+    qapp.processEvents()
+
+    assert calls["intakes"] == (stale_intake,)
+    assert isinstance(calls["inventory"], ModsInventory)
+    assert main_window._detected_intakes == (refreshed_intake,)
+    assert main_window._intake_correlations[0].intake.classification == "new_install_candidate"
+    assert main_window._stage_update_intake_button.isHidden() is True
+
+
+def test_main_window_watch_tick_prunes_detected_package_when_zip_disappears(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    stale_intake = _intake_result(
+        "ArchivedPack.zip",
+        "new_install_candidate",
+        "Archived Mod",
+        "Sample.Archived",
+    )
+    main_window._detected_intakes = (stale_intake,)
+    main_window._intake_correlations = (
+        _intake_correlation(stale_intake, next_step="Review ArchivedPack.zip"),
+    )
+    main_window._refresh_intake_selector()
+    qapp.processEvents()
+
+    def fake_poll_downloads_watch(**_: object) -> object:
+        return SimpleNamespace(
+            known_zip_paths=tuple(),
+            intakes=tuple(),
+        )
+
+    def fail_refresh_detected_intakes_against_inventory(**_: object) -> tuple[DownloadsIntakeResult, ...]:
+        pytest.fail("Missing watched zip should be pruned before refresh is attempted.")
+
+    monkeypatch.setattr(main_window._shell_service, "poll_downloads_watch", fake_poll_downloads_watch)
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "refresh_detected_intakes_against_inventory",
+        fail_refresh_detected_intakes_against_inventory,
+    )
+
+    main_window._on_watch_tick()
+    qapp.processEvents()
+
+    assert main_window._detected_intakes == tuple()
+    assert main_window._intake_correlations == tuple()
+    assert main_window._intake_result_combo.count() == 1
+    assert main_window._intake_result_combo.itemText(0) == "<no detected packages>"
+    assert main_window._intake_result_combo.currentData() == -1
+    assert main_window._intake_result_combo.isEnabled() is False
 
 
 def test_main_window_scan_completion_refreshes_detected_package_state(
@@ -8685,14 +10157,14 @@ def test_main_window_stage_update_button_only_appears_for_update_like_detected_p
     qapp.processEvents()
 
     assert main_window._plan_selected_intake_button.isEnabled() is True
-    assert main_window._plan_selected_intake_button.text() == "Open Review"
+    assert main_window._plan_selected_intake_button.text() == "Open Install"
     assert main_window._stage_update_intake_button.isHidden() is True
 
     main_window._detected_intakes = (update_intake,)
     main_window._intake_correlations = (
         _intake_correlation(
             update_intake,
-            next_step="Stage update.",
+            next_step="Open as update.",
             matched_update_available_unique_ids=("Sample.Alpha",),
         ),
     )
@@ -8768,7 +10240,7 @@ def test_main_window_packages_compare_target_switches_truthful_update_state(
     assert "update_replace_candidate" not in main_window._intake_result_combo.currentText()
     assert "actionable" not in main_window._intake_result_combo.currentText()
     assert main_window._stage_update_intake_button.isHidden() is False
-    assert "Review as update for Real Mods" in main_window._selected_intake_correlation().next_step
+    assert "Open as update for Real Mods" in main_window._selected_intake_correlation().next_step
     assert "Comparison target: Real Mods" in main_window._packages_output_box.toPlainText()
 
     main_window._packages_compare_target_combo.setCurrentIndex(sandbox_index)
@@ -8781,7 +10253,7 @@ def test_main_window_packages_compare_target_switches_truthful_update_state(
         "AlphaPack.zip [older than installed in Sandbox Mods]"
     )
     assert main_window._stage_update_intake_button.isHidden() is True
-    assert "Review as update stays off for older packages" in main_window._selected_intake_correlation().next_step
+    assert "Open as update stays off for older packages" in main_window._selected_intake_correlation().next_step
     assert "Comparison target: Sandbox Mods" in main_window._packages_output_box.toPlainText()
 
 
@@ -8887,7 +10359,7 @@ def test_main_window_review_action_hierarchy_leads_with_read_only_step_until_pla
 
     assert main_window._plan_install_button.property("buttonRole") == "primary"
     assert main_window._plan_install_button.isEnabled() is True
-    assert main_window._plan_install_button.text() == "Review install"
+    assert main_window._plan_install_button.text() == "Plan install"
     assert main_window._run_install_button.property("buttonRole") == "secondary"
     assert main_window._run_install_button.isEnabled() is False
 
@@ -8895,7 +10367,7 @@ def test_main_window_review_action_hierarchy_leads_with_read_only_step_until_pla
     qapp.processEvents()
 
     assert main_window._plan_install_button.property("buttonRole") == "secondary"
-    assert main_window._plan_install_button.text() == "Review again"
+    assert main_window._plan_install_button.text() == "Plan again"
     assert main_window._run_install_button.property("buttonRole") == "primary"
     assert main_window._run_install_button.isEnabled() is True
 
@@ -8918,11 +10390,13 @@ def test_main_window_stage_update_carries_archive_replace_intent_into_plan(
     main_window._intake_correlations = (
         _intake_correlation(
             update_intake,
-            next_step="Stage update.",
+            next_step="Open as update.",
             matched_update_available_unique_ids=("Sample.Alpha",),
         ),
     )
     main_window._refresh_intake_selector()
+    qapp.processEvents()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
 
     captured: dict[str, object] = {}
@@ -8930,6 +10404,7 @@ def test_main_window_stage_update_carries_archive_replace_intent_into_plan(
     def fake_build_install_plan(
         *,
         package_path_text: str,
+        package_paths_text: tuple[str, ...],
         install_target: str,
         configured_mods_path_text: str,
         sandbox_mods_path_text: str,
@@ -8941,6 +10416,7 @@ def test_main_window_stage_update_carries_archive_replace_intent_into_plan(
         existing_config: object | None = None,
     ) -> SandboxInstallPlan:
         captured["package_path_text"] = package_path_text
+        captured["package_paths_text"] = package_paths_text
         captured["allow_overwrite"] = allow_overwrite
         return _sandbox_install_plan(
             action=OVERWRITE_WITH_ARCHIVE,
@@ -8950,13 +10426,19 @@ def test_main_window_stage_update_carries_archive_replace_intent_into_plan(
         )
 
     monkeypatch.setattr(main_window._shell_service, "build_install_plan", fake_build_install_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
 
     main_window._overwrite_checkbox.setChecked(False)
     main_window._on_stage_selected_intake_update()
     main_window._on_plan_install()
 
     assert main_window._overwrite_checkbox.isChecked() is True
-    assert captured["package_path_text"] == str(update_intake.package_path)
+    assert captured["package_path_text"] == ""
+    assert captured["package_paths_text"] == (str(update_intake.package_path),)
     assert captured["allow_overwrite"] is True
     assert main_window._pending_install_plan is not None
     assert main_window._pending_install_plan.entries[0].action == OVERWRITE_WITH_ARCHIVE
@@ -8986,11 +10468,13 @@ def test_main_window_normal_staging_does_not_inherit_auto_overwrite_from_stage_u
     main_window._intake_correlations = (
         _intake_correlation(
             update_intake,
-            next_step="Stage update.",
+            next_step="Open as update.",
             matched_update_available_unique_ids=("Sample.Alpha",),
         ),
     )
     main_window._refresh_intake_selector()
+    qapp.processEvents()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
 
     main_window._on_stage_selected_intake_update()
@@ -9005,12 +10489,15 @@ def test_main_window_normal_staging_does_not_inherit_auto_overwrite_from_stage_u
     )
     main_window._refresh_intake_selector()
     qapp.processEvents()
+    main_window._intake_result_combo.setCurrentIndex(0)
+    qapp.processEvents()
 
     captured: dict[str, object] = {}
 
     def fake_build_install_plan(
         *,
         package_path_text: str,
+        package_paths_text: tuple[str, ...],
         install_target: str,
         configured_mods_path_text: str,
         sandbox_mods_path_text: str,
@@ -9025,6 +10512,11 @@ def test_main_window_normal_staging_does_not_inherit_auto_overwrite_from_stage_u
         return _sandbox_install_plan()
 
     monkeypatch.setattr(main_window._shell_service, "build_install_plan", fake_build_install_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
 
     main_window._on_plan_selected_intake()
     main_window._on_plan_install()
@@ -9057,11 +10549,13 @@ def test_main_window_manual_overwrite_choice_still_applies_after_stage_update(
     main_window._intake_correlations = (
         _intake_correlation(
             update_intake,
-            next_step="Stage update.",
+            next_step="Open as update.",
             matched_update_available_unique_ids=("Sample.Alpha",),
         ),
     )
     main_window._refresh_intake_selector()
+    qapp.processEvents()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
 
     main_window._on_stage_selected_intake_update()
@@ -9085,6 +10579,7 @@ def test_main_window_manual_overwrite_choice_still_applies_after_stage_update(
     def fake_build_install_plan(
         *,
         package_path_text: str,
+        package_paths_text: tuple[str, ...],
         install_target: str,
         configured_mods_path_text: str,
         sandbox_mods_path_text: str,
@@ -9099,12 +10594,58 @@ def test_main_window_manual_overwrite_choice_still_applies_after_stage_update(
         return _sandbox_install_plan(action=OVERWRITE_WITH_ARCHIVE)
 
     monkeypatch.setattr(main_window._shell_service, "build_install_plan", fake_build_install_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
 
     main_window._on_plan_selected_intake()
     main_window._on_plan_install()
 
     assert main_window._overwrite_checkbox.isChecked() is True
     assert captured["allow_overwrite"] is True
+
+
+def test_main_window_batch_open_install_inherits_compare_target_install_destination(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    first = _package_inspection_result("Alpha.zip", "Sample.Alpha")
+    second = _package_inspection_result("Beta.zip", "Sample.Beta")
+    batch_result = PackageInspectionBatchResult(
+        entries=(
+            PackageInspectionBatchEntry(package_path=first.package_path, inspection=first),
+            PackageInspectionBatchEntry(package_path=second.package_path, inspection=second),
+        )
+    )
+
+    sandbox_index = main_window._packages_compare_target_combo.findData(SCAN_TARGET_SANDBOX_MODS)
+    real_index = main_window._packages_compare_target_combo.findData(
+        SCAN_TARGET_CONFIGURED_REAL_MODS
+    )
+    assert sandbox_index >= 0
+    assert real_index >= 0
+
+    main_window._packages_compare_target_combo.setCurrentIndex(real_index)
+    main_window._set_current_install_target(INSTALL_TARGET_SANDBOX_MODS)
+    main_window._selected_zip_package_paths = (first.package_path, second.package_path)
+
+    monkeypatch.setattr(
+        main_window._shell_service,
+        "inspect_zip_batch_with_inventory_context",
+        lambda *args, **kwargs: batch_result,
+    )
+
+    main_window._on_plan_selected_intake()
+    qapp.processEvents()
+
+    assert main_window._current_install_target() == INSTALL_TARGET_CONFIGURED_REAL_MODS
+    assert main_window._context_tabs.currentWidget() == main_window._plan_install_tab
+    assert main_window._staged_package_label.text() == (
+        "2 packages staged for install: Alpha.zip, Beta.zip"
+    )
 
 
 def test_main_window_secondary_watched_path_change_stops_active_watcher(
@@ -9322,6 +10863,7 @@ def _sandbox_install_plan(
         name="Sample Mod",
         unique_id="Sample.Mod",
         version="1.0.0",
+        source_package_path=Path(r"C:\Packages\Sample.zip"),
         source_manifest_path=r"C:\Packages\Sample\manifest.json",
         source_root_path=r"C:\Packages\Sample",
         target_path=destination_mods_path / "SampleMod",

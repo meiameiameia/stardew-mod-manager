@@ -13,6 +13,9 @@ from sdvmm.domain.models import (
     InstallOperationRecord,
     RecoveryExecutionHistory,
     RecoveryExecutionRecord,
+    SandboxModProfile,
+    SandboxModProfileCatalog,
+    SandboxModProfileEntry,
     UpdateSourceIntentOverlay,
     UpdateSourceIntentRecord,
 )
@@ -23,6 +26,9 @@ INSTALL_OPERATION_HISTORY_VERSION = 1
 INSTALL_OPERATION_HISTORY_FILENAME = "install-operation-history.json"
 RECOVERY_EXECUTION_HISTORY_VERSION = 1
 RECOVERY_EXECUTION_HISTORY_FILENAME = "recovery-execution-history.json"
+MOD_PROFILE_CATALOG_VERSION = 2
+SANDBOX_MOD_PROFILE_CATALOG_FILENAME = "sandbox-mod-profiles.json"
+REAL_MOD_PROFILE_CATALOG_FILENAME = "real-mod-profiles.json"
 UPDATE_SOURCE_INTENT_OVERLAY_VERSION = 1
 UPDATE_SOURCE_INTENT_OVERLAY_FILENAME = "update-source-intent-overlay.json"
 _VALID_UPDATE_SOURCE_INTENT_STATES = {
@@ -140,6 +146,14 @@ def update_source_intent_overlay_file(state_file: Path) -> Path:
     return state_file.parent / UPDATE_SOURCE_INTENT_OVERLAY_FILENAME
 
 
+def sandbox_mod_profile_catalog_file(state_file: Path) -> Path:
+    return state_file.parent / SANDBOX_MOD_PROFILE_CATALOG_FILENAME
+
+
+def real_mod_profile_catalog_file(state_file: Path) -> Path:
+    return state_file.parent / REAL_MOD_PROFILE_CATALOG_FILENAME
+
+
 def load_install_operation_history(history_file: Path) -> InstallOperationHistory:
     if not history_file.exists():
         return InstallOperationHistory(operations=tuple())
@@ -228,6 +242,92 @@ def append_recovery_execution_record(
     updated = RecoveryExecutionHistory(operations=(*history.operations, operation))
     save_recovery_execution_history(history_file, updated)
     return updated
+
+
+def load_sandbox_mod_profile_catalog(
+    catalog_file: Path,
+) -> SandboxModProfileCatalog:
+    if not catalog_file.exists():
+        return SandboxModProfileCatalog(profiles=tuple(), active_profile_id=None)
+
+    raw = _load_json_object(history_file=catalog_file, subject="sandbox mod profile catalog")
+    version = raw.get("version")
+    if version == 1:
+        return _load_legacy_sandbox_mod_profile_catalog(raw)
+    if version != MOD_PROFILE_CATALOG_VERSION:
+        raise AppStateStoreError(
+            "Unsupported sandbox mod profile catalog version: "
+            f"{version!r}; expected {MOD_PROFILE_CATALOG_VERSION}"
+        )
+
+    profiles_raw = raw.get("profiles")
+    if not isinstance(profiles_raw, list):
+        raise AppStateStoreError("profiles must be an array")
+
+    profiles = tuple(
+        _parse_sandbox_mod_profile(item, index) for index, item in enumerate(profiles_raw)
+    )
+    active_profile_id = _optional_non_empty_string(raw, "active_profile_id")
+    return SandboxModProfileCatalog(
+        profiles=profiles,
+        active_profile_id=active_profile_id,
+    )
+
+
+def save_sandbox_mod_profile_catalog(
+    catalog_file: Path,
+    catalog: SandboxModProfileCatalog,
+) -> None:
+    payload = {
+        "version": MOD_PROFILE_CATALOG_VERSION,
+        "active_profile_id": catalog.active_profile_id,
+        "profiles": [_serialize_sandbox_mod_profile(profile) for profile in catalog.profiles],
+    }
+
+    catalog_file.parent.mkdir(parents=True, exist_ok=True)
+    _write_json_atomic(catalog_file, payload)
+
+
+def load_real_mod_profile_catalog(
+    catalog_file: Path,
+) -> SandboxModProfileCatalog:
+    if not catalog_file.exists():
+        return SandboxModProfileCatalog(profiles=tuple(), active_profile_id=None)
+
+    raw = _load_json_object(history_file=catalog_file, subject="real mod profile catalog")
+    version = raw.get("version")
+    if version != MOD_PROFILE_CATALOG_VERSION:
+        raise AppStateStoreError(
+            "Unsupported real mod profile catalog version: "
+            f"{version!r}; expected {MOD_PROFILE_CATALOG_VERSION}"
+        )
+
+    profiles_raw = raw.get("profiles")
+    if not isinstance(profiles_raw, list):
+        raise AppStateStoreError("profiles must be an array")
+
+    profiles = tuple(
+        _parse_sandbox_mod_profile(item, index) for index, item in enumerate(profiles_raw)
+    )
+    active_profile_id = _optional_non_empty_string(raw, "active_profile_id")
+    return SandboxModProfileCatalog(
+        profiles=profiles,
+        active_profile_id=active_profile_id,
+    )
+
+
+def save_real_mod_profile_catalog(
+    catalog_file: Path,
+    catalog: SandboxModProfileCatalog,
+) -> None:
+    payload = {
+        "version": MOD_PROFILE_CATALOG_VERSION,
+        "active_profile_id": catalog.active_profile_id,
+        "profiles": [_serialize_sandbox_mod_profile(profile) for profile in catalog.profiles],
+    }
+
+    catalog_file.parent.mkdir(parents=True, exist_ok=True)
+    _write_json_atomic(catalog_file, payload)
 
 
 def load_update_source_intent_overlay(overlay_file: Path) -> UpdateSourceIntentOverlay:
@@ -413,10 +513,15 @@ def _parse_install_operation_entry(
         raise AppStateStoreError(f"{prefix}.warnings must be an array of strings")
 
     archive_path = _optional_non_empty_string(data, "archive_path", prefix=prefix)
+    version_raw = data.get("version")
+    if isinstance(version_raw, str) and version_raw.strip():
+        version = version_raw
+    else:
+        version = "unknown"
     return InstallOperationEntryRecord(
         name=_require_non_empty_string(data, "name", prefix=prefix),
         unique_id=_require_non_empty_string(data, "unique_id", prefix=prefix),
-        version=_require_non_empty_string(data, "version", prefix=prefix),
+        version=version,
         action=_require_non_empty_string(data, "action", prefix=prefix),
         target_path=Path(_require_non_empty_string(data, "target_path", prefix=prefix)),
         archive_path=Path(archive_path) if archive_path else None,
@@ -575,6 +680,75 @@ def _parse_update_source_intent_record(data: object, index: int) -> UpdateSource
             "manual_source_page_url",
             prefix=f"records[{index}]",
         ),
+    )
+
+
+def _serialize_sandbox_mod_profile(profile: SandboxModProfile) -> dict[str, object]:
+    if not profile.profile_id.strip():
+        raise AppStateStoreError("sandbox mod profile profile_id must be non-empty")
+    if not profile.name.strip():
+        raise AppStateStoreError("sandbox mod profile name must be non-empty")
+    payload: dict[str, object] = {
+        "profile_id": profile.profile_id,
+        "name": profile.name,
+        "entries": [
+            {
+                "folder_name": entry.folder_name,
+                "enabled": entry.enabled,
+            }
+            for entry in profile.entries
+        ],
+        "is_default": profile.is_default,
+        "storage_dir_name": profile.storage_dir_name,
+    }
+    return payload
+
+
+def _parse_sandbox_mod_profile(data: object, index: int) -> SandboxModProfile:
+    prefix = f"profiles[{index}]"
+    if not isinstance(data, dict):
+        raise AppStateStoreError(f"{prefix} must be an object")
+
+    entries_raw = data.get("entries")
+    if not isinstance(entries_raw, list):
+        raise AppStateStoreError(f"{prefix}.entries must be an array")
+
+    entries = tuple(
+        _parse_sandbox_mod_profile_entry(entry, profile_index=index, entry_index=entry_index)
+        for entry_index, entry in enumerate(entries_raw)
+    )
+    return SandboxModProfile(
+        profile_id=_require_non_empty_string(data, "profile_id", prefix=prefix),
+        name=_require_non_empty_string(data, "name", prefix=prefix),
+        entries=entries,
+        storage_dir_name=_optional_non_empty_string(data, "storage_dir_name"),
+        is_default=_optional_bool(data, "is_default") is True,
+    )
+
+
+def _load_legacy_sandbox_mod_profile_catalog(raw: dict[str, object]) -> SandboxModProfileCatalog:
+    profiles_raw = raw.get("profiles")
+    if not isinstance(profiles_raw, list):
+        raise AppStateStoreError("profiles must be an array")
+    profiles = tuple(
+        _parse_sandbox_mod_profile(item, index) for index, item in enumerate(profiles_raw)
+    )
+    return SandboxModProfileCatalog(profiles=profiles, active_profile_id=None)
+
+
+def _parse_sandbox_mod_profile_entry(
+    data: object,
+    *,
+    profile_index: int,
+    entry_index: int,
+) -> SandboxModProfileEntry:
+    prefix = f"profiles[{profile_index}].entries[{entry_index}]"
+    if not isinstance(data, dict):
+        raise AppStateStoreError(f"{prefix} must be an object")
+
+    return SandboxModProfileEntry(
+        folder_name=_require_non_empty_string(data, "folder_name", prefix=prefix),
+        enabled=_require_bool(data, "enabled", prefix=prefix),
     )
 
 

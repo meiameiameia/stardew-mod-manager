@@ -92,6 +92,7 @@ def build_sandbox_install_plan(
                 name=mod.name,
                 unique_id=mod.unique_id,
                 version=mod.version,
+                source_package_path=package_path,
                 source_manifest_path=mod.manifest_path,
                 source_root_path=source_root,
                 target_path=target_path,
@@ -117,6 +118,7 @@ def build_sandbox_install_plan(
         package_warnings=inspection.warnings,
         plan_warnings=tuple(plan_warnings),
         dependency_findings=inspection.dependency_findings,
+        package_paths=(package_path,),
     )
 
 
@@ -146,15 +148,25 @@ def execute_sandbox_install_plan(plan: SandboxInstallPlan) -> SandboxInstallResu
     try:
         staging_root.mkdir(parents=False, exist_ok=False)
 
-        with zipfile.ZipFile(plan.package_path, "r") as archive:
-            for entry in installable_entries:
-                staged_target = staging_root / entry.target_path.name
-                staged_target.mkdir(parents=True, exist_ok=False)
-                _extract_mod_root(
-                    archive=archive,
-                    source_root=entry.source_root_path,
-                    destination=staged_target,
-                )
+        installable_entries_by_package: dict[Path, list[SandboxInstallPlanEntry]] = {}
+        package_order: list[Path] = []
+        for entry in installable_entries:
+            source_package_path = entry.source_package_path
+            if source_package_path not in installable_entries_by_package:
+                installable_entries_by_package[source_package_path] = []
+                package_order.append(source_package_path)
+            installable_entries_by_package[source_package_path].append(entry)
+
+        for package_path in package_order:
+            with zipfile.ZipFile(package_path, "r") as archive:
+                for entry in installable_entries_by_package[package_path]:
+                    staged_target = staging_root / entry.target_path.name
+                    staged_target.mkdir(parents=True, exist_ok=False)
+                    _extract_mod_root(
+                        archive=archive,
+                        source_root=entry.source_root_path,
+                        destination=staged_target,
+                    )
 
         for entry in installable_entries:
             staged_target = staging_root / entry.target_path.name

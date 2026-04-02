@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+from types import SimpleNamespace
 from zipfile import ZipFile
 from typing import Literal
 
@@ -15,6 +16,7 @@ from sdvmm.app.shell_service import (
     ARCHIVE_SOURCE_REAL,
     ARCHIVE_SOURCE_SANDBOX,
     ARCHIVE_RETENTION_KEEP_LATEST_COUNT,
+    BackupBundleExportSelection,
     INSTALL_TARGET_CONFIGURED_REAL_MODS,
     INSTALL_TARGET_SANDBOX_MODS,
     SCAN_TARGET_CONFIGURED_REAL_MODS,
@@ -31,6 +33,9 @@ from sdvmm.domain.models import (
     InstallOperationRecord,
     ModDiscoveryEntry,
     ModDiscoveryResult,
+    SandboxModProfile,
+    SandboxModProfileCatalog,
+    SandboxModProfileEntry,
     ModUpdateReport,
     ModUpdateStatus,
     NexusIntegrationStatus,
@@ -55,7 +60,13 @@ from sdvmm.domain.warning_codes import INVALID_MANIFEST
 from sdvmm.services.app_state_store import (
     AppStateStoreError,
     load_app_config,
+    load_real_mod_profile_catalog,
+    real_mod_profile_catalog_file,
+    load_sandbox_mod_profile_catalog,
+    sandbox_mod_profile_catalog_file,
     save_app_config,
+    save_real_mod_profile_catalog,
+    save_sandbox_mod_profile_catalog,
     save_update_source_intent_overlay,
     update_source_intent_overlay_file,
 )
@@ -204,6 +215,572 @@ def test_clear_update_source_intent_removes_matching_record(tmp_path: Path) -> N
     assert service.get_update_source_intent("sample.keep") == updated.records[0]
 
 
+def test_set_sandbox_mod_enabled_state_rejects_toggling_default_profile(tmp_path: Path) -> None:
+    sandbox_mods = tmp_path / "SandboxMods"
+    sandbox_mods.mkdir()
+    mod_path = _create_mod(sandbox_mods, "AlphaMod", "Sample.Alpha")
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+
+    with pytest.raises(
+        AppShellError,
+        match="Default sandbox profile mirrors the canonical sandbox library",
+    ):
+        service.set_sandbox_mod_enabled_state(
+            sandbox_mods_path_text=str(sandbox_mods),
+            mod_folder_path_text=str(mod_path),
+            enabled=False,
+        )
+
+    assert mod_path.exists()
+    assert not (sandbox_mods / ".AlphaMod").exists()
+
+
+def test_set_sandbox_mod_enabled_state_toggles_direct_top_level_mod_in_custom_profile(
+    tmp_path: Path,
+) -> None:
+    sandbox_mods = tmp_path / "SandboxMods"
+    sandbox_mods.mkdir()
+    canonical_mod_path = _create_mod(sandbox_mods, "AlphaMod", "Sample.Alpha")
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    profile = service.create_sandbox_mod_profile(
+        name="Testing Set",
+        sandbox_mods_path_text=str(sandbox_mods),
+    ).profile
+    profile_root = (
+        sandbox_mods.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Sandbox Mods"
+        / profile.storage_dir_name
+        / "Mods"
+    )
+    profile_mod_path = profile_root / "AlphaMod"
+
+    disabled_result = service.set_sandbox_mod_enabled_state(
+        sandbox_mods_path_text=str(sandbox_mods),
+        mod_folder_path_text=str(profile_mod_path),
+        enabled=False,
+        profile_id=profile.profile_id,
+    )
+
+    assert disabled_result.target_kind == SCAN_TARGET_SANDBOX_MODS
+    assert disabled_result.scan_path == profile_root
+    assert disabled_result.inventory.mods == ()
+    assert [mod.unique_id for mod in disabled_result.inventory.disabled_mods] == [
+        "Sample.Alpha"
+    ]
+    assert canonical_mod_path.exists()
+    assert not profile_mod_path.exists()
+
+    enabled_result = service.set_sandbox_mod_enabled_state(
+        sandbox_mods_path_text=str(sandbox_mods),
+        mod_folder_path_text=str(sandbox_mods / "AlphaMod"),
+        enabled=True,
+        profile_id=profile.profile_id,
+    )
+
+    assert enabled_result.target_kind == SCAN_TARGET_SANDBOX_MODS
+    assert enabled_result.scan_path == profile_root
+    assert [mod.unique_id for mod in enabled_result.inventory.mods] == ["Sample.Alpha"]
+    assert enabled_result.inventory.disabled_mods == ()
+    assert canonical_mod_path.exists()
+    assert profile_mod_path.exists()
+
+
+def test_set_sandbox_mod_enabled_state_toggles_multi_mod_container_entry_in_custom_profile(
+    tmp_path: Path,
+) -> None:
+    sandbox_mods = tmp_path / "SandboxMods"
+    sandbox_mods.mkdir()
+    container = _create_nested_mod_container(
+        sandbox_mods,
+        "PackFolder",
+        (
+            ("NestedAlpha", "Sample.Alpha"),
+            ("NestedBeta", "Sample.Beta"),
+        ),
+    )
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    profile = service.create_sandbox_mod_profile(
+        name="Testing Set",
+        sandbox_mods_path_text=str(sandbox_mods),
+    ).profile
+    profile_root = (
+        sandbox_mods.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Sandbox Mods"
+        / profile.storage_dir_name
+        / "Mods"
+    )
+    nested_mod_path = (
+        profile_root
+        / "PackFolder"
+        / "NestedAlpha"
+    )
+
+    disabled_result = service.set_sandbox_mod_enabled_state(
+        sandbox_mods_path_text=str(sandbox_mods),
+        mod_folder_path_text=str(nested_mod_path),
+        enabled=False,
+        profile_id=profile.profile_id,
+    )
+
+    assert disabled_result.scan_path == profile_root
+    assert disabled_result.inventory.mods == ()
+    assert [mod.unique_id for mod in disabled_result.inventory.disabled_mods] == [
+        "Sample.Alpha",
+        "Sample.Beta",
+    ]
+    assert container.exists()
+    assert not (profile_root / "PackFolder").exists()
+
+    enabled_result = service.set_sandbox_mod_enabled_state(
+        sandbox_mods_path_text=str(sandbox_mods),
+        mod_folder_path_text=str(container / "NestedBeta"),
+        enabled=True,
+        profile_id=profile.profile_id,
+    )
+
+    assert enabled_result.scan_path == profile_root
+    assert [mod.unique_id for mod in enabled_result.inventory.mods] == [
+        "Sample.Alpha",
+        "Sample.Beta",
+    ]
+    assert enabled_result.inventory.disabled_mods == ()
+    assert (profile_root / "PackFolder").exists()
+
+
+def test_create_sandbox_mod_profile_creates_linked_profile_root_from_canonical_library(
+    tmp_path: Path,
+) -> None:
+    sandbox_mods = tmp_path / "SandboxMods"
+    sandbox_mods.mkdir()
+    _create_mod(sandbox_mods, "AlphaMod", "Sample.Alpha")
+    _create_mod(sandbox_mods, "BetaMod", "Sample.Beta")
+    nested_root = sandbox_mods / "PackFolder"
+    _create_mod(nested_root, "GammaMod", "Sample.Gamma")
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+
+    result = service.create_sandbox_mod_profile(
+        name="Testing Set",
+        sandbox_mods_path_text=str(sandbox_mods),
+    )
+
+    assert result.profile.name == "Testing Set"
+    assert result.linked_mod_count == 3
+    assert result.scan_result.scan_path.name == "Mods"
+    assert [mod.unique_id for mod in result.scan_result.inventory.mods] == [
+        "Sample.Alpha",
+        "Sample.Beta",
+        "Sample.Gamma",
+    ]
+    assert result.scan_result.inventory.disabled_mods == tuple()
+
+    reloaded = service.load_sandbox_mod_profiles()
+    assert reloaded.active_profile_id == result.profile.profile_id
+    assert [profile.name for profile in reloaded.profiles] == ["Default", "Testing Set"]
+    persisted = load_sandbox_mod_profile_catalog(
+        sandbox_mod_profile_catalog_file(service.state_file)
+    )
+    assert persisted == reloaded
+
+
+def test_select_sandbox_mod_profile_scans_profile_root_and_shows_missing_canonical_mods_as_disabled(
+    tmp_path: Path,
+) -> None:
+    sandbox_mods = tmp_path / "SandboxMods"
+    sandbox_mods.mkdir()
+    _create_mod(sandbox_mods, "AlphaMod", "Sample.Alpha")
+    _create_mod(sandbox_mods, "BetaMod", "Sample.Beta")
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    created = service.create_sandbox_mod_profile(
+        name="Testing Set",
+        sandbox_mods_path_text=str(sandbox_mods),
+    )
+    service.set_sandbox_mod_enabled_state(
+        sandbox_mods_path_text=str(sandbox_mods),
+        mod_folder_path_text=str(created.scan_result.scan_path / "BetaMod"),
+        enabled=False,
+        profile_id=created.profile.profile_id,
+    )
+    result = service.select_sandbox_mod_profile(
+        profile_id=created.profile.profile_id,
+        sandbox_mods_path_text=str(sandbox_mods),
+    )
+
+    assert result.profile.profile_id == created.profile.profile_id
+    assert [mod.unique_id for mod in result.scan_result.inventory.mods] == ["Sample.Alpha"]
+    assert [mod.unique_id for mod in result.scan_result.inventory.disabled_mods] == [
+        "Sample.Beta"
+    ]
+    assert (sandbox_mods / "BetaMod").exists()
+
+
+def test_delete_sandbox_mod_profile_removes_selected_profile_from_catalog(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    sandbox_mods = tmp_path / "SandboxMods"
+    sandbox_mods.mkdir()
+    _create_mod(sandbox_mods, "AlphaMod", "Sample.Alpha")
+    alpha_profile = service.create_sandbox_mod_profile(
+        name="Alpha Only",
+        sandbox_mods_path_text=str(sandbox_mods),
+    ).profile
+    beta_profile = service.create_sandbox_mod_profile(
+        name="Beta Only",
+        sandbox_mods_path_text=str(sandbox_mods),
+    ).profile
+
+    result = service.delete_sandbox_mod_profile(
+        profile_id=alpha_profile.profile_id,
+        sandbox_mods_path_text=str(sandbox_mods),
+    )
+
+    assert result.profile == alpha_profile
+    assert result.profiles.active_profile_id == beta_profile.profile_id
+    assert [profile.name for profile in result.profiles.profiles] == ["Default", "Beta Only"]
+    assert service.load_sandbox_mod_profiles() == result.profiles
+
+
+def test_scan_with_target_uses_active_sandbox_profile_root(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    _create_mod(sandbox_mods, "AlphaMod", "Sample.Alpha")
+    _create_mod(sandbox_mods, "BetaMod", "Sample.Beta")
+
+    created = service.create_sandbox_mod_profile(
+        name="Lean Set",
+        sandbox_mods_path_text=str(sandbox_mods),
+    )
+    service.set_sandbox_mod_enabled_state(
+        sandbox_mods_path_text=str(sandbox_mods),
+        mod_folder_path_text=str(created.scan_result.scan_path / "BetaMod"),
+        enabled=False,
+        profile_id=created.profile.profile_id,
+    )
+
+    result = service.scan_with_target(
+        scan_target=SCAN_TARGET_SANDBOX_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+    )
+
+    assert result.scan_path != sandbox_mods
+    assert [mod.unique_id for mod in result.inventory.mods] == ["Sample.Alpha"]
+    assert [mod.unique_id for mod in result.inventory.disabled_mods] == ["Sample.Beta"]
+
+
+def test_launch_game_sandbox_dev_uses_active_profile_root_when_custom_profile_selected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    game_path = tmp_path / "Game"
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    smapi_executable = _create_launchable_game_install(game_path)
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    _create_mod(sandbox_mods, "AlphaMod", "Sample.Alpha")
+    created = service.create_sandbox_mod_profile(
+        name="Lean Set",
+        sandbox_mods_path_text=str(sandbox_mods),
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_launch(command):
+        captured["command"] = command
+        return 42424
+
+    monkeypatch.setattr(shell_service_module, "launch_game_process", _fake_launch)
+    monkeypatch.setattr(
+        service,
+        "_prepare_steam_prelaunch_for_game_launch",
+        lambda **_: shell_service_module.SteamPrelaunchResult(
+            state="already_running",
+            message="Steam was already running.",
+        ),
+    )
+
+    result = service.launch_game_sandbox_dev(
+        game_path_text=str(game_path),
+        sandbox_mods_path_text=str(sandbox_mods),
+        configured_mods_path_text=str(real_mods),
+        existing_config=None,
+    )
+
+    command = captured.get("command")
+    assert command is not None
+    assert command.argv == (
+        str(smapi_executable),
+        "--mods-path",
+        str(created.scan_result.scan_path),
+    )
+    assert result.mods_path_override == created.scan_result.scan_path
+
+
+def test_set_real_mod_enabled_state_rejects_toggling_default_profile(tmp_path: Path) -> None:
+    real_mods = tmp_path / "RealMods"
+    real_mods.mkdir()
+    mod_path = _create_mod(real_mods, "AlphaMod", "Sample.Alpha")
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+
+    with pytest.raises(
+        AppShellError,
+        match="Default real profile mirrors the canonical real Mods library",
+    ):
+        service.set_real_mod_enabled_state(
+            configured_mods_path_text=str(real_mods),
+            mod_folder_path_text=str(mod_path),
+            enabled=False,
+        )
+
+    assert mod_path.exists()
+
+
+def test_create_real_mod_profile_creates_linked_profile_root_from_canonical_library(
+    tmp_path: Path,
+) -> None:
+    real_mods = tmp_path / "RealMods"
+    real_mods.mkdir()
+    _create_mod(real_mods, "AlphaMod", "Sample.Alpha")
+    _create_mod(real_mods, "BetaMod", "Sample.Beta")
+    nested_root = real_mods / "PackFolder"
+    _create_mod(nested_root, "GammaMod", "Sample.Gamma")
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+
+    result = service.create_real_mod_profile(
+        name="Daily Set",
+        configured_mods_path_text=str(real_mods),
+    )
+
+    assert result.profile.name == "Daily Set"
+    assert result.linked_mod_count == 3
+    assert result.scan_result.scan_path.name == "Mods"
+    assert [mod.unique_id for mod in result.scan_result.inventory.mods] == [
+        "Sample.Alpha",
+        "Sample.Beta",
+        "Sample.Gamma",
+    ]
+    assert result.scan_result.inventory.disabled_mods == tuple()
+
+    reloaded = service.load_real_mod_profiles()
+    assert reloaded.active_profile_id == result.profile.profile_id
+    assert [profile.name for profile in reloaded.profiles] == ["Default", "Daily Set"]
+    persisted = load_real_mod_profile_catalog(
+        real_mod_profile_catalog_file(service.state_file)
+    )
+    assert persisted == reloaded
+
+
+def test_set_real_mod_enabled_state_toggles_direct_top_level_mod_in_custom_profile(
+    tmp_path: Path,
+) -> None:
+    real_mods = tmp_path / "RealMods"
+    real_mods.mkdir()
+    canonical_mod_path = _create_mod(real_mods, "AlphaMod", "Sample.Alpha")
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    profile = service.create_real_mod_profile(
+        name="Lean Set",
+        configured_mods_path_text=str(real_mods),
+    ).profile
+    profile_root = (
+        real_mods.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Real Mods"
+        / profile.storage_dir_name
+        / "Mods"
+    )
+    profile_mod_path = profile_root / "AlphaMod"
+
+    disabled_result = service.set_real_mod_enabled_state(
+        configured_mods_path_text=str(real_mods),
+        mod_folder_path_text=str(profile_mod_path),
+        enabled=False,
+        profile_id=profile.profile_id,
+    )
+
+    assert disabled_result.target_kind == SCAN_TARGET_CONFIGURED_REAL_MODS
+    assert disabled_result.scan_path == profile_root
+    assert disabled_result.inventory.mods == ()
+    assert [mod.unique_id for mod in disabled_result.inventory.disabled_mods] == [
+        "Sample.Alpha"
+    ]
+    assert canonical_mod_path.exists()
+    assert not profile_mod_path.exists()
+
+    enabled_result = service.set_real_mod_enabled_state(
+        configured_mods_path_text=str(real_mods),
+        mod_folder_path_text=str(real_mods / "AlphaMod"),
+        enabled=True,
+        profile_id=profile.profile_id,
+    )
+
+    assert enabled_result.target_kind == SCAN_TARGET_CONFIGURED_REAL_MODS
+    assert enabled_result.scan_path == profile_root
+    assert [mod.unique_id for mod in enabled_result.inventory.mods] == ["Sample.Alpha"]
+    assert enabled_result.inventory.disabled_mods == ()
+    assert canonical_mod_path.exists()
+    assert profile_mod_path.exists()
+
+
+def test_set_real_mod_enabled_state_toggles_multi_mod_container_entry_in_custom_profile(
+    tmp_path: Path,
+) -> None:
+    real_mods = tmp_path / "RealMods"
+    real_mods.mkdir()
+    container = _create_nested_mod_container(
+        real_mods,
+        "PackFolder",
+        (
+            ("ComponentA", "Sample.ComponentA"),
+            ("ComponentB", "Sample.ComponentB"),
+        ),
+    )
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    profile = service.create_real_mod_profile(
+        name="Lean Set",
+        configured_mods_path_text=str(real_mods),
+    ).profile
+    profile_root = (
+        real_mods.parent
+        / "Cinderleaf"
+        / "Profiles"
+        / "Real Mods"
+        / profile.storage_dir_name
+        / "Mods"
+    )
+
+    disabled_result = service.set_real_mod_enabled_state(
+        configured_mods_path_text=str(real_mods),
+        mod_folder_path_text=str(profile_root / "PackFolder" / "ComponentA"),
+        enabled=False,
+        profile_id=profile.profile_id,
+    )
+
+    assert disabled_result.scan_path == profile_root
+    assert disabled_result.inventory.mods == ()
+    assert [mod.unique_id for mod in disabled_result.inventory.disabled_mods] == [
+        "Sample.ComponentA",
+        "Sample.ComponentB",
+    ]
+    assert container.exists()
+    assert not (profile_root / "PackFolder").exists()
+
+    enabled_result = service.set_real_mod_enabled_state(
+        configured_mods_path_text=str(real_mods),
+        mod_folder_path_text=str(container / "ComponentB"),
+        enabled=True,
+        profile_id=profile.profile_id,
+    )
+
+    assert enabled_result.scan_path == profile_root
+    assert [mod.unique_id for mod in enabled_result.inventory.mods] == [
+        "Sample.ComponentA",
+        "Sample.ComponentB",
+    ]
+    assert enabled_result.inventory.disabled_mods == ()
+    assert (profile_root / "PackFolder").exists()
+
+
+def test_scan_with_target_uses_active_real_profile_root(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    _create_mod(real_mods, "AlphaMod", "Sample.Alpha")
+    _create_mod(real_mods, "BetaMod", "Sample.Beta")
+
+    created = service.create_real_mod_profile(
+        name="Lean Set",
+        configured_mods_path_text=str(real_mods),
+    )
+    service.set_real_mod_enabled_state(
+        configured_mods_path_text=str(real_mods),
+        mod_folder_path_text=str(created.scan_result.scan_path / "BetaMod"),
+        enabled=False,
+        profile_id=created.profile.profile_id,
+    )
+
+    result = service.scan_with_target(
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+    )
+
+    assert result.scan_path != real_mods
+    assert [mod.unique_id for mod in result.inventory.mods] == ["Sample.Alpha"]
+    assert [mod.unique_id for mod in result.inventory.disabled_mods] == ["Sample.Beta"]
+
+
+def test_launch_game_smapi_uses_active_real_profile_root_when_custom_profile_selected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    game_path = tmp_path / "Game"
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    smapi_executable = _create_launchable_game_install(game_path)
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    _create_mod(real_mods, "AlphaMod", "Sample.Alpha")
+    created = service.create_real_mod_profile(
+        name="Lean Set",
+        configured_mods_path_text=str(real_mods),
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_launch(command):
+        captured["command"] = command
+        return 51515
+
+    monkeypatch.setattr(shell_service_module, "launch_game_process", _fake_launch)
+    monkeypatch.setattr(
+        service,
+        "_prepare_steam_prelaunch_for_game_launch",
+        lambda **_: shell_service_module.SteamPrelaunchResult(
+            state="already_running",
+            message="Steam was already running.",
+        ),
+    )
+
+    result = service.launch_game_smapi(
+        game_path_text=str(game_path),
+        configured_mods_path_text=str(real_mods),
+        existing_config=None,
+    )
+
+    command = captured.get("command")
+    assert command is not None
+    assert command.argv == (
+        str(smapi_executable),
+        "--mods-path",
+        str(created.scan_result.scan_path),
+    )
+    assert result.mods_path_override == created.scan_result.scan_path
+
+
+def test_is_process_running_reports_running_and_stopped_processes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    completed = SimpleNamespace(returncode=0, stdout='"SampleGame.exe","4242","Console","1","10,000 K"\n')
+
+    monkeypatch.setattr(shell_service_module.subprocess, "run", lambda *args, **kwargs: completed)
+    assert service.is_process_running(4242) is True
+
+    completed = SimpleNamespace(returncode=0, stdout="INFO: No tasks are running which match the specified criteria.\n")
+    monkeypatch.setattr(shell_service_module.subprocess, "run", lambda *args, **kwargs: completed)
+    assert service.is_process_running(4242) is False
+
+
 def test_export_backup_bundle_copies_available_state_and_managed_directories(tmp_path: Path) -> None:
     state_file = tmp_path / "state" / "app-state.json"
     service = AppShellService(state_file=state_file)
@@ -239,6 +816,7 @@ def test_export_backup_bundle_copies_available_state_and_managed_directories(tmp
         sandbox_archive_path=sandbox_archive,
         real_archive_path=real_archive,
     )
+    save_app_config(state_file, config)
     save_app_config(state_file, config)
 
     shell_service_module.append_install_operation_record(
@@ -344,7 +922,7 @@ def test_export_backup_bundle_copies_available_state_and_managed_directories(tmp
     ).exists() is True
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["bundle_format"] == "sdvmm-local-backup"
+    assert manifest["bundle_format"] == "cinderleaf-local-backup"
     assert manifest["summary"]["copied"] == 10
     assert "A restore/import workflow. This bundle is export-only in this stage." in manifest[
         "intentionally_not_included"
@@ -361,7 +939,7 @@ def test_export_backup_bundle_copies_available_state_and_managed_directories(tmp
     assert exported_config.sandbox_archive_path == sandbox_archive
     summary_text = result.summary_path.read_text(encoding="utf-8")
     assert "Cinderleaf backup export" in summary_text
-    assert "Generated from the current export configuration snapshot." in summary_text
+    assert "Only the artifact groups selected in the export dialog are included" in summary_text
 
 
 def test_export_backup_bundle_can_create_zip_artifact(tmp_path: Path) -> None:
@@ -390,6 +968,7 @@ def test_export_backup_bundle_can_create_zip_artifact(tmp_path: Path) -> None:
         sandbox_archive_path=sandbox_archive,
         real_archive_path=real_archive,
     )
+    save_app_config(state_file, config)
 
     result = service.export_backup_bundle(
         destination_root_text=str(zip_path),
@@ -418,6 +997,174 @@ def test_export_backup_bundle_can_create_zip_artifact(tmp_path: Path) -> None:
     assert "manager-state/app-state.json" in names
     assert "mods/real-mods/RealAlpha/manifest.json" in names
     assert "mods/sandbox-mods/SandboxAlpha/manifest.json" in names
+
+
+def test_export_backup_bundle_can_include_profile_catalogs_and_save_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_file = tmp_path / "state" / "app-state.json"
+    service = AppShellService(state_file=state_file)
+    game_path = tmp_path / "Game"
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_archive = tmp_path / "RealArchive"
+    sandbox_archive = tmp_path / "SandboxArchive"
+    exports_root = tmp_path / "Exports"
+    save_root = tmp_path / "AppData" / "Roaming" / "StardewValley" / "Saves"
+    save_slot = save_root / "FarmerOne_123456789"
+    exports_root.mkdir()
+    save_slot.mkdir(parents=True)
+
+    _create_launchable_game_install(game_path)
+    _create_mod(real_mods, "RealAlpha", "Sample.RealAlpha")
+    _create_mod(sandbox_mods, "SandboxAlpha", "Sample.SandboxAlpha")
+    _create_archived_entry(real_archive / "real-alpha", unique_id="Sample.RealAlpha", version="1.0.0")
+    _create_archived_entry(
+        sandbox_archive / "sandbox-alpha",
+        unique_id="Sample.SandboxAlpha",
+        version="1.1.0",
+    )
+    (save_slot / "SaveGameInfo").write_text("FarmerOne", encoding="utf-8")
+
+    config = AppConfig(
+        game_path=game_path,
+        mods_path=real_mods,
+        app_data_path=tmp_path / "AppData",
+        sandbox_mods_path=sandbox_mods,
+        sandbox_archive_path=sandbox_archive,
+        real_archive_path=real_archive,
+    )
+    save_app_config(state_file, config)
+    save_real_mod_profile_catalog(
+        real_mod_profile_catalog_file(state_file),
+        SandboxModProfileCatalog(
+            profiles=(
+                SandboxModProfile(profile_id="default", name="Default", is_default=True),
+                SandboxModProfile(
+                    profile_id="profile_alpha",
+                    name="Alpha",
+                    storage_dir_name="profile_alpha_root",
+                ),
+            ),
+            active_profile_id="profile_alpha",
+        ),
+    )
+    save_sandbox_mod_profile_catalog(
+        sandbox_mod_profile_catalog_file(state_file),
+        SandboxModProfileCatalog(
+            profiles=(
+                SandboxModProfile(profile_id="default", name="Default", is_default=True),
+                SandboxModProfile(
+                    profile_id="profile_beta",
+                    name="Beta",
+                    storage_dir_name="profile_beta_root",
+                ),
+            ),
+            active_profile_id="profile_beta",
+        ),
+    )
+    shell_service_module.append_install_operation_record(
+        shell_service_module.install_operation_history_file(state_file),
+        InstallOperationRecord(
+            operation_id="install_1",
+            timestamp="2026-03-17T12:00:00Z",
+            package_path=tmp_path / "downloads" / "alpha.zip",
+            destination_kind="sandbox_mods",
+            destination_mods_path=sandbox_mods,
+            archive_path=sandbox_archive,
+            installed_targets=(sandbox_mods / "SandboxAlpha",),
+            archived_targets=tuple(),
+            entries=(
+                InstallOperationEntryRecord(
+                    name="Sandbox Alpha",
+                    unique_id="Sample.SandboxAlpha",
+                    version="1.1.0",
+                    action="install_new",
+                    target_path=sandbox_mods / "SandboxAlpha",
+                    archive_path=None,
+                    source_manifest_path="SandboxAlpha/manifest.json",
+                    source_root_path="SandboxAlpha",
+                    target_exists_before=False,
+                    can_install=True,
+                    warnings=tuple(),
+                ),
+            ),
+        ),
+    )
+    shell_service_module.append_recovery_execution_record(
+        shell_service_module.recovery_execution_history_file(state_file),
+        shell_service_module.RecoveryExecutionRecord(
+            recovery_execution_id="recovery_1",
+            timestamp="2026-03-17T13:00:00Z",
+            related_install_operation_id="install_1",
+            related_install_operation_timestamp="2026-03-17T12:00:00Z",
+            related_install_package_path=tmp_path / "downloads" / "alpha.zip",
+            destination_kind="sandbox_mods",
+            destination_mods_path=sandbox_mods,
+            executed_entry_count=1,
+            removed_target_paths=(sandbox_mods / "SandboxAlpha",),
+            restored_target_paths=tuple(),
+            outcome_status="completed",
+            failure_message=None,
+        ),
+    )
+    save_update_source_intent_overlay(
+        update_source_intent_overlay_file(state_file),
+        UpdateSourceIntentOverlay(
+            records=(
+                UpdateSourceIntentRecord(
+                    unique_id="Sample.RealAlpha",
+                    normalized_unique_id="sample.realalpha",
+                    intent_state="local_private_mod",
+                ),
+            )
+        ),
+    )
+
+    monkeypatch.setattr(
+        shell_service_module,
+        "platform_default_stardew_save_directory",
+        lambda: save_root,
+    )
+
+    result = service.export_backup_bundle(
+        destination_root_text=str(exports_root),
+        game_path_text=str(game_path),
+        mods_dir_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox_mods),
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text=str(real_archive),
+        sandbox_archive_path_text=str(sandbox_archive),
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        artifact_selection=BackupBundleExportSelection(
+            include_manager_state=True,
+            include_managed_mods=True,
+            include_archives=True,
+            include_save_files=True,
+        ),
+        existing_config=config,
+    )
+
+    assert (result.bundle_path / "manager-state" / "real-mod-profiles.json").exists() is True
+    assert (result.bundle_path / "manager-state" / "sandbox-mod-profiles.json").exists() is True
+    assert (result.bundle_path / "saves" / "stardew-valley" / "FarmerOne_123456789").exists() is True
+    assert (
+        result.bundle_path
+        / "saves"
+        / "stardew-valley"
+        / "FarmerOne_123456789"
+        / "SaveGameInfo"
+    ).exists() is True
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["summary"]["copied"] == 11
+    assert "A restore/import workflow. This bundle is export-only in this stage." in manifest[
+        "intentionally_not_included"
+    ]
 
 
 def test_export_backup_bundle_uses_current_validated_config_snapshot_without_mutating_saved_state(
@@ -588,6 +1335,7 @@ def test_inspect_backup_bundle_reports_valid_export_bundle(tmp_path: Path) -> No
         sandbox_archive_path=sandbox_archive,
         real_archive_path=real_archive,
     )
+    save_app_config(state_file, config)
 
     exported = service.export_backup_bundle(
         destination_root_text=str(exports_root),
@@ -608,7 +1356,7 @@ def test_inspect_backup_bundle_reports_valid_export_bundle(tmp_path: Path) -> No
     items_by_key = {item.key: item for item in inspection.items}
 
     assert inspection.bundle_path == exported.bundle_path
-    assert inspection.bundle_format == "sdvmm-local-backup"
+    assert inspection.bundle_format == "cinderleaf-local-backup"
     assert inspection.format_version == 1
     assert inspection.created_at_utc is not None
     assert inspection.structurally_usable is True
@@ -650,6 +1398,7 @@ def test_inspect_backup_bundle_reports_valid_zip_export_bundle(tmp_path: Path) -
         sandbox_archive_path=sandbox_archive,
         real_archive_path=real_archive,
     )
+    save_app_config(state_file, config)
 
     exported = service.export_backup_bundle(
         destination_root_text=str(zip_path),
@@ -2416,6 +3165,32 @@ def test_promote_installed_mods_from_sandbox_to_real_copies_and_records_history(
     assert operation.entries[0].target_path == promoted_target
 
 
+def test_build_sandbox_mods_promotion_plan_uses_on_disk_manifest_when_source_mod_cache_misses(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "state" / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox_mods = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox_mods.mkdir()
+    source_mod = _create_mod(sandbox_mods, "FolderName", "Sample.Mod", version="2.3.4")
+
+    plan = service._build_sandbox_mods_promotion_plan(  # noqa: SLF001
+        real_mods_path=real_mods,
+        sandbox_mods_path=sandbox_mods,
+        archive_path=real_mods.parent / ".sdvmm-real-archive",
+        source_paths=(source_mod,),
+        source_inventory=_empty_inventory(),
+    )
+
+    assert len(plan.entries) == 1
+    entry = plan.entries[0]
+    assert entry.name == "FolderName"
+    assert entry.unique_id == "Sample.Mod"
+    assert entry.version == "2.3.4"
+    assert entry.source_manifest_path == str(source_mod / "manifest.json")
+
+
 def test_get_sandbox_mods_promotion_readiness_reports_archive_aware_replace_review_for_conflict(
     tmp_path: Path,
 ) -> None:
@@ -3066,6 +3841,55 @@ def test_build_install_plan_supports_configured_real_mods_destination(tmp_path: 
     assert plan.entries[0].action == "install_new"
 
 
+def test_build_install_plan_accepts_multiple_package_paths_and_executes_as_a_batch(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    real_mods.mkdir()
+    sandbox.mkdir()
+    archive_root.mkdir()
+
+    alpha_package = tmp_path / "Alpha.zip"
+    with ZipFile(alpha_package, "w") as archive:
+        archive.writestr(
+            "Alpha/manifest.json",
+            '{"Name":"Alpha","UniqueID":"Pkg.Alpha","Version":"1.0.0"}',
+        )
+        archive.writestr("Alpha/file.txt", "alpha")
+
+    beta_package = tmp_path / "Beta.zip"
+    with ZipFile(beta_package, "w") as archive:
+        archive.writestr(
+            "Beta/manifest.json",
+            '{"Name":"Beta","UniqueID":"Pkg.Beta","Version":"2.0.0"}',
+        )
+        archive.writestr("Beta/file.txt", "beta")
+
+    plan = service.build_install_plan(
+        package_paths_text=(str(alpha_package), str(beta_package)),
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox),
+        real_archive_path_text="",
+        sandbox_archive_path_text=str(archive_root),
+        allow_overwrite=False,
+        configured_real_mods_path=real_mods,
+    )
+
+    assert plan.package_paths == (alpha_package, beta_package)
+    assert len(plan.entries) == 2
+
+    result = service.execute_sandbox_install_plan(plan)
+
+    assert result.destination_kind == INSTALL_TARGET_SANDBOX_MODS
+    assert result.installed_targets == (sandbox / "Alpha", sandbox / "Beta")
+    assert (sandbox / "Alpha" / "file.txt").read_text(encoding="utf-8") == "alpha"
+    assert (sandbox / "Beta" / "file.txt").read_text(encoding="utf-8") == "beta"
+
+
 def test_build_install_plan_uses_archive_overwrite_for_real_mods_destination(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
     real_mods = tmp_path / "RealMods"
@@ -3116,7 +3940,7 @@ def test_build_install_execution_summary_for_sandbox_destination(tmp_path: Path)
     assert summary.has_existing_targets_to_replace is False
     assert summary.has_archive_writes is False
     assert summary.requires_explicit_confirmation is False
-    assert summary.review_warnings == ("Plan review warning", "Package warning message")
+    assert summary.review_warnings == ("Install plan warning", "Package warning message")
 
 
 def test_build_install_execution_summary_for_real_destination_requires_confirmation(
@@ -6563,7 +7387,7 @@ def test_correlate_intake_with_updates_marks_update_available_match(tmp_path: Pa
     assert correlation.actionable is True
     assert correlation.matched_update_available_unique_ids == ("Sample.Exists",)
     assert "update available" in correlation.summary.casefold()
-    assert "stage update" in correlation.next_step.casefold()
+    assert "open as update" in correlation.next_step.casefold()
 
 
 def test_correlate_intake_with_updates_prefers_guided_update_match(tmp_path: Path) -> None:
@@ -6586,7 +7410,7 @@ def test_correlate_intake_with_updates_prefers_guided_update_match(tmp_path: Pat
     assert correlation.matched_guided_update_unique_ids == ("Sample.Exists",)
     assert "guided update target" in correlation.summary.casefold()
     assert correlation.actionable is True
-    assert "stage update" in correlation.next_step.casefold()
+    assert "open as update" in correlation.next_step.casefold()
 
 
 def test_correlate_intake_with_updates_keeps_unusable_non_actionable(tmp_path: Path) -> None:
@@ -6737,6 +7561,18 @@ def _create_mod(
     return mod_path
 
 
+def _create_nested_mod_container(
+    mods_root: Path,
+    container_name: str,
+    entries: tuple[tuple[str, str], ...],
+) -> Path:
+    container_path = mods_root / container_name
+    container_path.mkdir(parents=True, exist_ok=True)
+    for folder_name, unique_id in entries:
+        _create_mod(container_path, folder_name, unique_id)
+    return container_path
+
+
 def _create_archived_entry(archived_path: Path, *, unique_id: str, version: str) -> Path:
     archived_path.mkdir(parents=True, exist_ok=True)
     (archived_path / "manifest.json").write_text(
@@ -6849,10 +7685,11 @@ def _summary_plan(
                 manifest_path="sample/manifest.json",
             ),
         ),
-        plan_warnings=("Plan review warning",),
+        plan_warnings=("Install plan warning",),
         dependency_findings=tuple(),
         remote_requirements=tuple(),
         destination_kind=destination_kind,
+        package_paths=(tmp_path / "sample.zip",),
     )
 
 
@@ -6871,6 +7708,7 @@ def _summary_entry(
         name=name,
         unique_id=unique_id,
         version="1.0.0",
+        source_package_path=tmp_path / "sample.zip",
         source_manifest_path=str(tmp_path / "package" / name / "manifest.json"),
         source_root_path=str(tmp_path / "package" / name),
         target_path=tmp_path / "target-root" / name,

@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="24" y1="18" x2="230" y2="238" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1b2227"/>
+      <stop offset="1" stop-color="#111417"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(128 88) rotate(90) scale(96 108)">
+      <stop offset="0" stop-color="#2a3640" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#2a3640" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="woodTop" x1="72" y1="88" x2="184" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e0b46e"/>
+      <stop offset="0.5" stop-color="#c78a42"/>
+      <stop offset="1" stop-color="#a8632d"/>
+    </linearGradient>
+    <linearGradient id="woodFace" x1="72" y1="104" x2="184" y2="188" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d59a52"/>
+      <stop offset="1" stop-color="#a96830"/>
+    </linearGradient>
+    <linearGradient id="woodShadow" x1="72" y1="104" x2="184" y2="188" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7f4b22"/>
+      <stop offset="1" stop-color="#603517"/>
+    </linearGradient>
+    <linearGradient id="soil" x1="92" y1="94" x2="164" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5e2f36"/>
+      <stop offset="1" stop-color="#8b4b51"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="88" y1="58" x2="168" y2="126" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#b8eb68"/>
+      <stop offset="0.52" stop-color="#7ccf45"/>
+      <stop offset="1" stop-color="#4a9f2c"/>
+    </linearGradient>
+    <linearGradient id="leafVein" x1="108" y1="72" x2="148" y2="116" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#356317"/>
+      <stop offset="1" stop-color="#24410f"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+  <circle cx="128" cy="92" r="88" fill="url(#glow)"/>
+
+  <path
+    d="M64 186C80 170 103 162 128 162C153 162 176 170 192 186C174 191 153 194 128 194C103 194 82 191 64 186Z"
+    fill="#243038"
+    opacity="0.72"
+  />
+
+  <path
+    d="M74 102L100 84H156L182 102L156 120H100L74 102Z"
+    fill="url(#woodTop)"
+    stroke="#593418"
+    stroke-width="4"
+    stroke-linejoin="round"
+  />
+  <rect
+    x="74"
+    y="102"
+    width="108"
+    height="82"
+    rx="11"
+    fill="url(#woodFace)"
+    stroke="#593418"
+    stroke-width="4"
+  />
+  <rect
+    x="96"
+    y="100"
+    width="64"
+    height="18"
+    rx="6"
+    fill="url(#soil)"
+    stroke="#4d252d"
+    stroke-width="3"
+  />
+  <path
+    d="M88 120H168M88 140H168"
+    stroke="#8f5a2c"
+    stroke-width="4"
+    stroke-linecap="round"
+    opacity="0.55"
+  />
+  <path
+    d="M112 102V184M144 102V184"
+    stroke="url(#woodShadow)"
+    stroke-width="4"
+    stroke-linecap="round"
+    opacity="0.72"
+  />
+  <path
+    d="M74 102L92 112V184L74 184Z"
+    fill="#995d2a"
+    opacity="0.5"
+  />
+  <path
+    d="M182 102L164 112V184L182 184Z"
+    fill="#6f3d1b"
+    opacity="0.55"
+  />
+
+  <path
+    d="M128 96C128 88 128 79 128 68"
+    stroke="#4d8f2f"
+    stroke-width="8"
+    stroke-linecap="round"
+  />
+  <path
+    d="M128 88C115 72 97 66 86 71C75 76 72 92 78 101C86 114 109 111 128 88Z"
+    fill="url(#leaf)"
+    stroke="#285c19"
+    stroke-width="4"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M128 88C141 72 159 66 170 71C181 76 184 92 178 101C170 114 147 111 128 88Z"
+    fill="url(#leaf)"
+    stroke="#285c19"
+    stroke-width="4"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M128 89C123 92 118 99 115 107"
+    stroke="url(#leafVein)"
+    stroke-width="4"
+    stroke-linecap="round"
+  />
+  <path
+    d="M128 89C133 92 138 99 141 107"
+    stroke="url(#leafVein)"
+    stroke-width="4"
+    stroke-linecap="round"
+  />
+</svg>

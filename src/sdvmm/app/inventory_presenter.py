@@ -67,8 +67,9 @@ from sdvmm.domain.smapi_log_codes import (
 
 def build_findings_text(inventory: ModsInventory) -> str:
     lines: list[str] = []
-    lines.append("Installed Mods Scan Summary")
-    lines.append(f"- Installed mods detected: {len(inventory.mods)}")
+    lines.append("Library Scan Summary")
+    lines.append(f"- Library rows detected: {len(inventory.mods)}")
+    lines.append(f"- Disabled rows detected: {len(inventory.disabled_mods)}")
     lines.append(f"- Parse warnings: {len(inventory.parse_warnings)}")
     lines.append(f"- Duplicate UniqueIDs: {len(inventory.duplicate_unique_ids)}")
     lines.append(f"- Missing required dependencies: {len(inventory.missing_required_dependencies)}")
@@ -124,7 +125,9 @@ def build_findings_text(inventory: ModsInventory) -> str:
     if inventory.missing_required_dependencies:
         lines.append("- Install missing required dependencies first, then scan again.")
     elif inventory.parse_warnings:
-        lines.append("- Review manifest warnings and replace or fix broken mod folders.")
+        lines.append("- Inspect manifest warnings and replace or fix broken mod folders.")
+    elif inventory.disabled_mods:
+        lines.append("- Review disabled rows in Library and re-enable any sandbox folders you want active again.")
     else:
         lines.append("- Run update check to see if newer versions are available.")
 
@@ -402,12 +405,14 @@ def build_sandbox_install_plan_text(plan: SandboxInstallPlan) -> str:
     lines: list[str] = []
     blocked_count = sum(1 for entry in plan.entries if not entry.can_install)
     installable_count = sum(1 for entry in plan.entries if entry.can_install)
+    source_packages = plan.package_paths if plan.package_paths else (plan.package_path,)
+    source_package_names = ", ".join(path.name for path in source_packages)
     destination_label = _install_destination_label(plan.destination_kind)
     lines.append("Install Plan")
     lines.append(f"- Destination type: {destination_label}")
     lines.append(f"- Destination Mods path: {plan.sandbox_mods_path}")
     lines.append(f"- Destination archive path: {plan.sandbox_archive_path}")
-    lines.append(f"- Source package: {plan.package_path.name}")
+    lines.append(f"- Source packages: {source_package_names}")
     lines.append(
         f"- Plan status: {'BLOCKED' if blocked_count else 'READY'} "
         f"(installable={installable_count}, blocked={blocked_count})"
@@ -470,7 +475,7 @@ def build_sandbox_install_plan_text(plan: SandboxInstallPlan) -> str:
     if blocked_count:
         lines.append("- Plan is blocked. Resolve warnings (especially missing required dependencies) and rebuild plan.")
     else:
-        lines.append("- Plan is ready. Review target/archive actions, then run install explicitly.")
+        lines.append("- Plan is ready. Inspect target/archive actions, then run install explicitly.")
 
     return "\n".join(lines)
 
@@ -478,9 +483,13 @@ def build_sandbox_install_plan_text(plan: SandboxInstallPlan) -> str:
 def build_sandbox_install_result_text(result: SandboxInstallResult) -> str:
     lines: list[str] = []
     destination_label = _install_destination_label(result.destination_kind)
+    source_packages = (
+        result.plan.package_paths if result.plan.package_paths else (result.plan.package_path,)
+    )
     lines.append("Install completed.")
     lines.append(f"- Destination type: {destination_label}")
     lines.append(f"- Scan context: {result.scan_context_path}")
+    lines.append(f"- Source packages: {', '.join(path.name for path in source_packages)}")
     lines.append(f"Installed targets: {len(result.installed_targets)}")
 
     for target in result.installed_targets:
@@ -855,9 +864,9 @@ def _intake_next_action(classification: str) -> str:
     if classification == "unusable_package":
         return "Not actionable. Inspect/fix this package or choose a different zip."
     if classification == "multi_mod_package":
-        return "Actionable. Plan install and review every entry before executing."
+        return "Actionable. Plan install and inspect every entry before executing."
     if classification == "update_replace_candidate":
-        return "Actionable. Use Stage update to preselect archive-aware replace, then review the plan."
+        return "Actionable. Use Open as update to preselect archive-aware replace, then inspect the plan."
     return "Actionable. Plan install for the selected destination."
 
 

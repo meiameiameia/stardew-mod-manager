@@ -8,6 +8,7 @@ _APP_DIRNAME = "sdvmm"
 _APP_STATE_FILENAME = "app-state.json"
 _INSTALL_HISTORY_FILENAME = "install-operation-history.json"
 _RECOVERY_HISTORY_FILENAME = "recovery-execution-history.json"
+_STARDEW_VALLEY_DIRNAME = "StardewValley"
 _PERSISTED_STATE_FILENAMES = (
     _APP_STATE_FILENAME,
     _INSTALL_HISTORY_FILENAME,
@@ -35,6 +36,32 @@ def platform_default_app_state_file(*, home: Path | None = None) -> Path:
 def legacy_app_state_file(*, home: Path | None = None) -> Path:
     resolved_home = home or Path.home()
     return resolved_home / ".config" / _APP_DIRNAME / _APP_STATE_FILENAME
+
+
+def platform_default_stardew_save_directory(*, home: Path | None = None) -> Path:
+    resolved_home = home or Path.home()
+    if sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA", "").strip()
+        if appdata:
+            return Path(appdata) / _STARDEW_VALLEY_DIRNAME / "Saves"
+        local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_appdata:
+            return Path(local_appdata) / _STARDEW_VALLEY_DIRNAME / "Saves"
+        return resolved_home / "AppData" / "Roaming" / _STARDEW_VALLEY_DIRNAME / "Saves"
+
+    if sys.platform == "darwin":
+        return (
+            resolved_home
+            / "Library"
+            / "Application Support"
+            / _STARDEW_VALLEY_DIRNAME
+            / "Saves"
+        )
+
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    if xdg_config_home:
+        return Path(xdg_config_home) / _STARDEW_VALLEY_DIRNAME / "Saves"
+    return resolved_home / ".config" / _STARDEW_VALLEY_DIRNAME / "Saves"
 
 
 def _platform_default_state_dir(home: Path) -> Path:

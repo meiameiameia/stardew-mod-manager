@@ -18,7 +18,9 @@ PYPROJECT = ROOT / "pyproject.toml"
 PROJECT = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]
 VERSION = PROJECT["version"]
 DIST_NAME = f"cinderleaf-{VERSION}-windows-portable"
-APP_ICON = ROOT / "assets" / "stardew-mod-manager.ico"
+APP_ICON_SVG = ROOT / "assets" / "cinderleaf-icon.svg"
+APP_ICON_PNG = ROOT / "assets" / "app-icon.png"
+APP_ICON_ICO = ROOT / "assets" / "stardew-mod-manager.ico"
 APP_VERSION_FILE = ROOT / "build" / "app-version.txt"
 APP_DISPLAY_NAME = "Cinderleaf"
 APP_SUBTITLE = "for Stardew Valley"
@@ -79,7 +81,9 @@ APP_VERSION_FILE.parent.mkdir(parents=True, exist_ok=True)
 APP_VERSION_FILE.write_text(f"{VERSION}\n", encoding="utf-8")
 
 datas = [
-    (str(APP_ICON), "assets"),
+    (str(APP_ICON_SVG), "assets"),
+    (str(APP_ICON_PNG), "assets"),
+    (str(APP_ICON_ICO), "assets"),
     (str(APP_VERSION_FILE), "."),
 ]
 
@@ -110,7 +114,7 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
-    icon=str(APP_ICON),
+    icon=str(APP_ICON_ICO),
     version=APP_VERSION_INFO,
 )
 

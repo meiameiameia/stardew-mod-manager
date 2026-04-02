@@ -143,6 +143,25 @@ def test_default_app_state_file_prefers_new_platform_root_when_both_locations_ha
     assert state_file == new_root / "app-state.json"
 
 
+def test_platform_default_stardew_save_directory_uses_windows_appdata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    appdata = tmp_path / "AppData" / "Roaming"
+    home.mkdir(parents=True)
+    appdata.mkdir(parents=True)
+    monkeypatch.setattr(app_paths.Path, "home", staticmethod(lambda: home))
+    monkeypatch.setattr(app_paths.sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    save_dir = app_paths.platform_default_stardew_save_directory()
+
+    assert save_dir == appdata / "StardewValley" / "Saves"
+
+
 @pytest.mark.parametrize(
     ("target_name", "save_operation"),
     (
@@ -304,6 +323,33 @@ def test_append_install_operation_record_appends_in_order(tmp_path: Path) -> Non
     updated = append_install_operation_record(history_file, second)
 
     assert updated.operations == (first, second)
+
+
+def test_load_install_operation_history_repairs_blank_version_and_allows_append(
+    tmp_path: Path,
+) -> None:
+    history_file = tmp_path / "state" / INSTALL_OPERATION_HISTORY_FILENAME
+    first = _install_operation_record(tmp_path, package_name="first.zip")
+    second = _install_operation_record(tmp_path, package_name="second.zip")
+
+    save_install_operation_history(
+        history_file,
+        InstallOperationHistory(operations=(first,)),
+    )
+    payload = json.loads(history_file.read_text(encoding="utf-8"))
+    payload["operations"][0]["entries"][0]["version"] = ""
+    history_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_install_operation_history(history_file)
+
+    assert loaded.operations[0].entries[0].version == "unknown"
+
+    updated = append_install_operation_record(history_file, second)
+
+    assert updated.operations[0].entries[0].version == "unknown"
+    assert updated.operations[1] == second
+    saved_payload = json.loads(history_file.read_text(encoding="utf-8"))
+    assert saved_payload["operations"][0]["entries"][0]["version"] == "unknown"
 
 
 def test_install_operation_history_file_uses_state_directory(tmp_path: Path) -> None:
