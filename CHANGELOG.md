@@ -2,6 +2,15 @@
 
 All notable user-facing changes for this repository are tracked here.
 
+## [1.2.0]
+
+- Added curated real and sandbox mod profiles so you can keep alternate mod sets without changing `Default`, with clearer `not in profile` semantics for later-added canonical mods.
+- Added watcher-first `Packages` intake and `Install` batch planning/apply so multiple downloaded zips can be queued, reviewed, and installed together with inherited destination context.
+- Improved dependency-aware batch install planning so staged dependency providers can satisfy staged dependents in the same install batch.
+- Added export artifact selection, including optional Stardew save export and profile-catalog export, while keeping restore/import behavior explicitly scoped.
+- Refined the app identity and release-facing UI with the new Cinderleaf icon set, clearer workspace naming (`Library`, `Install`, `SMAPI`), tighter layout polish, and stronger loading/busy feedback.
+- Improved SMAPI runtime support with profile-aware launch/log context, post-exit latest-log refresh, and profile-operation lifecycle fixes that prevent stale profile-select wedges.
+
 ## [1.1.7]
 
 - Added optional Cinderleaf-managed folder guidance and migration so Setup can derive managed paths from the game folder without changing existing user paths until explicitly confirmed.
