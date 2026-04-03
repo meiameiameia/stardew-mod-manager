@@ -291,7 +291,7 @@ class MainWindow(QMainWindow):
         self._thread_pool = QThreadPool.globalInstance()
         self._active_operation_name: str | None = None
         self._active_background_task: BackgroundTask | None = None
-        self._active_operation_button: QPushButton | None = None
+        self._active_operation_button: QWidget | None = None
         self._active_operation_button_text: str | None = None
         self._pending_post_operation_callback: Callable[[], None] | None = None
         self._background_action_buttons: tuple[QPushButton, ...] = tuple()
@@ -3921,10 +3921,11 @@ class MainWindow(QMainWindow):
     def _on_scan_completed(self, result: ScanResult) -> None:
         self._cache_scan_result(result)
         self._show_scan_result(result)
+        inactive_label = self._inventory_inactive_count_label(result.target_kind)
         self._set_status(
             "Scan complete: "
             f"{len(result.inventory.mods)} active mod(s), "
-            f"{len(result.inventory.disabled_mods)} disabled mod(s)"
+            f"{len(result.inventory.disabled_mods)} mod(s) {inactive_label}"
         )
 
     def _on_compare_real_and_sandbox(self) -> None:
@@ -5654,17 +5655,16 @@ class MainWindow(QMainWindow):
                 elif current_target in {SCAN_TARGET_CONFIGURED_REAL_MODS, SCAN_TARGET_SANDBOX_MODS} and toggle_reason:
                     name_item.setToolTip(toggle_reason)
 
-                blocked_reason = (
-                    "Run Check updates to evaluate update actionability."
-                    if is_enabled
-                    else "This mod is disabled. Re-enable it before update and source actions."
+                status_text, blocked_reason = self._inventory_mod_row_state_text(
+                    current_target=current_target,
+                    is_enabled=is_enabled,
                 )
                 name_item.setData(_ROLE_UPDATE_BLOCK_REASON, blocked_reason)
                 self._mods_table.setItem(row, 0, name_item)
                 self._mods_table.setItem(row, 1, QTableWidgetItem(mod.unique_id))
                 self._mods_table.setItem(row, 2, QTableWidgetItem(mod.version))
                 self._mods_table.setItem(row, 3, QTableWidgetItem("-"))
-                status_item = QTableWidgetItem("not_checked" if is_enabled else "disabled")
+                status_item = QTableWidgetItem(status_text)
                 status_item.setToolTip(blocked_reason)
                 self._mods_table.setItem(row, 4, status_item)
                 self._mods_table.setItem(row, 5, QTableWidgetItem(mod.folder_path.name))
@@ -5704,6 +5704,41 @@ class MainWindow(QMainWindow):
         self._refresh_detected_intakes_for_current_inventory()
         self._refresh_discovery_correlations()
         self._refresh_workflow_surface_states()
+
+    def _inventory_mod_row_state_text(
+        self,
+        *,
+        current_target: str,
+        is_enabled: bool,
+    ) -> tuple[str, str]:
+        if is_enabled:
+            return (
+                "not_checked",
+                "Run Check updates to evaluate update actionability.",
+            )
+        if self._is_custom_profile_view(current_target):
+            return (
+                "not_in_profile",
+                "This mod is not part of the active profile yet. Enable it to add it before update and source actions.",
+            )
+        return (
+            "disabled",
+            "This mod is disabled. Re-enable it before update and source actions.",
+        )
+
+    def _is_custom_profile_view(self, target_kind: str) -> bool:
+        if target_kind == SCAN_TARGET_CONFIGURED_REAL_MODS:
+            selected_profile = self._selected_real_profile()
+            return selected_profile is not None and not selected_profile.is_default
+        if target_kind == SCAN_TARGET_SANDBOX_MODS:
+            selected_profile = self._selected_sandbox_profile()
+            return selected_profile is not None and not selected_profile.is_default
+        return False
+
+    def _inventory_inactive_count_label(self, target_kind: str) -> str:
+        if self._is_custom_profile_view(target_kind):
+            return "not in profile"
+        return "disabled"
 
     def _cache_scan_result(self, result: ScanResult) -> None:
         self._scan_results_by_target[result.target_kind] = result
@@ -6841,16 +6876,20 @@ class MainWindow(QMainWindow):
             )
             return
         if self._current_update_report is None:
+            inactive_label = self._inventory_inactive_count_label(
+                self._current_scan_target()
+            )
             _set_feedback_label_state(
                 self._mods_inventory_state_label,
                 "ready",
-                f"{visible_count} mod row(s) ready ({active_count} active, {disabled_count} disabled). Run Check for updates to unlock remote guidance and source-page actions for active mods.",
+                f"{visible_count} mod row(s) ready ({active_count} active, {disabled_count} {inactive_label}). Run Check for updates to unlock remote guidance and source-page actions for active mods.",
             )
             return
+        inactive_label = self._inventory_inactive_count_label(self._current_scan_target())
         _set_feedback_label_state(
             self._mods_inventory_state_label,
             "ready",
-            f"{visible_count} mod row(s) visible ({active_count} active, {disabled_count} disabled). Select an active row to inspect guidance, sync to sandbox, or open its source page when actionable.",
+            f"{visible_count} mod row(s) visible ({active_count} active, {disabled_count} {inactive_label}). Select an active row to inspect guidance, sync to sandbox, or open its source page when actionable.",
         )
 
     def _refresh_discovery_workspace_state(self) -> None:
@@ -7087,7 +7126,7 @@ class MainWindow(QMainWindow):
         on_success: Callable[[object], None],
         on_failure: Callable[[str], None] | None = None,
         show_error_dialog: bool = True,
-        busy_button: QPushButton | None = None,
+        busy_button: QWidget | None = None,
         busy_button_text: str | None = None,
     ) -> None:
         if self._active_operation_name is not None:
@@ -7096,15 +7135,17 @@ class MainWindow(QMainWindow):
             )
             return
 
+        original_busy_text = _busy_control_text(busy_button)
         task = BackgroundTask(task_fn)
         self._active_background_task = task
         self._active_operation_name = operation_name
         self._active_operation_button = busy_button
-        self._active_operation_button_text = (
-            busy_button.text() if busy_button is not None else None
-        )
-        if busy_button is not None:
-            busy_button.setText(busy_button_text or f"{running_label}...")
+        self._active_operation_button_text = original_busy_text
+        if busy_button is not None and original_busy_text is not None:
+            _set_busy_control_text(
+                busy_button,
+                busy_button_text or f"{running_label}...",
+            )
         self._operation_state_label.setText(f"Running: {running_label}")
         self._set_background_actions_enabled(False)
         self._refresh_workflow_surface_states()
@@ -7172,7 +7213,10 @@ class MainWindow(QMainWindow):
 
         if self._active_operation_button is not None:
             if self._active_operation_button_text is not None:
-                self._active_operation_button.setText(self._active_operation_button_text)
+                _set_busy_control_text(
+                    self._active_operation_button,
+                    self._active_operation_button_text,
+                )
             self._active_operation_button = None
             self._active_operation_button_text = None
         self._active_operation_name = None
@@ -10135,7 +10179,7 @@ def _build_sandbox_profile_create_text(result: SandboxModProfileCreateResult) ->
         f"Profile: {result.profile.name}",
         f"Linked canonical folders: {result.linked_mod_count}",
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
-        f"Disabled mods in profile: {len(result.scan_result.inventory.disabled_mods)}",
+        f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
         "Next step: toggle mods in this profile without changing Default.",
     ]
@@ -10148,7 +10192,7 @@ def _build_real_profile_create_text(result: RealModProfileCreateResult) -> str:
         f"Profile: {result.profile.name}",
         f"Linked canonical folders: {result.linked_mod_count}",
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
-        f"Disabled mods in profile: {len(result.scan_result.inventory.disabled_mods)}",
+        f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
         "Next step: toggle mods in this profile and launch SMAPI against it.",
     ]
@@ -10160,7 +10204,7 @@ def _build_sandbox_profile_select_text(result: SandboxModProfileSelectResult) ->
         "Sandbox profile selected",
         f"Profile: {result.profile.name}",
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
-        f"Disabled mods in profile: {len(result.scan_result.inventory.disabled_mods)}",
+        f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
         "Next step: toggle mods in this profile or launch sandbox dev against it.",
     ]
@@ -10172,7 +10216,7 @@ def _build_real_profile_select_text(result: RealModProfileSelectResult) -> str:
         "Real profile selected",
         f"Profile: {result.profile.name}",
         f"Active mods in profile: {len(result.scan_result.inventory.mods)}",
-        f"Disabled mods in profile: {len(result.scan_result.inventory.disabled_mods)}",
+        f"{_profile_inactive_count_summary_label(result.profile.is_default)}: {len(result.scan_result.inventory.disabled_mods)}",
         "",
         "Next step: toggle mods in this profile or launch SMAPI against it.",
     ]
@@ -10436,6 +10480,23 @@ def _set_danger_button_style(button: QPushButton) -> None:
     button.style().unpolish(button)
     button.style().polish(button)
     _set_button_emphasis_style(button, bold=True)
+
+
+def _busy_control_text(control: QWidget | None) -> str | None:
+    if isinstance(control, QPushButton):
+        return control.text()
+    return None
+
+
+def _set_busy_control_text(control: QWidget, text: str) -> None:
+    if isinstance(control, QPushButton):
+        control.setText(text)
+
+
+def _profile_inactive_count_summary_label(is_default_profile: bool) -> str:
+    if is_default_profile:
+        return "Disabled mods in profile"
+    return "Canonical mods not in profile"
 
 
 def _configure_combo_box_readability(

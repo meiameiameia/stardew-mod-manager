@@ -836,6 +836,38 @@ def test_main_window_smapi_launch_refreshes_latest_log_once_after_process_exit(
     main_window.close()
 
 
+def test_main_window_run_background_operation_accepts_combo_busy_control(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _, main_window = _launch_test_main_window(tmp_path, qapp, monkeypatch)
+    results: list[str] = []
+
+    monkeypatch.setattr(main_window._thread_pool, "start", lambda task: task.run())
+
+    combo = QComboBox()
+    combo.addItem("Default", "default")
+
+    main_window._run_background_operation(
+        operation_name="Real profile select",
+        running_label="Real profile select",
+        started_status="Switching to real profile: Default",
+        error_title="Real profile select failed",
+        task_fn=lambda: "ok",
+        on_success=lambda result: results.append(str(result)),
+        busy_button=combo,
+        busy_button_text="Switching...",
+    )
+    qapp.processEvents()
+
+    assert results == ["ok"]
+    assert main_window._active_operation_name is None
+    assert main_window._operation_state_label.text() == "Last: Real profile select finished"
+
+    main_window.close()
+
+
 @pytest.mark.parametrize(
     ("process_states", "expected_process_checks"),
     (
@@ -3337,7 +3369,7 @@ def test_main_window_renders_disabled_sandbox_mod_rows_with_checkbox_state(
     assert beta_item.flags() & Qt.ItemFlag.ItemIsUserCheckable
     assert alpha_item.checkState() == Qt.CheckState.Checked
     assert beta_item.checkState() == Qt.CheckState.Unchecked
-    assert beta_status.text() == "disabled"
+    assert beta_status.text() == "not_in_profile"
 
 
 def test_main_window_sandbox_toggle_checkbox_dispatches_toggle_operation(
@@ -3457,7 +3489,7 @@ def test_main_window_sandbox_toggle_checkbox_dispatches_toggle_operation(
     assert updated_item is not None
     assert updated_status is not None
     assert updated_item.checkState() == Qt.CheckState.Unchecked
-    assert updated_status.text() == "disabled"
+    assert updated_status.text() == "not_in_profile"
 
 
 def test_main_window_create_sandbox_profile_dispatches_create_operation(
@@ -3652,7 +3684,7 @@ def test_main_window_selected_sandbox_profile_change_dispatches_select_operation
     assert updated_item is not None
     assert updated_status is not None
     assert updated_item.checkState() == Qt.CheckState.Unchecked
-    assert updated_status.text() == "disabled"
+    assert updated_status.text() == "not_in_profile"
 
 
 def test_main_window_delete_sandbox_profile_dispatches_delete_operation(
@@ -4227,6 +4259,13 @@ def test_main_window_selected_real_profile_change_dispatches_select_operation(
     assert isinstance(select_kwargs, dict)
     assert select_kwargs["profile_id"] == profile.profile_id
     assert select_kwargs["configured_mods_path_text"] == str(real_mods_root)
+    updated_row = _find_mod_row(main_window._mods_table, "Alpha Mod")
+    updated_item = main_window._mods_table.item(updated_row, 0)
+    updated_status = main_window._mods_table.item(updated_row, 4)
+    assert updated_item is not None
+    assert updated_status is not None
+    assert updated_item.checkState() == Qt.CheckState.Unchecked
+    assert updated_status.text() == "not_in_profile"
 
 
 def test_main_window_delete_real_profile_dispatches_delete_operation(
