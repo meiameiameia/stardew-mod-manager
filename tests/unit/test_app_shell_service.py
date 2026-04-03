@@ -924,7 +924,7 @@ def test_export_backup_bundle_copies_available_state_and_managed_directories(tmp
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["bundle_format"] == "cinderleaf-local-backup"
     assert manifest["summary"]["copied"] == 10
-    assert "A restore/import workflow. This bundle is export-only in this stage." in manifest[
+    assert "Stardew save files remain backup-only and may still need manual restore steps." in manifest[
         "intentionally_not_included"
     ]
     assert any(
@@ -1162,7 +1162,7 @@ def test_export_backup_bundle_can_include_profile_catalogs_and_save_files(
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["summary"]["copied"] == 11
-    assert "A restore/import workflow. This bundle is export-only in this stage." in manifest[
+    assert "Stardew save files remain backup-only and may still need manual restore steps." in manifest[
         "intentionally_not_included"
     ]
 
@@ -2127,6 +2127,123 @@ def test_execute_restore_import_supports_zip_bundle_execution(tmp_path: Path) ->
     assert result.restored_mod_count == 1
     assert restored_alpha.exists() is True
     assert (restored_alpha / "config.json").read_text(encoding="utf-8") == '{"enabled":true}'
+
+
+def test_execute_restore_import_restores_profile_catalogs_from_bundle(tmp_path: Path) -> None:
+    state_file = tmp_path / "state" / "app-state.json"
+    service = AppShellService(state_file=state_file)
+    exports_root = tmp_path / "Exports"
+    exports_root.mkdir()
+
+    real_catalog = SandboxModProfileCatalog(
+        profiles=(
+            SandboxModProfile(
+                profile_id="real-curated",
+                name="Curated Real",
+                storage_dir_name="real-curated",
+                entries=(
+                    SandboxModProfileEntry(folder_name="RealAlpha", enabled=True),
+                    SandboxModProfileEntry(folder_name="RealBeta", enabled=False),
+                ),
+            ),
+        ),
+        active_profile_id="real-curated",
+    )
+    sandbox_catalog = SandboxModProfileCatalog(
+        profiles=(
+            SandboxModProfile(
+                profile_id="sandbox-test",
+                name="Sandbox Test",
+                storage_dir_name="sandbox-test",
+                entries=(SandboxModProfileEntry(folder_name="SandboxAlpha", enabled=True),),
+            ),
+        ),
+        active_profile_id="sandbox-test",
+    )
+    save_real_mod_profile_catalog(real_mod_profile_catalog_file(state_file), real_catalog)
+    save_sandbox_mod_profile_catalog(sandbox_mod_profile_catalog_file(state_file), sandbox_catalog)
+
+    bundle_game = tmp_path / "BundleGame"
+    bundle_real_mods = tmp_path / "BundleRealMods"
+    bundle_sandbox_mods = tmp_path / "BundleSandboxMods"
+    bundle_real_archive = tmp_path / "BundleRealArchive"
+    bundle_sandbox_archive = tmp_path / "BundleSandboxArchive"
+    _create_launchable_game_install(bundle_game)
+    _create_mod(bundle_real_mods, "RealAlpha", "Sample.RealAlpha", version="1.0.0")
+    bundle_sandbox_mods.mkdir()
+    bundle_real_archive.mkdir()
+    bundle_sandbox_archive.mkdir()
+
+    bundle_config = AppConfig(
+        game_path=bundle_game,
+        mods_path=bundle_real_mods,
+        app_data_path=tmp_path / "BundleAppData",
+        sandbox_mods_path=bundle_sandbox_mods,
+        sandbox_archive_path=bundle_sandbox_archive,
+        real_archive_path=bundle_real_archive,
+    )
+    exported = service.export_backup_bundle(
+        destination_root_text=str(exports_root),
+        game_path_text=str(bundle_game),
+        mods_dir_text=str(bundle_real_mods),
+        sandbox_mods_path_text=str(bundle_sandbox_mods),
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text=str(bundle_real_archive),
+        sandbox_archive_path_text=str(bundle_sandbox_archive),
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        existing_config=bundle_config,
+    )
+
+    real_catalog_file = real_mod_profile_catalog_file(state_file)
+    sandbox_catalog_file = sandbox_mod_profile_catalog_file(state_file)
+    real_catalog_file.unlink(missing_ok=True)
+    sandbox_catalog_file.unlink(missing_ok=True)
+
+    local_game = tmp_path / "LocalGame"
+    local_real_mods = tmp_path / "LocalRealMods"
+    local_sandbox_mods = tmp_path / "LocalSandboxMods"
+    local_real_archive = tmp_path / "LocalRealArchive"
+    local_sandbox_archive = tmp_path / "LocalSandboxArchive"
+    _create_launchable_game_install(local_game)
+    local_real_mods.mkdir()
+    local_sandbox_mods.mkdir()
+    local_real_archive.mkdir()
+    local_sandbox_archive.mkdir()
+
+    plan = service.plan_restore_import_from_backup_bundle(
+        bundle_path_text=str(exported.bundle_path),
+        game_path_text=str(local_game),
+        mods_dir_text=str(local_real_mods),
+        sandbox_mods_path_text=str(local_sandbox_mods),
+        sandbox_archive_path_text=str(local_sandbox_archive),
+        watched_downloads_path_text="",
+        secondary_watched_downloads_path_text="",
+        real_archive_path_text=str(local_real_archive),
+        nexus_api_key_text="",
+        scan_target=SCAN_TARGET_CONFIGURED_REAL_MODS,
+        install_target=INSTALL_TARGET_SANDBOX_MODS,
+        existing_config=None,
+    )
+
+    items_by_key = {item.key: item for item in plan.items}
+    review = service.review_restore_import_execution(plan)
+
+    assert items_by_key["real_mod_profiles"].state == "safe_to_restore_later"
+    assert items_by_key["sandbox_mod_profiles"].state == "safe_to_restore_later"
+    assert review.allowed is True
+    assert review.executable_config_count >= 2
+    assert "file artifact(s)" in review.message
+
+    result = service.execute_restore_import(plan, confirm_execution=True)
+
+    assert result.restored_config_count >= 2
+    assert real_catalog_file in result.restored_config_paths
+    assert sandbox_catalog_file in result.restored_config_paths
+    assert load_real_mod_profile_catalog(real_catalog_file) == real_catalog
+    assert load_sandbox_mod_profile_catalog(sandbox_catalog_file) == sandbox_catalog
 
 
 def test_execute_restore_import_rolls_back_partial_writes_on_failure(

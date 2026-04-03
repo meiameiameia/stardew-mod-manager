@@ -494,6 +494,8 @@ class _RestoreImportPlanningLocalTargets:
     install_history_path: Path
     recovery_history_path: Path
     update_source_intent_overlay_path: Path
+    real_profile_catalog_path: Path
+    sandbox_profile_catalog_path: Path
     real_mods_path: Path | None
     sandbox_mods_path: Path | None
     real_archive_path: Path | None
@@ -1127,8 +1129,15 @@ class AppShellService:
                     )
                 action.destination_path.parent.mkdir(parents=True, exist_ok=True)
                 restored_config_paths.append(action.destination_path)
-                shutil.copy2(action.source_path, action.destination_path)
-        except (AppShellError, OSError) as exc:
+                if action.bundle_item_key == "real_mod_profiles":
+                    catalog = load_real_mod_profile_catalog(action.source_path)
+                    save_real_mod_profile_catalog(action.destination_path, catalog)
+                elif action.bundle_item_key == "sandbox_mod_profiles":
+                    catalog = load_sandbox_mod_profile_catalog(action.source_path)
+                    save_sandbox_mod_profile_catalog(action.destination_path, catalog)
+                else:
+                    shutil.copy2(action.source_path, action.destination_path)
+        except (AppShellError, AppStateStoreError, OSError) as exc:
             rollback_warnings = _rollback_restore_import_paths(
                 archived_target_restores=tuple(archived_target_restores),
                 restored_mod_paths=tuple(restored_mod_paths),
@@ -6469,6 +6478,8 @@ class AppShellService:
             install_history_path=self._install_operation_history_file,
             recovery_history_path=self._recovery_execution_history_file,
             update_source_intent_overlay_path=self._update_source_intent_overlay_file,
+            real_profile_catalog_path=self._real_mod_profile_catalog_file,
+            sandbox_profile_catalog_path=self._sandbox_mod_profile_catalog_file,
             real_mods_path=real_mods_path,
             sandbox_mods_path=sandbox_mods_path,
             real_archive_path=real_archive_path,
@@ -6851,7 +6862,7 @@ class AppShellService:
                 "Watcher download folders and other unmanaged download cache locations.",
                 "Only common per-mod config artifacts inside installed Mods trees are included in this stage; other external mod-created state folders are not yet covered.",
                 "Transient UI state such as current selections, filters, and pending plans.",
-                "A restore/import workflow. This bundle is export-only in this stage.",
+                "Stardew save files remain backup-only and may still need manual restore steps.",
             ],
         }
 
@@ -7517,7 +7528,7 @@ def _build_restore_import_file_item_plan(
     message: str
     note = item.note
 
-    if item.key in {"real_mod_profiles", "sandbox_mod_profiles", "stardew_save_files"}:
+    if item.key == "stardew_save_files":
         message = (
             f"{item.label} is exported for backup only in this stage. "
             "Restore/import does not yet restore this artifact type."
@@ -8022,6 +8033,10 @@ def _restore_import_local_target_for_item(
         return local_targets.recovery_history_path
     if key == "update_source_intent_overlay":
         return local_targets.update_source_intent_overlay_path
+    if key == "real_mod_profiles":
+        return local_targets.real_profile_catalog_path
+    if key == "sandbox_mod_profiles":
+        return local_targets.sandbox_profile_catalog_path
     if key == "real_mods":
         return local_targets.real_mods_path
     if key == "sandbox_mods":
@@ -8145,7 +8160,7 @@ def _build_restore_import_execution_review(
         message = (
             "Restore/import is ready to write "
             f"{executable_mod_count} mod folder(s) and "
-            f"{executable_config_count} config artifact(s) into the current configured destinations. "
+            f"{executable_config_count} file artifact(s) into the current configured destinations. "
             "Existing local content will not be merged."
         )
         if analysis.replace_mod_count > 0:
@@ -8226,7 +8241,14 @@ def _analyze_restore_import_execution(
         1
         for item in planning_result.items
         if item.key
-        not in {"real_mods", "sandbox_mods", "real_mod_configs", "sandbox_mod_configs"}
+        not in {
+            "real_mods",
+            "sandbox_mods",
+            "real_mod_configs",
+            "sandbox_mod_configs",
+            "real_mod_profiles",
+            "sandbox_mod_profiles",
+        }
     )
 
     planning_items_by_key = {item.key: item for item in planning_result.items}
@@ -8504,6 +8526,56 @@ def _analyze_restore_import_execution(
         scheduled_replace_destinations.add((mod_item_key, folder_key))
         replace_config_count += len(conflict_entries)
 
+    for item_key in ("real_mod_profiles", "sandbox_mod_profiles"):
+        planning_item = planning_items_by_key.get(item_key)
+        if planning_item is None or planning_item.state != "safe_to_restore_later":
+            continue
+        if planning_item.local_target_path is None:
+            blocked_entry_count += 1
+            warnings.append(
+                f"No local destination is available for bundled {planning_item.label.lower()}."
+            )
+            continue
+        source_path = _backup_bundle_content_root(planning_result.inspection) / planning_item.bundle_relative_path
+        try:
+            source_exists = source_path.exists()
+            source_is_file = source_path.is_file()
+        except OSError:
+            source_exists = False
+            source_is_file = False
+        if not source_exists or not source_is_file:
+            blocked_entry_count += 1
+            warnings.append(
+                f"Bundled {planning_item.label.lower()} is missing or unreadable: {source_path}"
+            )
+            continue
+        try:
+            if item_key == "real_mod_profiles":
+                load_real_mod_profile_catalog(source_path)
+            else:
+                load_sandbox_mod_profile_catalog(source_path)
+        except AppStateStoreError as exc:
+            blocked_entry_count += 1
+            warnings.append(
+                f"Bundled {planning_item.label.lower()} is invalid and cannot be restored automatically: {exc}"
+            )
+            continue
+        if planning_item.local_target_path.exists():
+            blocked_entry_count += 1
+            warnings.append(
+                f"Profile catalog target already exists and will not be overwritten without review: {planning_item.local_target_path}"
+            )
+            continue
+
+        config_actions.append(
+            _RestoreImportExecutableConfigAction(
+                bundle_item_key=item_key,
+                relative_path=Path(source_path.name),
+                source_path=source_path,
+                destination_path=planning_item.local_target_path,
+            )
+        )
+
     replace_mod_count = sum(
         1 for action in mod_actions if action.action_kind == "archive_replace"
     )
@@ -8646,7 +8718,7 @@ def _build_restore_import_execution_summary_message(
 ) -> str:
     message = (
         "Restore/import execution completed: "
-        f"{restored_mod_count} mod folder(s) and {restored_config_count} config artifact(s) restored."
+        f"{restored_mod_count} mod folder(s) and {restored_config_count} file artifact(s) restored."
     )
     if replaced_mod_count > 0:
         message += f" {replaced_mod_count} mod folder(s) were archive-and-replaced."
@@ -9498,7 +9570,7 @@ def build_backup_bundle_export_text(result: BackupBundleExportResult) -> str:
             "- Watcher download folders or unmanaged caches.",
             "- Only the artifact groups selected in the export dialog are included; unselected groups are recorded as not_present in the manifest.",
             "- Transient UI state such as selections, filters, or pending plans.",
-            "- Restore/import automation. This bundle is export-only in this stage.",
+            "- Stardew save files may still need manual restore steps after export.",
         )
     )
     return "\n".join(lines) + "\n"
