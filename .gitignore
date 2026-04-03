@@ -22,6 +22,7 @@ pip-wheel-metadata/
 # IDE and OS
 .idea/
 .vscode/
+.codex/
 *.swp
 .DS_Store
 Thumbs.db
