@@ -242,6 +242,7 @@ def test_sandbox_plan_text_highlights_blocked_plan() -> None:
                 name="Mod A",
                 unique_id="Sample.ModA",
                 version="1.0.0",
+                source_package_path=Path("/tmp/mod.zip"),
                 source_manifest_path="ModA/manifest.json",
                 source_root_path="ModA",
                 target_path=Path("/tmp/SandboxMods/ModA"),

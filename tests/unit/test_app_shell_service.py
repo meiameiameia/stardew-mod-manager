@@ -1368,7 +1368,7 @@ def test_inspect_backup_bundle_reports_valid_export_bundle(tmp_path: Path) -> No
     assert "config artifact" in (items_by_key["real_mod_configs"].note or "")
     assert items_by_key["sandbox_mod_configs"].structure_state == "present"
     assert any(
-        "A restore/import workflow. This bundle is export-only in this stage." in item
+        "Stardew save files remain backup-only and may still need manual restore steps." in item
         for item in inspection.intentionally_not_included
     )
 

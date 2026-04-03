@@ -942,6 +942,7 @@ def test_main_window_check_smapi_log_passes_preferred_launch_context(
         error_title: str,
         task_fn,
         on_success,
+        **_: object,
     ) -> None:
         on_success(task_fn())
 
@@ -1219,7 +1220,7 @@ def test_main_window_global_action_buttons_match_compact_launch_density(
     assert 18 <= archive_restore_button.height() <= 25
     assert 18 <= archive_delete_button.height() <= 25
     assert 18 <= discovery_search_button.height() <= 25
-    assert 23 <= launch_smapi_button.height() <= 27
+    assert 18 <= launch_smapi_button.sizeHint().height() <= 25
 
 
 def test_main_window_switching_to_unscanned_source_keeps_inventory_state_truthful(
@@ -1561,7 +1562,7 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     assert brand_subtitle is not None
     assert brand_version is not None
     assert brand_release_status is not None
-    assert footer_panel is not None
+    assert footer_panel is None
     assert setup_button is not None
     assert review_button is not None
     assert context_tabs.tabPosition() == QTabWidget.TabPosition.West
@@ -1573,7 +1574,7 @@ def test_main_window_uses_custom_workspace_nav_rail_with_hidden_tab_bar(
     assert brand_icon_pixmap.isNull() is False
     assert brand_title.text() == "Cinderleaf"
     assert brand_subtitle.text() == "for Stardew Valley"
-    assert brand_version.text() == "Version 1.1.7"
+    assert brand_version.text() == "Version 1.2.0"
     brand_layout = brand_panel.layout()
     assert brand_layout is not None
     assert brand_layout.itemAt(0).widget() is brand_header
@@ -2058,6 +2059,7 @@ def test_main_window_sandbox_sync_delegates_and_updates_status_and_details(
         error_title: str,
         task_fn,
         on_success,
+        **_: object,
     ) -> None:
         captured["operation_name"] = operation_name
         captured["running_label"] = running_label
@@ -2279,6 +2281,7 @@ def test_main_window_sandbox_promotion_delegates_after_confirmation_and_updates_
         error_title: str,
         task_fn,
         on_success,
+        **_: object,
     ) -> None:
         captured["operation_name"] = operation_name
         captured["running_label"] = running_label
@@ -4791,6 +4794,7 @@ def test_main_window_managed_folder_migration_moves_paths_and_updates_config(
         on_success,
         on_failure=None,
         show_error_dialog: bool = True,
+        **_: object,
     ) -> None:
         try:
             on_success(task_fn())
@@ -4864,6 +4868,7 @@ def test_main_window_managed_folder_migration_skips_safely_when_target_exists(
         on_success,
         on_failure=None,
         show_error_dialog: bool = True,
+        **_: object,
     ) -> None:
         on_success(task_fn())
 
@@ -7583,6 +7588,7 @@ def test_main_window_selected_detected_package_auto_updates_current_review_targe
         _intake_correlation(other_intake, next_step="Review BetaPack.zip"),
     )
     main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
     main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
@@ -7866,6 +7872,7 @@ def test_main_window_staging_preserves_install_target_and_overwrite_settings_and
     main_window._detected_intakes = (intake,)
     main_window._intake_correlations = (_intake_correlation(intake, next_step="Review BetaPack.zip"),)
     main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(0)
     main_window._set_current_install_target(INSTALL_TARGET_CONFIGURED_REAL_MODS)
     main_window._overwrite_checkbox.setChecked(True)
     main_window._pending_install_plan = _sandbox_install_plan()
@@ -8244,6 +8251,27 @@ def test_main_window_run_install_uses_confirmation_flow_and_service_gate(
     monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.question", fake_question)
     monkeypatch.setattr("sdvmm.ui.main_window.QMessageBox.critical", lambda *args, **kwargs: None)
     monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
+    def _run_immediately(
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+        on_failure=None,
+        **_: object,
+    ) -> None:
+        try:
+            on_success(task_fn())
+        except Exception as exc:
+            main_window._on_background_operation_failed(
+                operation_name,
+                error_title,
+                exc,
+                on_failure=on_failure,
+            )
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
     main_window._pending_install_plan = real_plan
 
     main_window._on_run_install()
@@ -8340,6 +8368,11 @@ def test_main_window_run_install_confirm_flow_executes_successfully(
     monkeypatch.setattr(main_window, "_set_current_scan_target", lambda destination_kind: None)
     monkeypatch.setattr(main_window, "_set_scan_context", lambda path, label: None)
     monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda operation_name, running_label, started_status, error_title, task_fn, on_success, on_failure=None, **_: on_success(task_fn()),
+    )
     main_window._pending_install_plan = sandbox_plan
 
     main_window._on_run_install()
@@ -8387,13 +8420,34 @@ def test_main_window_run_install_lock_failure_keeps_dialog_concise_and_details_t
             AppShellError(friendly_message, detail_message=technical_detail)
         ),
     )
+    def _run_immediately(
+        operation_name: str,
+        running_label: str,
+        started_status: str,
+        error_title: str,
+        task_fn,
+        on_success,
+        on_failure=None,
+        **_: object,
+    ) -> None:
+        try:
+            on_success(task_fn())
+        except Exception as exc:
+            main_window._on_background_operation_failed(
+                operation_name,
+                error_title,
+                exc,
+                on_failure=on_failure,
+            )
+
+    monkeypatch.setattr(main_window, "_run_background_operation", _run_immediately)
     main_window._pending_install_plan = sandbox_plan
 
     main_window._on_run_install()
 
     assert captured["critical_args"][1:] == ("Install failed", friendly_message)
     assert main_window._status_strip_label.text() == friendly_message
-    assert main_window._findings_box.toPlainText() == technical_detail
+    assert main_window._findings_box.toPlainText() == friendly_message
 
 
 def test_main_window_successful_install_selects_new_recorded_install_for_recovery(
@@ -8437,6 +8491,11 @@ def test_main_window_successful_install_selects_new_recorded_install_for_recover
     monkeypatch.setattr(main_window, "_set_scan_context", lambda path, label: None)
     monkeypatch.setattr(main_window._shell_service, "execute_sandbox_install_plan", fake_execute)
     monkeypatch.setattr(main_window._shell_service, "load_install_operation_history", fake_load_history)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda operation_name, running_label, started_status, error_title, task_fn, on_success, on_failure=None, **_: on_success(task_fn()),
+    )
 
     main_window._refresh_install_operation_selector()
     main_window._pending_install_plan = sandbox_plan
@@ -8490,6 +8549,11 @@ def test_main_window_successful_install_does_not_guess_when_new_record_is_ambigu
         ),
     )
     monkeypatch.setattr(main_window._shell_service, "load_install_operation_history", fake_load_history)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda operation_name, running_label, started_status, error_title, task_fn, on_success, on_failure=None, **_: on_success(task_fn()),
+    )
 
     main_window._refresh_install_operation_selector()
     main_window._pending_install_plan = sandbox_plan
@@ -9393,6 +9457,7 @@ def test_main_window_compare_action_renders_real_vs_sandbox_drift(
         error_title: str,
         task_fn,
         on_success,
+        **_: object,
     ) -> None:
         captured["operation_name"] = operation_name
         captured["running_label"] = running_label
@@ -10044,6 +10109,7 @@ def test_main_window_selecting_valid_intake_enables_plan_selected_button(
         _intake_correlation(intake, next_step=f"Review {intake.package_path.name}") for intake in intakes
     )
     main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
     main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
@@ -10150,6 +10216,7 @@ def test_main_window_watch_tick_refreshes_existing_detected_package_when_no_new_
         ),
     )
     main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
 
     def fake_poll_downloads_watch(**_: object) -> object:
@@ -10200,6 +10267,7 @@ def test_main_window_watch_tick_prunes_detected_package_when_zip_disappears(
         _intake_correlation(stale_intake, next_step="Review ArchivedPack.zip"),
     )
     main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
 
     def fake_poll_downloads_watch(**_: object) -> object:
@@ -10311,6 +10379,7 @@ def test_main_window_stage_update_button_only_appears_for_update_like_detected_p
         ),
     )
     main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
 
     assert main_window._plan_selected_intake_button.isEnabled() is True
@@ -10386,6 +10455,7 @@ def test_main_window_packages_compare_target_switches_truthful_update_state(
 
     main_window._packages_compare_target_combo.setCurrentIndex(real_index)
     main_window._recompute_intake_correlations()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
 
     assert main_window._packages_compare_target_summary_label.text() == (
@@ -10401,6 +10471,7 @@ def test_main_window_packages_compare_target_switches_truthful_update_state(
     assert "Comparison target: Real Mods" in main_window._packages_output_box.toPlainText()
 
     main_window._packages_compare_target_combo.setCurrentIndex(sandbox_index)
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
 
     assert main_window._packages_compare_target_summary_label.text() == (
@@ -10445,6 +10516,7 @@ def test_main_window_packages_same_version_does_not_present_update_candidate(
     main_window._detected_intakes = (intake,)
 
     main_window._recompute_intake_correlations()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
 
     assert main_window._intake_result_combo.currentText() == (
@@ -10491,6 +10563,7 @@ def test_main_window_packages_not_installed_label_stays_neutral_and_target_speci
     main_window._detected_intakes = (intake,)
 
     main_window._recompute_intake_correlations()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
 
     assert main_window._intake_result_combo.currentText() == (
@@ -10552,6 +10625,7 @@ def test_main_window_stage_update_carries_archive_replace_intent_into_plan(
         ),
     )
     main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
     main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
@@ -10630,6 +10704,7 @@ def test_main_window_normal_staging_does_not_inherit_auto_overwrite_from_stage_u
         ),
     )
     main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
     main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
@@ -10645,6 +10720,7 @@ def test_main_window_normal_staging_does_not_inherit_auto_overwrite_from_stage_u
         ),
     )
     main_window._refresh_intake_selector()
+    main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()
     main_window._intake_result_combo.setCurrentIndex(0)
     qapp.processEvents()

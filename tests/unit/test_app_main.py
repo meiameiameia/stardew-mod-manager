@@ -70,7 +70,11 @@ def test_resolve_ui_app_version_prefers_qapplication_version(
     app.setApplicationVersion("1.1.7")
     try:
         monkeypatch.setattr(main_window, "package_version", lambda _name: "0.2.1")
-        monkeypatch.setattr(main_window.Path, "cwd", lambda: Path(r"C:\no-pyproject-here"))
+        monkeypatch.setattr(
+            main_window.Path,
+            "resolve",
+            lambda self: Path(r"C:\no-pyproject-here\src\sdvmm\ui\main_window.py"),
+        )
         assert main_window._resolve_ui_app_version() == "1.1.7"
     finally:
         app.setApplicationVersion(original_version)
