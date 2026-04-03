@@ -58,7 +58,7 @@ These screenshots reflect the `1.2.0` UI.
 
 ![Cinderleaf install workspace](media/nexus-screenshots/03-install-workspace.png)
 
-![Cinderleaf compare workspace](media/nexus-screenshots/04-compare-workspace.png)
+![Cinderleaf compare workspace](media/nexus-screenshots/04-compare-workspace-1.2.0.png)
 
 ![Cinderleaf recovery workspace](media/nexus-screenshots/05-recovery-workspace.png)
 
