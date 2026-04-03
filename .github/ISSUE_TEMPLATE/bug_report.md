@@ -15,11 +15,13 @@ Describe the bug clearly.
 - Cinderleaf version:
 - Windows version:
 - Workflow area:
-  - [ ] Real Mods
-  - [ ] Sandbox Mods
+  - [ ] Setup / paths
+  - [ ] Library / SMAPI
+  - [ ] Profiles
+  - [ ] Packages / Install
   - [ ] Compare
-  - [ ] Packages / Review
-  - [ ] Backup / Restore / Recovery
+  - [ ] Archive / Recovery
+  - [ ] Backup / Export / Restore
 
 ## What you expected
 

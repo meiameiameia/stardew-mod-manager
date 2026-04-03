@@ -1,32 +1,68 @@
 # Cinderleaf
 
-**Cinderleaf** is a local-first mod workflow manager **for Stardew Valley**. It helps careful Windows players inspect downloaded mods, review installs before writing files, compare live and sandbox environments, and keep recovery paths available when something goes wrong.
+**Cinderleaf** is a local-first mod manager **for Stardew Valley**. It is built for players who want an easier, calmer way to install, organize, and keep using mods: let the watcher pick up downloads, plan changes before writing anything, keep favorite profiles around, export backups when needed, and keep recovery tools nearby in case something goes wrong.
 
 `for Stardew Valley` is a descriptive subtitle, not an official affiliation. Cinderleaf is an independent community tool and is not affiliated with or endorsed by ConcernedApe.
 
-Current public release: **1.1.7**
+Current project version: **1.2.0**
 
-## Why use it
+If you want the full step-by-step walkthrough, start with the [User Manual](docs/USER_GUIDE.md).
 
-- review installs before any write happens
-- keep sandbox work separate from live `Mods`
-- compare real vs sandbox drift without turning Compare into a write surface
-- export backup bundles and inspect/plan restore work before execution
-- preserve reversible workflows with archive and recovery support
+## Why people use Cinderleaf
+
+- to make mod installs feel easier and less chaotic
+- to let the watcher pick up downloaded zip files for them
+- to review installs before writing files
+- to queue and install several downloaded mods together
+- to manage alternate mod profiles without losing a favorite setup
+- to export backups before a cleanup, migration, or riskier change
+- to compare real and sandbox folders without turning Compare into a write tool
+- to keep archive, recovery, and restore tools within easy reach
+- to go from a simple casual setup to a more curated, experimental, or mod-author workflow without changing tools
+
+## Core features
+
+- `Library` for scanning installed mods, checking updates, handling the main launch actions, and working with your installed library
+- `SMAPI` for SMAPI-specific helpers such as log checks, troubleshooting, and related actions
+- watcher-first `Packages` intake with batch selection and queue filtering
+- `Install` planning before any write, including dependency-aware batch planning
+- curated real and sandbox profiles, with clear `not in profile` behavior for mods that exist in `Default` but are not part of a custom profile yet
+- read-only `Compare` for checking drift between real and sandbox mod folders
+- archive, recovery, and restore/import tools for reversible workflows
+- backup bundle export with artifact selection, including:
+  - manager state and profiles
+  - managed mods and config snapshots
+  - archives
+  - optional Stardew save files
+- restore/import support for bundled mods, mod configs, and exported profile catalogs, with save files left as a manual restore step
+- optional sandbox and testing workflows for safer experiments, heavier tinkering, and mod-author use cases
+
+## New in 1.2.0
+
+- Curated real and sandbox profiles are now part of the normal workflow.
+- `Packages` is now watcher-first, and `Install` can plan and apply a batch instead of forcing one package at a time.
+- Batch planning understands staged dependencies better.
+- Backup export now lets you choose what to include, including optional save files.
+- The app has a cleaner identity, clearer workspace names, and stronger low-height polish.
+- SMAPI launch/log handling and profile-operation flow are more reliable.
+
+For the full release history, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Screenshots
 
-These screenshots reflect the current low-height-compatible UI at `1366x768`.
+These screenshots reflect the `1.2.0` UI.
 
-![Cinderleaf setup overview](media/nexus-screenshots/01-setup-overview.png)
+![Cinderleaf library workspace](media/nexus-screenshots/01-library-workspace.png)
 
-![Cinderleaf mods workspace](media/nexus-screenshots/02-mods-workspace.png)
+![Cinderleaf packages workspace](media/nexus-screenshots/02-packages-workspace.png)
 
-![Cinderleaf discover workspace](media/nexus-screenshots/03-discover-workspace.png)
+![Cinderleaf install workspace](media/nexus-screenshots/03-install-workspace.png)
 
 ![Cinderleaf compare workspace](media/nexus-screenshots/04-compare-workspace.png)
 
-![Cinderleaf archive workspace](media/nexus-screenshots/08-archive-workspace.png)
+![Cinderleaf recovery workspace](media/nexus-screenshots/05-recovery-workspace.png)
+
+![Cinderleaf archive workspace](media/nexus-screenshots/06-archive-workspace.png)
 
 ## Requirements
 
@@ -36,32 +72,36 @@ These screenshots reflect the current low-height-compatible UI at `1366x768`.
 
 ## Download the portable build
 
-The supported public build is a Windows portable zip published to GitHub Releases.
+The supported public build is a Windows portable zip published on GitHub Releases.
 
 1. Open the repository's [GitHub Releases page](https://github.com/meiameiameia/stardew-mod-manager/releases).
-2. Download `cinderleaf-1.1.7-windows-portable.zip`.
+2. Download `cinderleaf-1.2.0-windows-portable.zip`.
 3. Extract it to a normal folder.
 4. Run `Cinderleaf.exe`.
 
-If a checksum file is published with the release, verify `cinderleaf-1.1.7-windows-portable.zip.sha256` before announcing or mirroring the build.
+If a checksum file is published with the release, verify `cinderleaf-1.2.0-windows-portable.zip.sha256` before announcing or mirroring the build.
 
-Current release caveats:
+Good to know:
 
 - this is a portable folder, not an installer
 - Windows reputation prompts are still expected because code signing is not in place yet
-- Cinderleaf can notify you about newer releases, but it does not download or install updates for you
+- Cinderleaf can tell you when a newer release exists, but it does not download or install updates for you
 
-## Recommended workflow
+## A simple way to use it
 
 1. Set your game folder, real `Mods`, and sandbox `Mods` in `Setup`.
-2. Use `Discover` and `Packages` to inspect downloaded zips.
-3. Review the current package in `Review` before applying anything.
-4. Install to sandbox first.
-5. Use `Compare` to inspect drift between real and sandbox.
-6. Promote selected sandbox mods into real `Mods` only when you are ready.
-7. Use backup, restore, archive, and recovery tools before larger changes or machine migration.
+2. Let `Packages` watch your download folders and queue the mods you want to work with.
+3. Open `Install` and read the plan before you apply anything.
+4. Use `Library` to keep track of what is installed and use its launch actions when you are ready to play or test.
+5. Use `SMAPI` when you want log checks, troubleshooting help, or other SMAPI-specific helpers.
+6. Use `Compare` when you want to see what is different between real and sandbox.
+7. Use archive, recovery, restore/import, and backup/export tools before bigger cleanups, experiments, or machine moves.
 
-If you are not sure which destination to use, use the sandbox.
+If you mainly want an easier everyday mod routine, Cinderleaf is built for that. If you make mods, troubleshoot often, or like heavier experimentation, the sandbox gives you a dedicated place to test changes first.
+
+## Want the full walkthrough?
+
+The [User Manual](docs/USER_GUIDE.md) covers setup, packages, installs, profiles, backups, compare, recovery, restore/import, and troubleshooting in more detail.
 
 ## Build from source
 
@@ -76,25 +116,25 @@ py -3.12 -m venv .venv
 The build script produces:
 
 ```text
-dist\cinderleaf-1.1.7-windows-portable\
-dist\cinderleaf-1.1.7-windows-portable.zip
-dist\cinderleaf-1.1.7-windows-portable.zip.sha256
+dist\cinderleaf-1.2.0-windows-portable\
+dist\cinderleaf-1.2.0-windows-portable.zip
+dist\cinderleaf-1.2.0-windows-portable.zip.sha256
 ```
 
 ## Current limitations
 
-- downloads are still manual
-- Compare is intentionally read-only; it does not sync, promote, or write
-- restore/import conflict handling is archive-aware and folder-oriented; file-level merge is not implemented
-- there is no one-click "sync everything back to real" flow
-- profile and instance management are out of scope
+- downloads are still manual; the watcher can monitor folders you choose, but it does not download from mod sites for you
+- `Compare` is intentionally read-only; it helps you review drift, not write changes
+- restore/import is archive-aware and folder-oriented; it is not a file-by-file merge tool
+- exported profile catalogs can now be restored through restore/import, but Stardew save files still need manual restore steps
+- there is no one-click `sync everything back to real` flow
 - Windows is the primary supported desktop path today
 
 ## Feedback and issue reporting
 
 - use GitHub Issues for bugs and feature requests
-- include the app version, Windows version, and whether the issue happened in real `Mods`, sandbox `Mods`, compare, or restore/import flow
-- if the problem is install- or recovery-related, include the review summary or error text shown by the app
+- include the Cinderleaf version, Windows version, and which workspace or workflow was involved
+- if the issue involves install, archive, recovery, restore/import, or SMAPI troubleshooting, include the status text, plan summary, or error message shown by the app
 - code contributions and pull requests are not being actively accepted right now
 
 ## License
@@ -105,6 +145,7 @@ This repository is licensed under **PolyForm Noncommercial 1.0.0**. You can use,
 
 ## Project files
 
-- [CHANGELOG](CHANGELOG.md)
+- [User Manual](docs/USER_GUIDE.md)
+- [Changelog](CHANGELOG.md)
 - [Feedback and issue notes](CONTRIBUTING.md)
 - [License](LICENSE)
