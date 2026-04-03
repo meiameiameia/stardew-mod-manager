@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sdvmm.services import app_update
 from sdvmm.services.app_update import check_app_update_status
 from sdvmm.services.update_metadata import MetadataFetchError, REQUEST_FAILURE
 
@@ -43,6 +44,28 @@ def test_check_app_update_status_reports_unable_when_current_version_invalid() -
     assert status.current_version is None
 
 
+def test_check_app_update_status_falls_back_to_legacy_repo_when_primary_lookup_fails() -> None:
+    fetcher = _FallbackFetcher(
+        responses=(
+            MetadataFetchError(REQUEST_FAILURE, "not found"),
+            {
+                "tag_name": "v1.2.0",
+                "html_url": "https://github.com/meiameiameia/stardew-mod-manager/releases/tag/v1.2.0",
+            },
+        )
+    )
+
+    status = check_app_update_status(current_version="1.1.9", fetcher=fetcher)
+
+    assert status.state == "update_available"
+    assert status.latest_version == "1.2.0"
+    assert status.update_page_url == "https://github.com/meiameiameia/stardew-mod-manager/releases/tag/v1.2.0"
+    assert fetcher.urls == [
+        app_update.APP_RELEASES_LATEST_URL,
+        "https://api.github.com/repos/meiameiameia/stardew-mod-manager/releases/latest",
+    ]
+
+
 class _FakeFetcher:
     def __init__(
         self,
@@ -63,3 +86,22 @@ class _FakeFetcher:
         if self._error is not None:
             raise self._error
         return dict(self._payload)
+
+
+class _FallbackFetcher:
+    def __init__(self, *, responses: tuple[object, ...]) -> None:
+        self._responses = list(responses)
+        self.urls: list[str] = []
+
+    def fetch_json(
+        self,
+        url: str,
+        timeout_seconds: float,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        _ = (timeout_seconds, headers)
+        self.urls.append(url)
+        response = self._responses.pop(0)
+        if isinstance(response, MetadataFetchError):
+            raise response
+        return dict(response)

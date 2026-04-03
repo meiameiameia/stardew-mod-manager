@@ -53,7 +53,7 @@ def test_resolve_runtime_icon_asset_prefers_svg_source(
     assets_root.mkdir(parents=True)
     (assets_root / "cinderleaf-icon.svg").write_text("<svg />", encoding="utf-8")
     (assets_root / "app-icon.png").write_bytes(b"png")
-    (assets_root / "stardew-mod-manager.ico").write_bytes(b"ico")
+    (assets_root / "cinderleaf.ico").write_bytes(b"ico")
 
     monkeypatch.setattr(app_main, "_resolve_runtime_root", lambda: runtime_root)
 

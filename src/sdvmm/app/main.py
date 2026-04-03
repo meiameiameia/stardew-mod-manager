@@ -19,7 +19,12 @@ APP_PACKAGE_NAME = "stardew-mod-manager"
 APP_DISPLAY_NAME = "Cinderleaf"
 APP_VERSION_FALLBACK = "unknown"
 APP_VERSION_FILENAME = "app-version.txt"
-APP_RUNTIME_ICON_NAMES = ("cinderleaf-icon.svg", "app-icon.png", "stardew-mod-manager.ico")
+APP_RUNTIME_ICON_NAMES = (
+    "cinderleaf-icon.svg",
+    "app-icon.png",
+    "cinderleaf.ico",
+    "stardew-mod-manager.ico",
+)
 WINDOWS_APP_USER_MODEL_ID = "local.cinderleaf.cinderleaf"
 
 

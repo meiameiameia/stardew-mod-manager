@@ -190,7 +190,12 @@ from sdvmm.ui.top_context_surface import TopContextSurface
 _APP_PACKAGE_NAME = "stardew-mod-manager"
 _APP_BRAND_NAME = "Cinderleaf"
 _APP_BRAND_DESCRIPTOR = "for Stardew Valley"
-_APP_RUNTIME_ICON_NAMES = ("cinderleaf-icon.svg", "app-icon.png", "stardew-mod-manager.ico")
+_APP_RUNTIME_ICON_NAMES = (
+    "cinderleaf-icon.svg",
+    "app-icon.png",
+    "cinderleaf.ico",
+    "stardew-mod-manager.ico",
+)
 
 _ROLE_MOD_UPDATE_STATUS = int(Qt.ItemDataRole.UserRole) + 1
 _ROLE_REMOTE_LINK = int(Qt.ItemDataRole.UserRole) + 2

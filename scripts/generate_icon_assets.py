@@ -11,7 +11,7 @@ from PySide6.QtSvg import QSvgRenderer
 
 SVG_NAME = "cinderleaf-icon.svg"
 PNG_NAME = "app-icon.png"
-ICO_NAME = "stardew-mod-manager.ico"
+ICO_NAME = "cinderleaf.ico"
 PNG_SIZE = 512
 ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
 

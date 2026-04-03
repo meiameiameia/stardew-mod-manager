@@ -39,6 +39,7 @@ artifacts/
 .env.*
 
 # Generated local release/audit archives
+/cinderleaf-*.zip
 /stardew-mod-manager-*.zip
 
 # Local internal prototypes / mockups kept outside the public repo surface

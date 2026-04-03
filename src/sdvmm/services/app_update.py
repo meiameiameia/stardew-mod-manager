@@ -11,8 +11,20 @@ from sdvmm.services.update_metadata import (
     compare_versions,
 )
 
-APP_RELEASES_LATEST_URL = "https://api.github.com/repos/meiameiameia/stardew-mod-manager/releases/latest"
-APP_RELEASES_PAGE_URL = "https://github.com/meiameiameia/stardew-mod-manager/releases"
+_APP_RELEASE_REPO_PRIMARY = "meiameiameia/Cinderleaf"
+_APP_RELEASE_REPO_LEGACY = "meiameiameia/stardew-mod-manager"
+APP_RELEASES_LATEST_URL = f"https://api.github.com/repos/{_APP_RELEASE_REPO_PRIMARY}/releases/latest"
+APP_RELEASES_PAGE_URL = f"https://github.com/{_APP_RELEASE_REPO_PRIMARY}/releases"
+_APP_RELEASES_FALLBACKS: tuple[tuple[str, str], ...] = (
+    (
+        APP_RELEASES_LATEST_URL,
+        APP_RELEASES_PAGE_URL,
+    ),
+    (
+        f"https://api.github.com/repos/{_APP_RELEASE_REPO_LEGACY}/releases/latest",
+        f"https://github.com/{_APP_RELEASE_REPO_LEGACY}/releases",
+    ),
+)
 
 _VERSION_TEXT_PATTERN = re.compile(r"([0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)")
 
@@ -34,21 +46,32 @@ def check_app_update_status(
         )
 
     active_fetcher = fetcher or UrllibJsonMetadataFetcher()
-    try:
-        payload = active_fetcher.fetch_json(APP_RELEASES_LATEST_URL, timeout_seconds)
-    except MetadataFetchError as exc:
+    payload: Mapping[str, object] | None = None
+    release_page_url = APP_RELEASES_PAGE_URL
+    last_error: MetadataFetchError | None = None
+    for latest_url, fallback_page_url in _APP_RELEASES_FALLBACKS:
+        try:
+            payload = active_fetcher.fetch_json(latest_url, timeout_seconds)
+            release_page_url = fallback_page_url
+            break
+        except MetadataFetchError as exc:
+            last_error = exc
+            continue
+
+    if payload is None:
+        assert last_error is not None
         return AppUpdateStatus(
             state="unable_to_determine",
             current_version=normalized_current_version,
             latest_version=None,
-            update_page_url=APP_RELEASES_PAGE_URL,
+            update_page_url=release_page_url,
             message=(
-                f"Cinderleaf {normalized_current_version} is running, but the latest release could not be checked: {exc.message}"
+                f"Cinderleaf {normalized_current_version} is running, but the latest release could not be checked: {last_error.message}"
             ),
         )
 
     latest_version = _extract_latest_app_version(payload)
-    release_page_url = _extract_release_page_url(payload)
+    release_page_url = _extract_release_page_url(payload, fallback_page_url=release_page_url)
     if not latest_version:
         return AppUpdateStatus(
             state="unable_to_determine",
@@ -109,11 +132,11 @@ def _extract_latest_app_version(payload: Mapping[str, object]) -> str | None:
     return None
 
 
-def _extract_release_page_url(payload: Mapping[str, object]) -> str:
+def _extract_release_page_url(payload: Mapping[str, object], *, fallback_page_url: str) -> str:
     html_url = payload.get("html_url")
     if isinstance(html_url, str) and html_url.strip():
         return html_url.strip()
-    return APP_RELEASES_PAGE_URL
+    return fallback_page_url
 
 
 def _normalize_version(raw_value: str) -> str | None:

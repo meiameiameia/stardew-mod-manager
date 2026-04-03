@@ -74,7 +74,7 @@ These screenshots reflect the `1.2.0` UI.
 
 The supported public build is a Windows portable zip published on GitHub Releases.
 
-1. Open the repository's [GitHub Releases page](https://github.com/meiameiameia/stardew-mod-manager/releases).
+1. Open the repository's [GitHub Releases page](https://github.com/meiameiameia/Cinderleaf/releases).
 2. Download `cinderleaf-1.2.0-windows-portable.zip`.
 3. Extract it to a normal folder.
 4. Run `Cinderleaf.exe`.
