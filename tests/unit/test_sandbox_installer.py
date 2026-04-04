@@ -101,6 +101,42 @@ def test_install_plan_allows_overwrite_and_sets_archive_path(tmp_path: Path) -> 
     assert entry.archive_path == archive_root / "MyMod__sdvmm_archive_001"
 
 
+def test_install_plan_reports_config_preservation_for_overwrite_targets(tmp_path: Path) -> None:
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    sandbox.mkdir()
+    archive_root.mkdir()
+    existing_target = sandbox / "MyMod"
+    existing_target.mkdir()
+    (existing_target / "config.json").write_text('{"keep":true}', encoding="utf-8")
+    (existing_target / "configs").mkdir()
+    ((existing_target / "configs") / "user.json").write_text('{"user":1}', encoding="utf-8")
+
+    package = _build_zip(
+        tmp_path / "direct.zip",
+        {
+            "MyMod/manifest.json": '{"Name":"My Mod","UniqueID":"Pkg.MyMod","Version":"1.0.0"}',
+        },
+    )
+
+    plan = build_sandbox_install_plan(
+        package,
+        sandbox,
+        archive_root,
+        allow_overwrite=True,
+    )
+
+    entry = plan.entries[0]
+    assert any("config artifacts will be preserved" in warning.lower() for warning in entry.warnings)
+    assert "config.json" in " ".join(entry.warnings)
+    assert "configs" in " ".join(entry.warnings)
+    assert any("config preservation is enabled" in warning.lower() for warning in plan.plan_warnings)
+    assert any(
+        "overwrite updates preserve existing config artifacts by default" in warning.lower()
+        for warning in plan.plan_warnings
+    )
+
+
 def test_archive_path_generation_uses_next_available_suffix(tmp_path: Path) -> None:
     sandbox = tmp_path / "SandboxMods"
     archive_root = tmp_path / "SandboxArchive"
@@ -197,6 +233,49 @@ def test_execute_overwrite_creates_archive_then_replaces_target(tmp_path: Path) 
     archived_path = result.archived_targets[0]
     assert archived_path.exists()
     assert (archived_path / "old.txt").read_text(encoding="utf-8") == "old"
+
+
+def test_execute_overwrite_preserves_existing_config_artifacts(tmp_path: Path) -> None:
+    sandbox = tmp_path / "SandboxMods"
+    archive_root = tmp_path / "SandboxArchive"
+    sandbox.mkdir()
+    archive_root.mkdir()
+
+    existing_target = sandbox / "MyMod"
+    existing_target.mkdir()
+    (existing_target / "manifest.json").write_text(
+        '{"Name":"Old","UniqueID":"Pkg.MyMod","Version":"0.9.0"}',
+        encoding="utf-8",
+    )
+    (existing_target / "config.json").write_text('{"theme":"old"}', encoding="utf-8")
+    (existing_target / "configs").mkdir()
+    ((existing_target / "configs") / "user.json").write_text('{"hotkey":"k"}', encoding="utf-8")
+
+    package = _build_zip(
+        tmp_path / "overwrite.zip",
+        {
+            "MyMod/manifest.json": '{"Name":"New","UniqueID":"Pkg.MyMod","Version":"1.0.0"}',
+            "MyMod/new.txt": "new",
+            "MyMod/config.json": '{"theme":"new-default"}',
+            "MyMod/configs/template.json": '{"template":true}',
+        },
+    )
+
+    plan = build_sandbox_install_plan(
+        package,
+        sandbox,
+        archive_root,
+        allow_overwrite=True,
+    )
+    result = execute_sandbox_install_plan(plan)
+
+    assert (existing_target / "new.txt").read_text(encoding="utf-8") == "new"
+    assert (existing_target / "config.json").read_text(encoding="utf-8") == '{"theme":"old"}'
+    assert (existing_target / "configs" / "user.json").read_text(encoding="utf-8") == '{"hotkey":"k"}'
+    assert (existing_target / "configs" / "template.json").read_text(encoding="utf-8") == '{"template":true}'
+
+    archived_path = result.archived_targets[0]
+    assert (archived_path / "config.json").read_text(encoding="utf-8") == '{"theme":"old"}'
 
 
 def test_execute_overwrite_is_blocked_when_archive_step_fails(

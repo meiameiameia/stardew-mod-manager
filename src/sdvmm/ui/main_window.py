@@ -9957,6 +9957,9 @@ def _build_plan_facts_text(
         f"Approval required: {'yes' if review.requires_explicit_approval else 'no'}\n"
         f"Blocked entries: {blocked_entry_count}"
     ]
+    config_preservation_fact = _config_preservation_fact_text(plan)
+    if config_preservation_fact is not None:
+        lines.append(f"\n{config_preservation_fact}")
     staged_dependency_fact = _staged_dependency_fact_text(plan)
     if staged_dependency_fact is not None:
         lines.append(staged_dependency_fact)
@@ -9969,6 +9972,26 @@ def _count_blocked_plan_entries(plan: SandboxInstallPlan) -> int:
         for entry in plan.entries
         if (not entry.can_install) or entry.action == "blocked"
     )
+
+
+def _preserved_config_entry_count(plan: SandboxInstallPlan) -> int:
+    return sum(
+        1
+        for entry in plan.entries
+        if any("config artifacts will be preserved" in warning.casefold() for warning in entry.warnings)
+    )
+
+
+def _config_preservation_fact_text(plan: SandboxInstallPlan) -> str | None:
+    has_overwrite_entries = any(entry.action == "overwrite_with_archive" for entry in plan.entries)
+    if not has_overwrite_entries:
+        return None
+
+    preserved_config_count = _preserved_config_entry_count(plan)
+    if preserved_config_count > 0:
+        target_label = "target" if preserved_config_count == 1 else "targets"
+        return f"Config preserve: enabled ({preserved_config_count} {target_label} detected)"
+    return "Config preserve: enabled for overwrite updates"
 
 
 def _plan_source_package_count(plan: SandboxInstallPlan) -> int:
@@ -10060,6 +10083,10 @@ def _first_runnable_warning_text(
     plan: SandboxInstallPlan,
     review: InstallExecutionReview,
 ) -> str | None:
+    config_preservation_warning = _first_config_preservation_warning_text(plan, review)
+    if config_preservation_warning is not None:
+        return config_preservation_warning
+
     warning_sources = (
         *plan.plan_warnings,
         *plan.package_warnings,
@@ -10069,6 +10096,27 @@ def _first_runnable_warning_text(
     for warning in warning_sources:
         warning_text = warning.strip()
         if warning_text:
+            return warning_text
+    return None
+
+
+def _first_config_preservation_warning_text(
+    plan: SandboxInstallPlan,
+    review: InstallExecutionReview,
+) -> str | None:
+    warning_sources = (
+        *plan.plan_warnings,
+        *[warning for entry in plan.entries for warning in entry.warnings],
+        *review.summary.review_warnings,
+    )
+    for warning in warning_sources:
+        warning_text = warning.strip()
+        lowered = warning_text.casefold()
+        if (
+            "config preservation" in lowered
+            or "config artifacts will be preserved" in lowered
+            or "preserve existing config artifacts" in lowered
+        ):
             return warning_text
     return None
 

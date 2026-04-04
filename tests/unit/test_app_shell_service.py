@@ -4175,6 +4175,49 @@ def test_build_install_plan_uses_archive_overwrite_for_real_mods_destination(tmp
     assert plan.entries[0].archive_path.parent == real_mods.parent / ".sdvmm-real-archive"
 
 
+def test_build_install_plan_reports_config_preservation_for_real_update_overwrite(
+    tmp_path: Path,
+) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox.mkdir()
+    existing_mod = real_mods / "Mod"
+    existing_mod.mkdir()
+    (existing_mod / "config.json").write_text('{"keep":true}', encoding="utf-8")
+
+    package = tmp_path / "update.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "Mod/manifest.json",
+            '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"2.0.0"}',
+        )
+
+    plan = service.build_install_plan(
+        package_path_text=str(package),
+        install_target=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        allow_overwrite=True,
+        configured_real_mods_path=real_mods,
+    )
+
+    assert any(
+        "config artifacts will be preserved" in warning.lower()
+        for warning in plan.entries[0].warnings
+    )
+    assert any(
+        "config preservation is enabled" in warning.lower() for warning in plan.plan_warnings
+    )
+    assert any(
+        "overwrite updates preserve existing config artifacts by default" in warning.lower()
+        for warning in plan.plan_warnings
+    )
+
+
 def test_build_install_execution_summary_for_sandbox_destination(tmp_path: Path) -> None:
     service = AppShellService(state_file=tmp_path / "app-state.json")
     plan = _summary_plan(tmp_path, destination_kind=INSTALL_TARGET_SANDBOX_MODS)
@@ -4452,6 +4495,51 @@ def test_execute_real_mods_plan_requires_explicit_confirmation(tmp_path: Path) -
     assert result.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
     assert result.scan_context_path == real_mods
     assert (real_mods / "Mod" / "file.txt").read_text(encoding="utf-8") == "hello"
+
+
+def test_execute_real_mods_update_preserves_existing_config_artifacts(tmp_path: Path) -> None:
+    service = AppShellService(state_file=tmp_path / "app-state.json")
+    real_mods = tmp_path / "RealMods"
+    sandbox = tmp_path / "SandboxMods"
+    real_mods.mkdir()
+    sandbox.mkdir()
+
+    existing_mod = real_mods / "Mod"
+    existing_mod.mkdir()
+    (existing_mod / "manifest.json").write_text(
+        '{"Name":"Old","UniqueID":"Pkg.Zip","Version":"1.0.0"}',
+        encoding="utf-8",
+    )
+    (existing_mod / "config.json").write_text('{"setting":"old"}', encoding="utf-8")
+
+    package = tmp_path / "update.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "Mod/manifest.json",
+            '{"Name":"Zip Mod","UniqueID":"Pkg.Zip","Version":"2.0.0"}',
+        )
+        archive.writestr("Mod/file.txt", "hello")
+        archive.writestr("Mod/config.json", '{"setting":"new-default"}')
+
+    plan = service.build_install_plan(
+        package_path_text=str(package),
+        install_target=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        configured_mods_path_text=str(real_mods),
+        sandbox_mods_path_text=str(sandbox),
+        real_archive_path_text="",
+        sandbox_archive_path_text="",
+        allow_overwrite=True,
+        configured_real_mods_path=real_mods,
+    )
+
+    result = service.execute_sandbox_install_plan(
+        plan,
+        confirm_real_destination=True,
+    )
+
+    assert result.destination_kind == INSTALL_TARGET_CONFIGURED_REAL_MODS
+    assert (real_mods / "Mod" / "file.txt").read_text(encoding="utf-8") == "hello"
+    assert (real_mods / "Mod" / "config.json").read_text(encoding="utf-8") == '{"setting":"old"}'
 
 
 def test_execute_sandbox_install_plan_matches_review_for_allowed_sandbox_plan(

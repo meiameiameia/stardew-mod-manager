@@ -8059,6 +8059,67 @@ def test_main_window_plan_install_stores_real_destination_plan_and_sets_status(
     assert main_window._findings_box.toPlainText().startswith(review.message)
 
 
+def test_main_window_plan_install_shows_config_preservation_cue(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_plan = _sandbox_install_plan(
+        destination_kind=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        action=OVERWRITE_WITH_ARCHIVE,
+        target_exists=True,
+        archive_path=Path(r"C:\Game\.sdvmm-real-archive\SampleMod__sdvmm_archive_001"),
+        warnings=(
+            "Target folder already exists and will be archived before overwrite.",
+            "Existing config artifacts will be preserved during replace: config.json.",
+        ),
+        plan_warnings=(
+            "Config preservation is enabled for 1 overwrite target; existing config artifacts will be copied back after replacement.",
+        ),
+    )
+
+    monkeypatch.setattr(main_window._shell_service, "build_install_plan", lambda **_: real_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
+
+    main_window._on_plan_install()
+
+    assert "config preservation" in main_window._plan_review_explanation_label.text().casefold()
+    assert "Config preserve: enabled (1 target detected)" in main_window._plan_facts_label.text()
+
+
+def test_main_window_plan_install_shows_generic_overwrite_config_preservation_cue(
+    main_window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_plan = _sandbox_install_plan(
+        destination_kind=INSTALL_TARGET_CONFIGURED_REAL_MODS,
+        action=OVERWRITE_WITH_ARCHIVE,
+        target_exists=True,
+        archive_path=Path(r"C:\Game\.sdvmm-real-archive\SampleMod__sdvmm_archive_001"),
+        plan_warnings=(
+            "Overwrite mode will archive existing target folders before replacement. Recovery is best-effort per entry and not a full transaction.",
+            "Overwrite updates preserve existing config artifacts by default when present.",
+        ),
+    )
+
+    monkeypatch.setattr(main_window._shell_service, "build_install_plan", lambda **_: real_plan)
+    monkeypatch.setattr(
+        main_window,
+        "_run_background_operation",
+        lambda *, task_fn, on_success, **kwargs: on_success(task_fn()),
+    )
+
+    main_window._on_plan_install()
+
+    assert "preserve existing config artifacts" in (
+        main_window._plan_review_explanation_label.text().casefold()
+    )
+    assert "Config preserve: enabled for overwrite updates" in main_window._plan_facts_label.text()
+
+
 def test_main_window_plan_install_blocked_review_clears_pending_plan_and_sets_status(
     main_window: MainWindow,
     monkeypatch: pytest.MonkeyPatch,

@@ -17,6 +17,8 @@ from sdvmm.domain.models import (
 from sdvmm.services.mod_scanner import scan_mods_directory
 from sdvmm.services.package_inspector import inspect_zip_package
 
+_CONFIG_ARTIFACT_NAMES = ("config.json", "config", "configs")
+
 
 class SandboxInstallError(ValueError):
     """Raised when plan creation or install execution cannot proceed safely."""
@@ -44,6 +46,7 @@ def build_sandbox_install_plan(
     inspection = inspect_zip_package(package_path)
 
     entries: list[SandboxInstallPlanEntry] = []
+    overwrite_entries_with_preserved_config = 0
 
     for mod in inspection.mods:
         source_root = str(PurePosixPath(mod.manifest_path).parent)
@@ -79,6 +82,13 @@ def build_sandbox_install_plan(
                 warnings.append(
                     f"Target folder already exists and will be archived to '{archive_path.name}' before overwrite."
                 )
+                preserved_artifact_names = _config_artifact_names(target_path)
+                if preserved_artifact_names:
+                    overwrite_entries_with_preserved_config += 1
+                    warnings.append(
+                        "Existing config artifacts will be preserved during replace: "
+                        f"{', '.join(preserved_artifact_names)}."
+                    )
             else:
                 warnings.append("Target folder already exists. Overwrite is disabled for this plan.")
                 can_install = False
@@ -108,6 +118,13 @@ def build_sandbox_install_plan(
     entries.sort(key=lambda item: (item.target_path.name.lower(), item.unique_id.casefold()))
 
     plan_warnings = _build_plan_warnings(entries, inspection, allow_overwrite=allow_overwrite)
+    if overwrite_entries_with_preserved_config > 0:
+        target_label = "target" if overwrite_entries_with_preserved_config == 1 else "targets"
+        plan_warnings.append(
+            "Config preservation is enabled for "
+            f"{overwrite_entries_with_preserved_config} overwrite {target_label}; "
+            "existing config artifacts will be copied back after replacement."
+        )
 
     return SandboxInstallPlan(
         package_path=package_path,
@@ -309,6 +326,9 @@ def _build_plan_warnings(
             "Overwrite mode will archive existing target folders before replacement. "
             "Recovery is best-effort per entry and not a full transaction."
         )
+        warnings.append(
+            "Overwrite updates preserve existing config artifacts by default when present."
+        )
 
     if any(not entry.can_install for entry in entries):
         warnings.append("Plan has blocked entries; execution requires all entries to be installable.")
@@ -387,6 +407,7 @@ def _overwrite_target_with_archive(staged_target: Path, target_path: Path, archi
 
     try:
         _move_path(staged_target, target_path)
+        _restore_preserved_config_artifacts(archived_target=archive_path, target_path=target_path)
     except Exception as replace_exc:
         cleanup_errors: list[str] = []
 
@@ -417,6 +438,46 @@ def _overwrite_target_with_archive(staged_target: Path, target_path: Path, archi
             "Replacement failed after archive and best-effort recovery could not restore original target. "
             f"Replace error: {replace_exc}.{details}"
         ) from replace_exc
+
+
+def _config_artifact_names(mod_root: Path) -> tuple[str, ...]:
+    return tuple(path.name for path in _iter_config_artifacts(mod_root))
+
+
+def _iter_config_artifacts(mod_root: Path) -> tuple[Path, ...]:
+    artifacts: list[Path] = []
+    for candidate_name in _CONFIG_ARTIFACT_NAMES:
+        candidate_path = mod_root / candidate_name
+        if not candidate_path.exists():
+            continue
+        if candidate_path.is_file() or candidate_path.is_dir():
+            artifacts.append(candidate_path)
+    return tuple(artifacts)
+
+
+def _restore_preserved_config_artifacts(*, archived_target: Path, target_path: Path) -> None:
+    for artifact in _iter_config_artifacts(archived_target):
+        relative_path = artifact.relative_to(archived_target)
+        destination_path = target_path / relative_path
+        if artifact.is_file():
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            if destination_path.exists() and destination_path.is_dir():
+                _remove_path(destination_path)
+            shutil.copy2(artifact, destination_path)
+            continue
+
+        if destination_path.exists() and destination_path.is_file():
+            _remove_path(destination_path)
+        destination_path.mkdir(parents=True, exist_ok=True)
+        for source_file in artifact.rglob("*"):
+            if not source_file.is_file():
+                continue
+            nested_relative_path = source_file.relative_to(artifact)
+            nested_destination_path = destination_path / nested_relative_path
+            nested_destination_path.parent.mkdir(parents=True, exist_ok=True)
+            if nested_destination_path.exists() and nested_destination_path.is_dir():
+                _remove_path(nested_destination_path)
+            shutil.copy2(source_file, nested_destination_path)
 
 
 def _move_path(source: Path, destination: Path) -> None:
